@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { urlString } from "../lib/zod-formats.js";
 
 // docker-compose.prod.yml forwards some optional settings with an empty
 // default (`${VAR:-}`), so an unset variable arrives as "". zod's .default()
@@ -9,21 +10,21 @@ const emptyAsUnset = (value: unknown) => (value === "" ? undefined : value);
 const configSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3001),
-  DATABASE_URL: z.url(),
+  DATABASE_URL: urlString(),
   GITHUB_CLIENT_ID: z.string().default(""),
   GITHUB_CLIENT_SECRET: z.string().default(""),
   SESSION_SECRET: z.string().min(32),
   // 32-byte key (hex or base64) used to encrypt OIDC client secrets at rest.
   // Required as soon as any SsoConnection exists; optional otherwise.
   SSO_ENCRYPTION_KEY: z.string().default(""),
-  BACKEND_URL: z.preprocess(emptyAsUnset, z.url().default("http://localhost:3001")),
-  FRONTEND_URL: z.url().default("http://localhost:3000"),
+  BACKEND_URL: z.preprocess(emptyAsUnset, urlString().default("http://localhost:3001")),
+  FRONTEND_URL: urlString().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   // Optional Redis URL for shared caches. When unset, backing services
   // fall back to in-memory — local dev and single-instance deploys keep
   // working identically. Set this when running more than one backend
   // pod behind a load balancer so GitHub API cache hits stay shared.
-  REDIS_URL: z.preprocess(emptyAsUnset, z.url().optional()),
+  REDIS_URL: z.preprocess(emptyAsUnset, urlString().optional()),
   // Key prefix for Redis-backed caches, so cross-environment deploys
   // sharing a redis instance don't collide. Unused when REDIS_URL is
   // absent.

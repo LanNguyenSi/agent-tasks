@@ -2,6 +2,7 @@ import { authorizeDirectSubmission, mutateDirectTask } from "../services/groundi
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { zValidate } from "../lib/z-validate.js";
+import { isoDatetime } from "../lib/zod-formats.js";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
@@ -538,7 +539,7 @@ export const createTaskSchema = z.object({
   status: z.enum(["backlog", "open", "in_progress", "review", "done"]).optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
   workflowId: z.guid().optional(),
-  dueAt: z.iso.datetime().optional(),
+  dueAt: isoDatetime().optional(),
   templateData: templateDataSchema.optional(),
   externalRef: z.string().trim().min(1).max(255).optional(),
   labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
@@ -581,7 +582,7 @@ export const updateTaskSchema = z.object({
   // still 400s there for the same reason as "abandoned" (no workflow
   // definition declares a transition into "backlog").
   status: z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"]).optional(),
-  dueAt: z.iso.datetime().nullable().optional(),
+  dueAt: isoDatetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(),
   prNumber: z.number().int().positive().nullable().optional(),

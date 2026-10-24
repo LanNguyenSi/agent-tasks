@@ -2854,22 +2854,30 @@ describe("buildTools", () => {
 
   // ── zod 4 migration: accept-set pins for the three format choices ──────
   //
-  // tools.ts swapped three v3 string formats for their v4 equivalents. These
-  // cases pin the OLD (v3) accept-set on the real tool schemas via parseArgs:
+  // These cases pin the OLD (zod 3) accept-set AND output on the real tool
+  // schemas via parseArgs (which parses through the registered inputShape):
   //   - uuid helper: z.guid(), NOT z.uuid(). v3's .uuid() accepted any
   //     8-4-4-4-12 hex string; v4's z.uuid() additionally enforces RFC 9562
   //     version/variant bits, so the two fixtures below (both used all over
   //     this file's fixtures) are the inputs that distinguish them.
-  //   - dueAt: z.iso.datetime() == v3's .datetime() (Z-suffixed instants
-  //     with optional fractional seconds; bare local times and offsets
-  //     rejected on both).
-  //   - prUrl / artifact url: z.url() == v3's .url() (URL()-constructible
-  //     strings pass; spaces and bare authorities fail).
-  // Each input combination is its own case; the "accepts" cases are the
-  // ones a future narrowing to z.uuid() (or a stricter url/datetime check)
-  // would break first.
+  //   - dueAt: isoDatetime() (src/zod-formats.ts) = z.union([
+  //     z.iso.datetime(), z.iso.datetime({ precision: -1 })]). Bare
+  //     z.iso.datetime() REQUIRES seconds; the union restores v3's
+  //     minute-precision form (HH:MMZ). Z-only, any fractional precision;
+  //     offsets and bare local times rejected; value unchanged.
+  //   - prUrl / artifact url: urlString() (src/zod-formats.ts) =
+  //     z.string().refine(URL.canParse), NOT z.url(). v3's .url() only
+  //     checked that new URL(value) does not throw and returned the value
+  //     UNCHANGED; zod 4's z.url() trims the input and strips tab/CR/LF from
+  //     the output, so the whitespace fixtures below are the distinguishing
+  //     inputs (base semantics: the URL parser itself strips whitespace
+  //     characters when deciding validity, so these parse AND were accepted,
+  //     unchanged).
+  // Each input combination is its own case; the "accepts" cases are the ones
+  // a future narrowing (z.uuid, bare z.iso.datetime, z.url) breaks first.
   describe("zod 4 format accept-set pins (guid uuid, iso datetime, url)", () => {
     const GUID = "11111111-1111-1111-1111-111111111111";
+    const PROJECT = "00000000-0000-0000-0000-000000000001";
     it("task_start accepts the all-zero variant/revision uuid 00000000-0000-0000-0000-000000000001 (z.guid, not z.uuid)", () => {
       const parsed = parseArgs("task_start", { taskId: "00000000-0000-0000-0000-000000000001" });
       expect(parsed.taskId).toBe("00000000-0000-0000-0000-000000000001");
@@ -2881,9 +2889,13 @@ describe("buildTools", () => {
     it("task_start rejects a non-uuid taskId", () => {
       expect(() => parseArgs("task_start", { taskId: "not-a-uuid" })).toThrow();
     });
+    it("task_create accepts the minute-precision dueAt 2020-10-10T10:10Z (v3 form; needs the precision:-1 union branch)", () => {
+      const parsed = parseArgs("task_create", { projectId: PROJECT, title: "t", dueAt: "2020-10-10T10:10Z" });
+      expect(parsed.dueAt).toBe("2020-10-10T10:10Z");
+    });
     it("task_create accepts a Z-suffixed dueAt", () => {
       const parsed = parseArgs("task_create", {
-        projectId: "00000000-0000-0000-0000-000000000001",
+        projectId: PROJECT,
         title: "t",
         dueAt: "2020-10-10T10:10:10Z",
       });
@@ -2891,16 +2903,24 @@ describe("buildTools", () => {
     });
     it("task_create accepts a fractional-second Z dueAt", () => {
       const parsed = parseArgs("task_create", {
-        projectId: "00000000-0000-0000-0000-000000000001",
+        projectId: PROJECT,
         title: "t",
         dueAt: "2020-10-10T10:10:10.123Z",
       });
       expect(parsed.dueAt).toBe("2020-10-10T10:10:10.123Z");
     });
+    it("task_create accepts a microsecond-precision Z dueAt (any fractional precision)", () => {
+      const parsed = parseArgs("task_create", {
+        projectId: PROJECT,
+        title: "t",
+        dueAt: "2020-10-10T10:10:10.123456Z",
+      });
+      expect(parsed.dueAt).toBe("2020-10-10T10:10:10.123456Z");
+    });
     it("task_create rejects a bare local dueAt", () => {
       expect(() =>
         parseArgs("task_create", {
-          projectId: "00000000-0000-0000-0000-000000000001",
+          projectId: PROJECT,
           title: "t",
           dueAt: "2020-10-10T10:10:10",
         }),
@@ -2909,18 +2929,41 @@ describe("buildTools", () => {
     it("task_create rejects an offset-bearing dueAt", () => {
       expect(() =>
         parseArgs("task_create", {
-          projectId: "00000000-0000-0000-0000-000000000001",
+          projectId: PROJECT,
           title: "t",
           dueAt: "2020-10-10T10:10:10+02:00",
         }),
       ).toThrow();
     });
-    it("task_finish accepts a https prUrl (z.url)", () => {
+    it("tasks_create accepts the minute-precision dueAt 2020-10-10T10:10Z (same isoDatetime choice on the second dueAt site)", () => {
+      const parsed = parseArgs("tasks_create", { projectId: PROJECT, title: "t", dueAt: "2020-10-10T10:10Z" });
+      expect(parsed.dueAt).toBe("2020-10-10T10:10Z");
+    });
+    it("tasks_create rejects an offset-bearing dueAt", () => {
+      expect(() =>
+        parseArgs("tasks_create", { projectId: PROJECT, title: "t", dueAt: "2020-10-10T10:10:10+02:00" }),
+      ).toThrow();
+    });
+    it("task_finish accepts a https prUrl", () => {
       const parsed = parseArgs("task_finish", { taskId: GUID, prUrl: "https://github.com/o/r/pull/1" });
       expect(parsed.prUrl).toBe("https://github.com/o/r/pull/1");
     });
+    it('task_finish accepts " http://x.io" with the value UNCHANGED (v3 output; z.url() would trim it away)', () => {
+      const parsed = parseArgs("task_finish", { taskId: GUID, prUrl: " http://x.io" });
+      expect(parsed.prUrl).toBe(" http://x.io");
+    });
+    it("task_finish rejects a bare-authority http:// prUrl", () => {
+      expect(() => parseArgs("task_finish", { taskId: GUID, prUrl: "http://" })).toThrow();
+    });
     it("task_finish rejects a non-url prUrl", () => {
       expect(() => parseArgs("task_finish", { taskId: GUID, prUrl: "not a url" })).toThrow();
+    });
+    it('tasks_update accepts " http://x.io" prUrl with the value UNCHANGED (v3 output; z.url() would trim it away)', () => {
+      const parsed = parseArgs("tasks_update", { taskId: GUID, prUrl: " http://x.io" });
+      expect(parsed.prUrl).toBe(" http://x.io");
+    });
+    it("tasks_update rejects a non-url prUrl", () => {
+      expect(() => parseArgs("tasks_update", { taskId: GUID, prUrl: "not a url" })).toThrow();
     });
     it("task_artifact_create accepts a url within the 2048 cap", () => {
       const parsed = parseArgs("task_artifact_create", {
@@ -2930,6 +2973,20 @@ describe("buildTools", () => {
         url: "https://example.test/a/b/c",
       });
       expect(parsed.url).toBe("https://example.test/a/b/c");
+    });
+    it('task_artifact_create accepts the tab-inside-host "http://exa\\tmple.com" with the value UNCHANGED (v3 output; z.url() would strip the tab and rewrite it)', () => {
+      const parsed = parseArgs("task_artifact_create", {
+        taskId: GUID,
+        type: "other",
+        name: "n",
+        url: "http://exa\tmple.com",
+      });
+      expect(parsed.url).toBe("http://exa\tmple.com");
+    });
+    it("task_artifact_create rejects a non-url url", () => {
+      expect(() =>
+        parseArgs("task_artifact_create", { taskId: GUID, type: "other", name: "n", url: "not a url" }),
+      ).toThrow();
     });
     it("task_artifact_create rejects a url over the 2048 cap", () => {
       expect(() =>

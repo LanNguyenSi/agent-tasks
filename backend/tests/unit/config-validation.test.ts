@@ -204,6 +204,20 @@ describe("backend config: zod 4 env coercions and defaults", () => {
     await loadFails({ DATABASE_URL: "not a url" });
   });
 
+  // urlString() (lib/zod-formats) is the zod 3 `.url()` behavior: the check
+  // only requires URL constructibility and the value is returned UNCHANGED.
+  // The WHATWG URL parser accepts " http://x" and "h\nttps://x" (it strips
+  // whitespace characters internally), and zod hands back the raw env value.
+  it('BACKEND_URL=" http://x" is accepted with the value kept EXACTLY (no trim)', async () => {
+    expect((await load({ BACKEND_URL: " http://x" })).config.BACKEND_URL).toBe(" http://x");
+  });
+
+  it("FRONTEND_URL with an embedded newline is accepted with the value kept EXACTLY (no tab/CR/LF stripping)", async () => {
+    expect((await load({ FRONTEND_URL: "h\nttps://app.example.test" })).config.FRONTEND_URL).toBe(
+      "h\nttps://app.example.test",
+    );
+  });
+
   it("TRUSTED_PROXY_HOPS defaults to 0, accepts the 0 boundary and a positive int", async () => {
     expect((await load({ TRUSTED_PROXY_HOPS: undefined })).config.TRUSTED_PROXY_HOPS).toBe(0);
     expect((await load({ TRUSTED_PROXY_HOPS: "0" })).config.TRUSTED_PROXY_HOPS).toBe(0);

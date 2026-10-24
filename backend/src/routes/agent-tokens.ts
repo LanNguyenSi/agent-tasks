@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidate } from "../lib/z-validate.js";
+import { isoDatetime } from "../lib/zod-formats.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
@@ -30,14 +31,14 @@ agentTokenRouter.get("/scopes", (c) => {
 // is always the trimmed string for both create and rename.
 const tokenNameSchema = z.string().trim().min(1).max(100);
 
-const createTokenSchema = z.object({
+export const createTokenSchema = z.object({
   teamId: z.guid(),
   name: tokenNameSchema,
   // Reject unknown scopes at the edge so a typo ("task:update" instead of
   // "tasks:update") fails loudly at token-creation time instead of silently
   // producing a permanently-403'd token.
   scopes: z.array(z.enum(ALL_SCOPES)).default([]),
-  expiresAt: z.iso.datetime().optional(),
+  expiresAt: isoDatetime().optional(),
 });
 
 agentTokenRouter.get("/", async (c) => {

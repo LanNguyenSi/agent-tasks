@@ -1,6 +1,7 @@
 import { readDirectOperation } from "./grounding-direct-input.js";
 import { resolveDirectGroundingTarget } from "./grounding-direct-context.js";
 import { z } from "zod";
+import { isoDatetime } from "../lib/zod-formats.js";
 import type { Prisma, Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
@@ -25,7 +26,7 @@ const reviewBody = z.object({ result: z.string().max(5000).optional(), outcome: 
 const patchSchema = z.object({
   status: z.string().max(128), result: text.nullable().optional(),
   title: text.optional(), description: text.nullable().optional(), templateData: z.unknown().optional(), branchName: text.nullable().optional(), prUrl: text.nullable().optional(), prNumber: z.number().int().positive().nullable().optional(), deliverableRepo: text.nullable().optional(), labels: z.array(text).optional(),
-  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(), dueAt: z.iso.datetime().nullable().optional(), externalRef: text.nullable().optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(), dueAt: isoDatetime().nullable().optional(), externalRef: text.nullable().optional(),
   claimedByUserId: z.null().optional(), claimedByAgentId: z.null().optional(), claimedAt: z.null().optional(),
   reviewClaimedByUserId: z.null().optional(), reviewClaimedByAgentId: z.null().optional(), reviewClaimedAt: z.null().optional(),
 }).strict();

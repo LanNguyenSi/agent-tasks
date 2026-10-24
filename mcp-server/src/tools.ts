@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z, ZodRawShape } from "zod";
+import { isoDatetime, urlString } from "./zod-formats.js";
 import { AgentTasksClient, AgentTasksApiError, ProjectSlugNotFoundError } from "./client.js";
 import { WORKFLOW_PRIMER } from "./primer.js";
 import {
@@ -443,10 +444,11 @@ export function buildTools(
             "Free-text summary of the work, recorded on the task timeline (plain prose or markdown, max 5000 chars). Not a structured payload: do not wrap it in XML or JSON tags — it is stored and rendered as text.",
           )
           .optional(),
-        // z.url(): v4 home of v3's .url(); accept-set verified identical to
-        // 3.25.76 on a URL() battery (scheme-carrying strings pass, spaces
-        // and bare authorities fail).
-        prUrl: z.url().optional(),
+        // urlString() (lib/zod-formats.ts), NOT z.url(): zod 4's z.url()
+        // trims the input and strips tab/CR/LF from the OUTPUT. This keeps
+        // the zod 3 `.url()` behavior: `new URL(value)` must not throw, and
+        // the value is returned unchanged.
+        prUrl: urlString().optional(),
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
@@ -496,10 +498,11 @@ export function buildTools(
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        // z.iso.datetime(): v4 home of v3's .datetime(); accept-set verified
-        // identical to 3.25.76 (Z-suffixed instants, optional fractional
-        // seconds; offsets and bare local times rejected).
-        dueAt: z.iso.datetime().optional(),
+        // isoDatetime() (lib/zod-formats.ts), NOT a bare z.iso.datetime():
+        // zod 4 requires seconds, while zod 3's `.datetime()` also accepted
+        // the minute-precision form (HH:MMZ). The union restores it: Z-only,
+        // any fractional precision, offsets and local times rejected.
+        dueAt: isoDatetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),
@@ -692,7 +695,7 @@ export function buildTools(
         name: z.string().min(1).max(255),
         description: z.string().max(1000).optional(),
         content: z.string().max(1_048_576).optional(),
-        url: z.url().max(2048).optional(),
+        url: urlString().max(2048).optional(),
         mimeType: z.string().max(255).optional(),
       },
       handler: async ({ taskId, ...input }) =>
@@ -958,10 +961,11 @@ export function buildTools(
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        // z.iso.datetime(): v4 home of v3's .datetime(); accept-set verified
-        // identical to 3.25.76 (Z-suffixed instants, optional fractional
-        // seconds; offsets and bare local times rejected).
-        dueAt: z.iso.datetime().optional(),
+        // isoDatetime() (lib/zod-formats.ts), NOT a bare z.iso.datetime():
+        // zod 4 requires seconds, while zod 3's `.datetime()` also accepted
+        // the minute-precision form (HH:MMZ). The union restores it: Z-only,
+        // any fractional precision, offsets and local times rejected.
+        dueAt: isoDatetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z
           .array(z.string().trim().min(1).max(100))
@@ -1010,7 +1014,7 @@ export function buildTools(
       inputShape: {
         taskId: uuid(),
         branchName: z.string().max(255).nullable().optional(),
-        prUrl: z.url().nullable().optional(),
+        prUrl: urlString().nullable().optional(),
         prNumber: z.number().int().positive().nullable().optional(),
         // Symmetry with task_finish's own result field (same field, same
         // storage): uncapped here let a caller feed an arbitrarily large

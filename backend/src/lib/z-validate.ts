@@ -7,7 +7,7 @@ import type { ZodType } from "zod";
  * place.
  *
  * WHY IT EXISTS (contract): the base stack (zod 3 + @hono/zod-validator 0.4.3)
- * had no hook, so a failed validation returned the raw safeParse result —
+ * had no hook, so a failed validation returned the raw safeParse result via
  * `c.json({ success: false, error: ZodError }, 400)`. With zod 3 the ZodError's
  * `issues` are enumerable, so the JSON body was
  *   { success: false, error: { issues: [...], name: "ZodError" } }.
@@ -19,23 +19,19 @@ import type { ZodType } from "zod";
  * own per-issue fields such as `expected`/`values`). On success it returns
  * `undefined` so the validator proceeds to the handler (the `c.req.valid(...)`
  * path is unchanged).
+ *
+ * The hook uses the Hono context (`c.json(...)`) rather than a raw `new
+ * Response(...)`: a raw Response discards headers the request pipeline already
+ * set with `c.header()` (for example a request-id middleware), whereas building
+ * the 400 through `c` keeps them.
  */
 export function zValidate<T extends ZodType, Target extends "json" | "query" | "param" | "header" | "form" | "cookie">(
   target: Target,
   schema: T,
 ) {
-  return zValidator(target, schema, (result) => {
+  return zValidator(target, schema, (result, c) => {
     if (!result.success) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: { issues: result.error.issues, name: "ZodError" },
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return c.json({ success: false, error: { issues: result.error.issues, name: "ZodError" } }, 400);
     }
     // Success: return undefined so the validator calls the next handler.
     return undefined;

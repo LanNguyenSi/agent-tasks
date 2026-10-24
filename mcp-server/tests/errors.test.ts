@@ -58,6 +58,14 @@ function assertAllowedNextRegistered(err: TeachingError, registered: Set<string>
   }
 }
 
+// Typed view of the generic-degrade issue summary: TeachingError's `detail`
+// is deliberately a plain Record<string, unknown>, so this is where tests
+// narrow `detail.issues` once instead of double-casting per test.
+function mappedIssues(err: TeachingError): Array<Record<string, unknown>> {
+  const issues = err.error.detail?.issues;
+  return Array.isArray(issues) ? issues : [];
+}
+
 // rc-v1-C005 round 2 review, finding #3 (drift guard): KNOWN_RULE_CORRECTIVES
 // hand-authors a short corrective for each of the four real TransitionRule
 // values. Nothing previously checked that its key set actually stayed in
@@ -1009,10 +1017,8 @@ describe("mapBackendError catalog", () => {
           issues: [{ code, path: ["n"], options: ["from-options"], values: ["from-values"], message: "bad" }],
         },
       });
-    const v3 = both("invalid_enum_value") as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
-    const v4 = both("invalid_value") as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
-    expect(v3.error.detail?.issues?.[0]?.allowed).toBe("from-options");
-    expect(v4.error.detail?.issues?.[0]?.allowed).toBe("from-values");
+    expect(mappedIssues(both("invalid_enum_value"))[0]?.allowed).toBe("from-options");
+    expect(mappedIssues(both("invalid_value"))[0]?.allowed).toBe("from-values");
   });
 
   it("generic degrade: a multi-segment (nested/array-index) zod path is joined into a single dot-separated string rather than a nested array (clampDetailValue's own depth budget would otherwise silently truncate a nested path array)", () => {

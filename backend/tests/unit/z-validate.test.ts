@@ -39,9 +39,15 @@ function buildFixture(): Hono {
   return app;
 }
 
-/** Asserts the exact base key set and issue shape shared by every target. */
-function expectBaseValidationBody(status: number, body: unknown) {
-  expect(status).toBe(400);
+/** Asserts the exact base key set and issue shape shared by every target,
+ * plus the base content-type (what Hono's c.json emits; the hook must build
+ * the 400 through the context, not a raw Response). */
+function expectBaseValidationBody(res: Response, body: unknown) {
+  expect(res.status).toBe(400);
+  // This Hono version emits exactly `application/json` from c.json (no
+  // charset); if a future Hono adds one, this pin must be updated with the
+  // wire change, not silently.
+  expect(res.headers.get("content-type")).toBe("application/json");
   const obj = body as Record<string, unknown>;
   expect(Object.keys(obj).sort()).toEqual(["error", "success"]);
   expect(obj.success).toBe(false);
@@ -71,7 +77,7 @@ describe("zValidate wire body (contract)", () => {
       }),
     );
     const body = await res.json();
-    expectBaseValidationBody(res.status, body);
+    expectBaseValidationBody(res, body);
     const issues = issuesOf(body);
     expect(issues.some((i) => i.path.join(".") === "a")).toBe(true);
     expect(issues.some((i) => i.path.join(".") === "k")).toBe(true);
@@ -80,7 +86,7 @@ describe("zValidate wire body (contract)", () => {
   it("query failure keeps the base body", async () => {
     const res = await buildFixture().fetch(new Request("http://test/q?x=1"));
     const body = await res.json();
-    expectBaseValidationBody(res.status, body);
+    expectBaseValidationBody(res, body);
     const issues = issuesOf(body);
     expect(issues.some((i) => i.path.join(".") === "page")).toBe(true);
   });
@@ -88,7 +94,7 @@ describe("zValidate wire body (contract)", () => {
   it("param failure keeps the base body", async () => {
     const res = await buildFixture().fetch(new Request("http://test/p/not-a-guid"));
     const body = await res.json();
-    expectBaseValidationBody(res.status, body);
+    expectBaseValidationBody(res, body);
     const issues = issuesOf(body);
     expect(issues.some((i) => i.path.join(".") === "id")).toBe(true);
   });
@@ -118,8 +124,30 @@ describe("zValidate is wired into real routers", () => {
       body: JSON.stringify({ teamId: "not-a-guid", name: "" }),
     });
     const body = await res.json();
-    expectBaseValidationBody(res.status, body);
+    expectBaseValidationBody(res, body);
     const issues = issuesOf(body);
     expect(issues.some((i) => i.path.join(".") === "teamId")).toBe(true);
+  });
+});
+
+describe("zValidate keeps context-set headers on the 400", () => {
+  it("a header set with c.header() before the validator survives the failed-validation response", async () => {
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.header("X-Request-Id", "req-1");
+      await next();
+    });
+    app.post("/j", zValidate("json", jsonSchema), (c) => c.json(c.req.valid("json")));
+    const res = await app.request("http://test/j", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ a: 1, k: "z" }),
+    });
+    const body = await res.json();
+    expectBaseValidationBody(res, body);
+    // The hook must build the 400 via `c.json(...)` (context), not a raw
+    // `new Response(...)`: the raw Response discards headers the middleware
+    // already set on the context.
+    expect(res.headers.get("x-request-id")).toBe("req-1");
   });
 });
