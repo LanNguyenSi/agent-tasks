@@ -4,6 +4,7 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- The package now runs zod 4 (`^4.6.7`, closing GHSA-mrhx-c7xc-m3w5, which is fixed only in the v4 core). The tool input shapes use the v4 API (`z.guid()` keeps the zod 3 UUID accept-set; `z.url()` and `z.iso.datetime()` are the v4 homes of `.url()` and `.datetime()`, accept-sets verified against 3.25.76), and the generic 400 zod-issue summary accepts both wire forms of an enum mismatch, zod 3 (`invalid_enum_value` with `options`) and zod 4 (`invalid_value` with `values`), producing the same `allowed` string, so one mcp-server build works against an old (zod 3) and a new (zod 4) backend.
 - The `task_merge` description names `governanceMode` AUTONOMOUS (legacy `soloMode=true` only a fallback while `governanceMode` is unset) as the switch that allows a self-merge, matching `task_finish`.
 - Tool descriptions and the workflow primer match backend behavior: `task_finish` names `governanceMode` AUTONOMOUS (not `soloMode`) for work-claim `autoMerge`, `task_creator_abandon` covers open and backlog tasks, `task_create` no longer names `task_pickup` as a confidence gate, `task_submit_pr` and the `cross_repo_pr_rejected` entry use the task's deliverable repo when set, and `backlog_not_promoted` is no longer attributed to `task_pickup`.
 - `creator_abandon_conflict` also matches the backend's new `Task must be open or backlog and unclaimed to creator-abandon` text (the older text still maps); its recipe names backlog.

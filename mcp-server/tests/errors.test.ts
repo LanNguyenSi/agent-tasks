@@ -915,6 +915,106 @@ describe("mapBackendError catalog", () => {
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
 
+  // zod 3 -> 4 migration: a backend enum mismatch reaches this summarizer in
+  // either wire form depending on which zod the backend runs -- zod 3 emits
+  // code `invalid_enum_value` with the allowed values in `options`, zod 4
+  // merged enum/literal mismatches into code `invalid_value` with the values
+  // in `values`. Both forms must produce the SAME `allowed` string so one
+  // mcp-server build works against an old (zod 3) and a new (zod 4) backend;
+  // each form and each rendering below is its own case.
+  it("generic degrade: a zod 3 enum mismatch issue (code invalid_enum_value + options) surfaces the allowed values as detail.issues[].allowed", () => {
+    const err = mapBackendError(400, {
+      success: false,
+      error: {
+        issues: [
+          {
+            code: "invalid_enum_value",
+            options: ["bugfix", "feature", "docs"],
+            path: ["templateData", "taskType"],
+            message: "Invalid enum value. Expected 'bugfix' | 'feature' | 'docs', received 'tooling'",
+          },
+        ],
+        name: "ZodError",
+      },
+    });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>>; totalIssues: number } | undefined;
+    expect(detail?.totalIssues).toBe(1);
+    expect(detail?.issues[0]?.allowed).toBe("bugfix|feature|docs");
+    expect(detail?.issues[0]?.path).toBe("templateData.taskType");
+    expect(detail?.issues[0]?.code).toBe("invalid_enum_value");
+  });
+
+  it("generic degrade: a zod 4 enum mismatch issue (code invalid_value + values) surfaces the allowed values as detail.issues[].allowed, identical output to the zod 3 form", () => {
+    const err = mapBackendError(400, {
+      success: false,
+      error: {
+        issues: [
+          {
+            code: "invalid_value",
+            values: ["bugfix", "feature", "docs"],
+            path: ["templateData", "taskType"],
+            message: "Invalid option: expected one of \"bugfix\"|\"feature\"|\"docs\"",
+            origin: "string",
+          },
+        ],
+        name: "ZodError",
+      },
+    });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>>; totalIssues: number } | undefined;
+    expect(detail?.totalIssues).toBe(1);
+    expect(detail?.issues[0]?.allowed).toBe("bugfix|feature|docs");
+    expect(detail?.issues[0]?.path).toBe("templateData.taskType");
+    expect(detail?.issues[0]?.code).toBe("invalid_value");
+  });
+
+  it("generic degrade: a numeric option in the zod 4 form (code invalid_value + values) renders as its decimal string, same as the zod 3 form", () => {
+    const err = mapBackendError(400, {
+      error: { issues: [{ code: "invalid_value", path: ["n"], values: ["a", 2, "b"], message: "bad" }] },
+    });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>> } | undefined;
+    expect(detail?.issues[0]?.allowed).toBe("a|2|b");
+  });
+
+  it("generic degrade: any other non-string value in the zod 4 form (code invalid_value + values) renders as a visible placeholder, same as the zod 3 form", () => {
+    const err = mapBackendError(400, {
+      error: { issues: [{ code: "invalid_value", path: ["n"], values: ["a", { x: 1 }, "b"], message: "bad" }] },
+    });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>> } | undefined;
+    expect(detail?.issues[0]?.allowed).toBe("a|?|b");
+  });
+
+  it("generic degrade: an empty values array on a zod 4 issue never fabricates an empty allowed key (the entry survives on its path/code/message alone)", () => {
+    const err = mapBackendError(400, {
+      error: { issues: [{ code: "invalid_value", path: ["n"], values: [], message: "bad" }] },
+    });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>> } | undefined;
+    expect(detail?.issues[0]?.allowed).toBeUndefined();
+    expect(detail?.issues[0]?.code).toBe("invalid_value");
+    expect(Object.keys(detail?.issues[0] ?? {}).sort()).toEqual(["code", "message", "path"]);
+  });
+
+  it("generic degrade: a malformed zod 4 issue (code invalid_value with a non-array values field) gets no allowed key and must not throw", () => {
+    const err = mapBackendError(400, {
+      error: { issues: [{ code: "invalid_value", path: ["n"], values: "bugfix", message: "bad" }] },
+    });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>> } | undefined;
+    expect(detail?.issues[0]?.allowed).toBeUndefined();
+    expect(detail?.issues[0]?.code).toBe("invalid_value");
+  });
+
+  it("generic degrade: if a body ever carried both forms on one issue, the code picks the array (invalid_enum_value reads options, invalid_value reads values)", () => {
+    const both = (code: string) =>
+      mapBackendError(400, {
+        error: {
+          issues: [{ code, path: ["n"], options: ["from-options"], values: ["from-values"], message: "bad" }],
+        },
+      });
+    const v3 = both("invalid_enum_value") as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
+    const v4 = both("invalid_value") as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
+    expect(v3.error.detail?.issues?.[0]?.allowed).toBe("from-options");
+    expect(v4.error.detail?.issues?.[0]?.allowed).toBe("from-values");
+  });
+
   it("generic degrade: a multi-segment (nested/array-index) zod path is joined into a single dot-separated string rather than a nested array (clampDetailValue's own depth budget would otherwise silently truncate a nested path array)", () => {
     const err = mapBackendError(400, {
       error: {

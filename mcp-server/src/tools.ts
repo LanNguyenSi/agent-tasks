@@ -47,7 +47,7 @@ export interface ToolDefinition<Shape extends ZodRawShape = ZodRawShape> {
   name: string;
   description: string;
   inputShape: Shape;
-  handler: (args: z.objectOutputType<Shape, z.ZodTypeAny>) => Promise<unknown>;
+  handler: (args: z.output<z.ZodObject<Shape>>) => Promise<unknown>;
 }
 
 const transitionStatusEnum = z.enum([
@@ -65,7 +65,11 @@ const TASK_TYPE_LIST = TASK_TYPE_VALUES.join(", ");
 
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
-const uuid = () => z.string().uuid();
+// z.guid() (not v4's z.uuid()): v3's .uuid() accepted any 8-4-4-4-12 hex
+// string; v4's z.uuid() additionally enforces RFC 9562 version/variant bits
+// and would start rejecting ids like 00000000-0000-0000-0000-000000000001.
+// z.guid() keeps the v3 accept-set (verified against 3.25.76).
+const uuid = () => z.guid();
 const operationKey = () => z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 // pull_requests_create's idempotencyKey: printable ASCII without whitespace
 // (\x21-\x7E only), 1-255 chars. That is a header-safe subset of the legacy
@@ -439,7 +443,10 @@ export function buildTools(
             "Free-text summary of the work, recorded on the task timeline (plain prose or markdown, max 5000 chars). Not a structured payload: do not wrap it in XML or JSON tags — it is stored and rendered as text.",
           )
           .optional(),
-        prUrl: z.string().url().optional(),
+        // z.url(): v4 home of v3's .url(); accept-set verified identical to
+        // 3.25.76 on a URL() battery (scheme-carrying strings pass, spaces
+        // and bare authorities fail).
+        prUrl: z.url().optional(),
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
@@ -489,7 +496,10 @@ export function buildTools(
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        dueAt: z.string().datetime().optional(),
+        // z.iso.datetime(): v4 home of v3's .datetime(); accept-set verified
+        // identical to 3.25.76 (Z-suffixed instants, optional fractional
+        // seconds; offsets and bare local times rejected).
+        dueAt: z.iso.datetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),
@@ -682,7 +692,7 @@ export function buildTools(
         name: z.string().min(1).max(255),
         description: z.string().max(1000).optional(),
         content: z.string().max(1_048_576).optional(),
-        url: z.string().url().max(2048).optional(),
+        url: z.url().max(2048).optional(),
         mimeType: z.string().max(255).optional(),
       },
       handler: async ({ taskId, ...input }) =>
@@ -948,7 +958,10 @@ export function buildTools(
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        dueAt: z.string().datetime().optional(),
+        // z.iso.datetime(): v4 home of v3's .datetime(); accept-set verified
+        // identical to 3.25.76 (Z-suffixed instants, optional fractional
+        // seconds; offsets and bare local times rejected).
+        dueAt: z.iso.datetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z
           .array(z.string().trim().min(1).max(100))
@@ -997,7 +1010,7 @@ export function buildTools(
       inputShape: {
         taskId: uuid(),
         branchName: z.string().max(255).nullable().optional(),
-        prUrl: z.string().url().nullable().optional(),
+        prUrl: z.url().nullable().optional(),
         prNumber: z.number().int().positive().nullable().optional(),
         // Symmetry with task_finish's own result field (same field, same
         // storage): uncapped here let a caller feed an arbitrarily large

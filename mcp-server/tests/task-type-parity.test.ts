@@ -14,7 +14,11 @@ function tool(name: string) {
 }
 
 function templateDataDescription(name: string): string {
-  return tool(name).inputShape.templateData.description ?? "";
+  // ZodRawShape's values are typed as the core $ZodType in zod 4, which
+  // carries no `description`; the runtime values are classic z.ZodType
+  // instances (that is what z.enum/z.record build here), whose declared
+  // `description` property reads back what .describe() set.
+  return (tool(name).inputShape.templateData as z.ZodType).description ?? "";
 }
 
 describe("templateData.taskType values in tool descriptions", () => {
@@ -45,7 +49,18 @@ describe("invalid taskType 400 on the wire", () => {
     const parsed = z.object({ templateData: templateDataSchema }).safeParse({ templateData: { taskType: "tooling" } });
     expect(parsed.success).toBe(false);
     // Same shape the backend sends: c.json({ success: false, error }, 400).
-    const wire = JSON.parse(JSON.stringify({ success: false, error: (parsed as { error: unknown }).error }));
+    // The error object is serialized through its `issues` array on purpose:
+    // zod 3's ZodError kept `issues` as an own enumerable property, so
+    // JSON.stringify(error) produced { issues, name } directly; zod 4 makes
+    // `issues` non-enumerable (JSON.stringify(error) is then only
+    // { name, message }), so the wire body is built from `issues`
+    // explicitly. Either way the body on the wire is
+    // { success: false, error: { issues: [...], name: "ZodError" } }, which
+    // is what errors.ts consumes.
+    const error = parsed as unknown as { error: { issues: unknown[]; name: string } };
+    const wire = JSON.parse(
+      JSON.stringify({ success: false, error: { issues: error.error.issues, name: error.error.name } }),
+    );
     const mapped = mapBackendError(400, wire) as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
     const issues = mapped.error.detail?.issues ?? [];
     const entry = issues.find((e) => e.path === "templateData.taskType");
