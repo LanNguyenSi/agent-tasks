@@ -11,7 +11,7 @@ export const directReviewSchema = z.object({ action: z.enum(["approve", "request
 export const directPatchSchema = z.object({
   title: z.string().min(1).max(255).optional(), description: z.string().nullable().optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(), status: status.optional(),
-  dueAt: z.string().datetime().nullable().optional(), branchName: z.string().max(255).nullable().optional(),
+  dueAt: z.iso.datetime().nullable().optional(), branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(), prNumber: z.number().int().positive().nullable().optional(),
   result: z.string().max(32768).nullable().optional(), templateData: templateDataSchema.nullable().optional(),
   externalRef: z.string().trim().min(1).max(255).nullable().optional(),

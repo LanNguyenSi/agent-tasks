@@ -19,13 +19,13 @@ const contextSchema = z.object({
   forceTransition: z.object({ from: text, to: text, forcedRules: z.array(text), forceReason: text.nullable() }).strict().optional(),
 }).strict();
 const mergeMethod = z.enum(["merge", "squash", "rebase"]).default("squash");
-const githubMergeBody = z.object({ taskId: z.string().uuid(), owner: z.string().min(1), repo: z.string().min(1), merge_method: mergeMethod, idempotencyKey: z.string().min(1).max(128), prNumber: z.number().int().positive() }).strict();
+const githubMergeBody = z.object({ taskId: z.guid(), owner: z.string().min(1), repo: z.string().min(1), merge_method: mergeMethod, idempotencyKey: z.string().min(1).max(128), prNumber: z.number().int().positive() }).strict();
 const finishBody = z.object({ result: z.string().max(5000).optional(), prUrl: z.string().max(32768).optional(), prNumber: z.number().int().positive().optional(), autoMerge: z.boolean().default(false), mergeMethod }).strict();
 const reviewBody = z.object({ result: z.string().max(5000).optional(), outcome: z.enum(["approve", "request_changes"]), autoMerge: z.boolean().default(false), mergeMethod }).strict();
 const patchSchema = z.object({
   status: z.string().max(128), result: text.nullable().optional(),
   title: text.optional(), description: text.nullable().optional(), templateData: z.unknown().optional(), branchName: text.nullable().optional(), prUrl: text.nullable().optional(), prNumber: z.number().int().positive().nullable().optional(), deliverableRepo: text.nullable().optional(), labels: z.array(text).optional(),
-  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(), dueAt: z.string().datetime().nullable().optional(), externalRef: text.nullable().optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(), dueAt: z.iso.datetime().nullable().optional(), externalRef: text.nullable().optional(),
   claimedByUserId: z.null().optional(), claimedByAgentId: z.null().optional(), claimedAt: z.null().optional(),
   reviewClaimedByUserId: z.null().optional(), reviewClaimedByAgentId: z.null().optional(), reviewClaimedAt: z.null().optional(),
 }).strict();
@@ -36,9 +36,9 @@ const planSchema = z.object({
   remote: z.boolean(), alreadyMerged: z.boolean().optional(), patch: patchSchema,
   response: z.object({ kind: z.enum(["work", "review"]).optional(), targetStatus: z.string().max(128).optional(), outcome: z.enum(["approve", "request_changes"]).optional(), skippedGates: z.array(z.string().max(128)).max(128).optional() }).strict(),
   acknowledge: z.boolean(),
-  signals: z.array(z.object({ type: z.enum(["review_needed", "changes_requested", "task_approved", "self_merge_notice", "task_available", "task_force_transitioned"]), recipientAgentId: z.string().uuid().nullable(), recipientUserId: z.string().uuid().nullable(), context: contextSchema }).strict()).max(10000),
+  signals: z.array(z.object({ type: z.enum(["review_needed", "changes_requested", "task_approved", "self_merge_notice", "task_available", "task_force_transitioned"]), recipientAgentId: z.guid().nullable(), recipientUserId: z.guid().nullable(), context: contextSchema }).strict()).max(10000),
   comments: z.array(text).max(10),
-  audits: z.array(z.object({ action: z.enum(["task.transitioned", "task.reviewed", "task.released", "task.auto_merged", "task.merged", "task.self_merge_notice_emitted", "task.foreign_pr_linked", "task.transitioned.forced", "task.backlog_discarded", "task.backlog_promoted", "task.backlog_demoted", "task.unabandoned", "task.created", "task.labels_changed", "task.deliverable_repo_changed"]), payload: z.record(z.unknown()) }).strict()).max(10),
+  audits: z.array(z.object({ action: z.enum(["task.transitioned", "task.reviewed", "task.released", "task.auto_merged", "task.merged", "task.self_merge_notice_emitted", "task.foreign_pr_linked", "task.transitioned.forced", "task.backlog_discarded", "task.backlog_promoted", "task.backlog_demoted", "task.unabandoned", "task.created", "task.labels_changed", "task.deliverable_repo_changed"]), payload: z.record(z.string(), z.unknown()) }).strict()).max(10),
 }).strict();
 export type GroundingRoutePlan = z.infer<typeof planSchema>;
 
@@ -54,7 +54,18 @@ export async function buildGroundingRoutePlan(db: Prisma.TransactionClient, task
       (["review_finish", "self_approve_finish"].includes(kind) && !["approve", "request_changes"].includes(request.action)) ||
       (standaloneMerge && (request.action !== "merge" || !remote)) ||
       (kind === "abandon" && (request.action !== "abandon" || remote))) throw new GroundingAccessError("bad_state", 409);
-  const body = (kind === "github_merge" ? githubMergeBody : kind === "work_finish" ? finishBody : kind === "review_finish" || kind === "self_approve_finish" ? reviewBody : kind === "task_merge" ? z.object({ mergeMethod }).strict() : z.object({}).strict()).safeParse(transport.body);
+  // Parse the selected body schema per branch instead of calling .safeParse on
+  // a schema union: in zod 4 a method call on `A | B | … | z.object({}).strict()`
+  // resolves `.data` to the intersection of all outputs, and the trailing empty
+  // strict object (inferred `Record<string, never>`) collapses every field to
+  // never, which broke the `body.data as …` narrowing below. Branching the call
+  // keeps `.data` a union, matching the base (zod 3) behaviour.
+  const body =
+    kind === "github_merge" ? githubMergeBody.safeParse(transport.body)
+      : kind === "work_finish" ? finishBody.safeParse(transport.body)
+        : kind === "review_finish" || kind === "self_approve_finish" ? reviewBody.safeParse(transport.body)
+          : kind === "task_merge" ? z.object({ mergeMethod }).strict().safeParse(transport.body)
+            : z.object({}).strict().safeParse(transport.body);
   if (!body.success) throw new GroundingAccessError("bad_state", 409);
   if (kind === "github_merge") {
     const input = body.data as z.infer<typeof githubMergeBody>;

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { Prisma, type Project } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
@@ -56,7 +56,7 @@ const createProjectSchema = z.object({
     .max(100)
     .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with dashes"),
   description: z.string().optional(),
-  teamId: z.string().uuid(),
+  teamId: z.guid(),
   githubRepo: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, "GitHub repo format: owner/repo")
@@ -296,7 +296,7 @@ projectRouter.get("/projects/by-slug/:slug", async (c) => {
 
 // ── Create project ────────────────────────────────────────────────────────────
 
-projectRouter.post("/projects", zValidator("json", createProjectSchema), async (c) => {
+projectRouter.post("/projects", zValidate("json", createProjectSchema), async (c) => {
   const actor = c.get("actor");
   const body = c.req.valid("json");
 
@@ -564,7 +564,7 @@ async function lockProjectAdminGrants(db: Prisma.TransactionClient, actor: Extra
   await db.$queryRaw`SELECT id FROM project_members WHERE "projectId" = ${project.id} AND "userId" = ${actor.userId} FOR SHARE`;
 }
 
-projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), async (c) => {
+projectRouter.patch("/projects/:id", zValidate("json", updateProjectSchema), async (c) => {
   const actor = c.get("actor");
   if (actor.type === "agent") return forbidden(c, "Agents cannot update projects");
   const body = c.req.valid("json");

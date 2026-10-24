@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import type { AppVariables } from "../types/hono.js";
 import type { Actor } from "../types/auth.js";
 import { prisma } from "../lib/prisma.js";
@@ -172,7 +172,7 @@ function retryDelay(): Promise<void> {
 }
 
 const createPrSchema = z.object({
-  taskId: z.string().uuid(),
+  taskId: z.guid(),
   owner: z.string().min(1),
   repo: z.string().min(1),
   head: z.string().min(1),
@@ -186,7 +186,7 @@ githubRouter.post(
   "/pull-requests",
   requireScope(SCOPES.TasksUpdate),
   requireScope(SCOPES.GithubPrCreate),
-  zValidator("json", createPrSchema),
+  zValidate("json", createPrSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "agent") {
@@ -463,7 +463,7 @@ githubRouter.post(
 // ── Merge PR ─────────────────────────────────────────────────────────────────
 
 const mergePrSchema = z.object({
-  taskId: z.string().uuid(),
+  taskId: z.guid(),
   owner: z.string().min(1),
   repo: z.string().min(1),
   merge_method: z.enum(["merge", "squash", "rebase"]).default("squash"),
@@ -474,7 +474,7 @@ githubRouter.post(
   "/pull-requests/:prNumber/merge",
   requireScope(SCOPES.TasksTransition),
   requireScope(SCOPES.GithubPrMerge),
-  zValidator("json", mergePrSchema),
+  zValidate("json", mergePrSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "agent") {
@@ -783,7 +783,7 @@ githubRouter.post(
 // ── Comment on PR ────────────────────────────────────────────────────────────
 
 const commentPrSchema = z.object({
-  taskId: z.string().uuid(),
+  taskId: z.guid(),
   owner: z.string().min(1),
   repo: z.string().min(1),
   body: z.string().min(1),
@@ -793,7 +793,7 @@ const commentPrSchema = z.object({
 githubRouter.post(
   "/pull-requests/:prNumber/comments",
   requireScope("tasks:comment"),
-  zValidator("json", commentPrSchema),
+  zValidate("json", commentPrSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "agent") {

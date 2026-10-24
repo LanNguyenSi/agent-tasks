@@ -23,13 +23,13 @@ export async function groundingTransaction<T>(client: PrismaClient, run: (db: Pr
 /** Participating writers lock every parent first, then tasks in stable order. */
 export async function lockGroundingProjects(db: Prisma.TransactionClient, projectIds: readonly string[]) {
   for (const id of [...new Set(projectIds)].sort()) {
-    if (!z.string().uuid().safeParse(id).success) throw new GroundingAccessError("not_found", 404);
+    if (!z.guid().safeParse(id).success) throw new GroundingAccessError("not_found", 404);
     const rows = await db.$queryRaw<{ id: string }[]>`SELECT id FROM projects WHERE id = ${id} FOR UPDATE`;
     if (!rows.length) throw new GroundingAccessError("not_found", 404);
   }
 }
 export async function lockGroundingTask(db: Prisma.TransactionClient, taskId: string): Promise<GroundingTask> {
-  if (!z.string().uuid().safeParse(taskId).success) throw new GroundingAccessError("not_found", 404);
+  if (!z.guid().safeParse(taskId).success) throw new GroundingAccessError("not_found", 404);
   const before = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
   if (!before) throw new GroundingAccessError("not_found", 404);
   await lockGroundingProjects(db, [before.projectId]);

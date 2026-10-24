@@ -9,6 +9,16 @@ describe("strict grounding runtime configuration", () => {
   it.each([undefined, "", '{"enabled":false}'])("preserves explicit empty disabled input %s", raw => {
     expect(parseGroundingRuntimeConfig(raw)).toEqual({ enabled: false });
   });
+  it("accepts a non-RFC-variant hex project id (z.guid keeps the v3 .uuid accept set)", () => {
+    // Project ids in fixtures/config may be any 8-4-4-4-12 hex string, not just
+    // RFC 9562 (version/variant bits ignored). zod 4's z.uuid() would reject the
+    // all-zero-variant id below; the schema uses z.string().guid(), so it passes.
+    const loose = "00000000-0000-0000-0000-000000000001";
+    const value = valid();
+    value.trust[0]!.projectIds = [loose];
+    value.creationPolicy[0]!.projectId = loose;
+    expect(parseGroundingRuntimeConfig(JSON.stringify(value)).enabled).toBe(true);
+  });
   it("validates public trust and defaults the challenge lifetime", () => {
     const input = valid();
     expect(parseGroundingRuntimeConfig(JSON.stringify(input))).toEqual({ ...input, challengeSeconds: 900 });

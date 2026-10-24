@@ -19,7 +19,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.resolve(__dirname, "../../src");
 
 // Whitespace-tolerant so a reformatted `z.string()\n  .url(` cannot slip past.
-const FORBIDDEN = /z\s*\.\s*string\s*\(\s*\)\s*\.\s*url\s*\(/;
+// Matches BOTH the v3 form `z.string().url()` and the v4 form `z.url()` — after
+// the zod 4 migration every bare URL check is `z.url()`, so a bare v4 URL in
+// request-handling code is exactly as dangerous as the old bare `.url()` was.
+const FORBIDDEN = /z\s*\.\s*string\s*\(\s*\)\s*\.\s*url\s*\(|\bz\.url\s*\(/;
 
 // The only legitimate bare-url sites:
 //  - lib/url-guard.ts: the canonical helper (defines httpUrl over .url()).

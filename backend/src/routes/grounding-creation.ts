@@ -1,6 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { type Signal, type PrismaClient } from "@prisma/client";
 import type { AppVariables } from "../types/hono.js";
 import { maybeDeliverSignalWebhook } from "../services/signal.js";
@@ -17,13 +17,13 @@ import { GroundingReceiptVerificationError } from "../services/grounding-receipt
 
 /** Server-owned, explicit selection. No environment, project flag, metadata or other-task inference. */
 export type GroundingCreationPolicy = readonly { projectId: string; subjectMode: "TASK_SPEC" | "CODE_HEAD" }[];
-const policySchema = z.array(z.object({ projectId: z.string().uuid(), subjectMode: z.enum(["TASK_SPEC", "CODE_HEAD"]) }).strict());
+const policySchema = z.array(z.object({ projectId: z.guid(), subjectMode: z.enum(["TASK_SPEC", "CODE_HEAD"]) }).strict());
 export function createGroundingCreationRouter(db: PrismaClient, attempts?: GroundingAttemptsService, policy: GroundingCreationPolicy = []) {
   const router = new Hono<{ Variables: AppVariables }>();
   for (const batch of [false, true]) {
     // The legacy creator's own body validation, reused so a caller without
     // project access gets exactly the legacy answer.
-    const legacyValidation = zValidator("json", batch ? batchImportSchema : createTaskSchema) as unknown as MiddlewareHandler<{ Variables: AppVariables }>;
+    const legacyValidation = zValidate("json", batch ? batchImportSchema : createTaskSchema) as unknown as MiddlewareHandler<{ Variables: AppVariables }>;
     router.post(`/projects/:projectId/tasks${batch ? "/import" : ""}`, async (c, next) => {
       // An empty selection leaves every project to the legacy creator.
       if (policy.length === 0) return next();

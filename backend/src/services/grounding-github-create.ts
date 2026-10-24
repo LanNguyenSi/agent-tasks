@@ -108,7 +108,7 @@ export class GroundingGithubCreateService {
 
   async createOrResume(taskId: string, inputActor: Actor, inputKey: string, input: unknown): Promise<GithubCreateResult> {
     const actor = agent(inputActor); const request = normalizeGithubCreateRequest(input);
-    const key = z.string().trim().min(1).max(255).parse(inputKey); z.string().uuid().parse(taskId);
+    const key = z.string().trim().min(1).max(255).parse(inputKey); z.guid().parse(taskId);
     const reservation = await this.transaction(async db => {
       const previous = await db.groundingGithubCreateOperation.findUnique({ where: { taskId_key: { taskId, key } } });
       if (previous) { this.match(previous, actor, request); return (await this.load(db, taskId, actor, key, request)).operation; }

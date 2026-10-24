@@ -140,7 +140,7 @@ const transitionStatusEnum = z.enum([
   "done",
 ]);
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
-const uuid = () => z.string().uuid();
+const uuid = () => z.guid();
 
 function textResult(payload: unknown) {
   return {
@@ -465,7 +465,7 @@ function buildServer(token: string): McpServer {
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        dueAt: z.string().datetime().optional(),
+        dueAt: z.iso.datetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),

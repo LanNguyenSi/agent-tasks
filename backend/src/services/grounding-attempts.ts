@@ -17,7 +17,7 @@ import {
 } from "./grounding-context.js";
 
 const token = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
-const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
+const uuid = z.string().guid().regex(/^[0-9a-f-]+$/);
 export const groundingSessionSchema = z.object({ id: token, revision: z.number().int().positive().max(2147483647) }).strict();
 export type GroundingSession = z.infer<typeof groundingSessionSchema>;
 export interface GroundingAttemptsConfig {

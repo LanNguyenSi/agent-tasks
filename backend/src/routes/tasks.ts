@@ -1,7 +1,7 @@
 import { authorizeDirectSubmission, mutateDirectTask } from "../services/grounding-direct-mutations.js";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
@@ -537,8 +537,8 @@ export const createTaskSchema = z.object({
   description: z.string().optional(),
   status: z.enum(["backlog", "open", "in_progress", "review", "done"]).optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
-  workflowId: z.string().uuid().optional(),
-  dueAt: z.string().datetime().optional(),
+  workflowId: z.guid().optional(),
+  dueAt: z.iso.datetime().optional(),
   templateData: templateDataSchema.optional(),
   externalRef: z.string().trim().min(1).max(255).optional(),
   labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
@@ -546,7 +546,7 @@ export const createTaskSchema = z.object({
   // Informational + gating: task_pickup already filters tasks whose blockers
   // aren't `done`. Post-create dep management lives on the
   // /tasks/:id/dependencies endpoints (human-only).
-  dependsOn: z.array(z.string().uuid()).max(50).optional(),
+  dependsOn: z.array(z.guid()).max(50).optional(),
   // Explicit opt-in/out for debug-flavor classification. When omitted the
   // backend leaves `metadata.debugFlavor` unset and the title/description/label
   // heuristic (`detectDebugFlavor`) runs lazily at task_pickup. When set, the
@@ -581,7 +581,7 @@ export const updateTaskSchema = z.object({
   // still 400s there for the same reason as "abandoned" (no workflow
   // definition declares a transition into "backlog").
   status: z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"]).optional(),
-  dueAt: z.string().datetime().nullable().optional(),
+  dueAt: z.iso.datetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(),
   prNumber: z.number().int().positive().nullable().optional(),
@@ -1136,7 +1136,7 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
 
 taskRouter.post(
   "/projects/:projectId/tasks",
-  zValidator("json", createTaskSchema),
+  zValidate("json", createTaskSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     const projectId = c.req.param("projectId");
@@ -1408,7 +1408,7 @@ export const batchImportSchema = z.object({
 
 taskRouter.post(
   "/projects/:projectId/tasks/import",
-  zValidator("json", batchImportSchema),
+  zValidate("json", batchImportSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     const projectId = c.req.param("projectId");
@@ -4639,7 +4639,7 @@ const taskMergeSchema = z.object({
 
 taskRouter.post(
   "/tasks/:id/merge",
-  zValidator("json", taskMergeSchema),
+  zValidate("json", taskMergeSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type === "agent" && !actor.scopes.includes(SCOPES.GithubPrMerge)) {
@@ -5917,7 +5917,7 @@ function respecAuditValue(value: unknown): unknown {
 
 const RESPEC_STATE_CONFLICT_MESSAGE = "Task must be open or backlog and unclaimed to respec";
 
-taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), async (c) => {
+taskRouter.post("/tasks/:id/respec", zValidate("json", respecTaskValidator), async (c) => {
   const actor = c.get("actor") as Actor;
 
   if (actor.type === "agent" && !actor.scopes.includes("tasks:update")) {
@@ -6203,7 +6203,7 @@ taskRouter.delete("/tasks/:id", async (c) => {
 
 const ATTACHMENT_FILE_FIELD = "file";
 
-taskRouter.post("/tasks/:id/attachments", zValidator("json", createAttachmentSchema), async (c) => {
+taskRouter.post("/tasks/:id/attachments", zValidate("json", createAttachmentSchema), async (c) => {
   const actor = c.get("actor") as Actor;
   if (actor.type !== "human") {
     return forbidden(c, "Agents cannot add attachments");
@@ -6625,7 +6625,7 @@ taskRouter.get("/tasks/:id/artifacts/:artifactId", async (c) => {
   return c.json({ artifact });
 });
 
-taskRouter.post("/tasks/:id/artifacts", zValidator("json", createArtifactSchema), async (c) => {
+taskRouter.post("/tasks/:id/artifacts", zValidate("json", createArtifactSchema), async (c) => {
   const actor = c.get("actor") as Actor;
   if (actor.type === "agent" && !actor.scopes.includes("tasks:update")) {
     return forbidden(c, "Missing scope: tasks:update");
@@ -6775,7 +6775,7 @@ const createCommentSchema = z.object({
   content: z.string().min(1).max(5000),
 });
 
-taskRouter.post("/tasks/:id/comments", zValidator("json", createCommentSchema), async (c) => {
+taskRouter.post("/tasks/:id/comments", zValidate("json", createCommentSchema), async (c) => {
   const actor = c.get("actor") as Actor;
 
   if (actor.type === "agent" && !actor.scopes.includes("tasks:comment")) {
@@ -6893,10 +6893,10 @@ async function wouldCreateCycle(taskId: string, blockerTaskId: string): Promise<
 }
 
 const dependencySchema = z.object({
-  blockedByTaskId: z.string().uuid(),
+  blockedByTaskId: z.guid(),
 });
 
-taskRouter.post("/tasks/:id/dependencies", zValidator("json", dependencySchema), async (c) => {
+taskRouter.post("/tasks/:id/dependencies", zValidate("json", dependencySchema), async (c) => {
   const actor = c.get("actor") as Actor;
   if (actor.type !== "human") {
     return forbidden(c, "Only humans can manage dependencies");
@@ -7291,7 +7291,7 @@ const adminReleaseSchema = z.object({
 
 taskRouter.post(
   "/tasks/:id/admin-release",
-  zValidator("json", adminReleaseSchema),
+  zValidate("json", adminReleaseSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "human") {
@@ -7430,7 +7430,7 @@ type ReassignOutcome =
 
 taskRouter.post(
   "/tasks/:id/admin-reassign",
-  zValidator("json", adminReassignSchema),
+  zValidate("json", adminReassignSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "human") {
@@ -7626,7 +7626,7 @@ function targetAsGateActor(target: ReassignHolder): Actor {
 
 taskRouter.post(
   "/tasks/:id/transition",
-  zValidator("json", transitionSchema),
+  zValidate("json", transitionSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
 
@@ -7945,7 +7945,7 @@ const reviewSchema = z.object({
 
 taskRouter.post(
   "/tasks/:id/review",
-  zValidator("json", reviewSchema),
+  zValidate("json", reviewSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
 
