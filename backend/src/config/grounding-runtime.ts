@@ -2,7 +2,7 @@ import { createPublicKey } from "node:crypto";
 import { z } from "zod";
 
 const token = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
-const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
+const uuid = z.string().guid().regex(/^[0-9a-f-]+$/);
 export const groundingChallengeSeconds = z.number().int().positive().max(86400);
 export const groundingAudience = token;
 const unique = (values: string[]) => new Set(values).size === values.length;

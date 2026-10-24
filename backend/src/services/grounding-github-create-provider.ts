@@ -16,7 +16,7 @@ export function normalizeGithubCreateRequest(input: unknown): GithubCreateReques
   return { ...request, owner, repo, head: parts.length === 2 ? `${parts[0]!.toLowerCase()}:${parts[1]}` : request.head };
 }
 export function githubCreateCorrelationMarker(operationId: string): string {
-  return `<!-- agent-tasks:pr-create:${z.string().uuid().parse(operationId)} -->`;
+  return `<!-- agent-tasks:pr-create:${z.guid().parse(operationId)} -->`;
 }
 export function hasGithubCreateCorrelation(raw: unknown, operationId: string): boolean {
   const parsed = z.object({ body: z.string().max(65700) }).safeParse(raw);

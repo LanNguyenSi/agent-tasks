@@ -51,6 +51,7 @@ import { Hono } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import { isoDatetime } from "../lib/zod-formats.js";
 import type { AppVariables } from "../types/hono.js";
 import { logger, setLogContext } from "../lib/logger.js";
 import { httpUrl } from "../lib/url-guard.js";
@@ -140,7 +141,7 @@ const transitionStatusEnum = z.enum([
   "done",
 ]);
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
-const uuid = () => z.string().uuid();
+const uuid = () => z.guid();
 
 function textResult(payload: unknown) {
   return {
@@ -465,7 +466,7 @@ function buildServer(token: string): McpServer {
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        dueAt: z.string().datetime().optional(),
+        dueAt: isoDatetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { prisma } from "../lib/prisma.js";
 import { hasProjectAccess, hasProjectRole, isProjectAdmin } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
@@ -201,16 +201,26 @@ export const workflowDefinitionSchema = z
     }
   });
 
-const createWorkflowSchema = z.object({
+export const createWorkflowSchema = z.object({
   name: z.string().min(1).max(100),
-  projectId: z.string().uuid(),
+  projectId: z.guid(),
   isDefault: z.boolean().default(false),
   definition: workflowDefinitionSchema,
 });
 
-const updateWorkflowSchema = createWorkflowSchema
+// createWorkflowSchema.isDefault carries `.default(false)`. In zod 3 a
+// `.partial()` wrapped that field in `ZodOptional` and an ABSENT isDefault
+// stayed undefined (the default only fires for a present-but-undefined value,
+// never for a missing key under partial). zod 4 instead applies the inner
+// default once the field is optional, so a bare PATCH/PUT body would gain
+// `isDefault: false` and the update route would read that as "change the
+// default flag" and invalidate context the base leaves untouched. Re-assert
+// isDefault as a plain optional (no default) so the parsed body matches the
+// base: absent means "do not change", not "set false".
+export const updateWorkflowSchema = createWorkflowSchema
   .omit({ projectId: true })
-  .partial();
+  .partial()
+  .extend({ isDefault: z.boolean().optional() });
 
 // ── Rules catalog (public-ish: needs auth but no role) ──────────────────────
 
@@ -476,7 +486,7 @@ workflowRouter.get("/projects/:projectId/workflows", async (c) => {
 
 workflowRouter.post(
   "/projects/:projectId/workflows",
-  zValidator("json", createWorkflowSchema.omit({ projectId: true })),
+  zValidate("json", createWorkflowSchema.omit({ projectId: true })),
   async (c) => {
     const actor = c.get("actor");
     const projectId = c.req.param("projectId");
@@ -540,7 +550,7 @@ workflowRouter.get("/workflows/:id", async (c) => {
 
 workflowRouter.put(
   "/workflows/:id",
-  zValidator("json", updateWorkflowSchema),
+  zValidate("json", updateWorkflowSchema),
   async (c) => {
     const actor = c.get("actor");
 
@@ -632,7 +642,7 @@ const validateTransitionSchema = z.object({
 
 workflowRouter.post(
   "/workflows/:id/validate-transition",
-  zValidator("json", validateTransitionSchema),
+  zValidate("json", validateTransitionSchema),
   async (c) => {
   const actor = c.get("actor");
   const body = c.req.valid("json");

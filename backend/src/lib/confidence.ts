@@ -51,13 +51,30 @@ export function normalizeTemplateDataList(items: string[]): string {
 
 const templateDataStringField = () =>
   z
-    .union([z.string(), z.array(z.string()).max(TEMPLATE_DATA_LIST_MAX_ITEMS)], {
-      // zod 3 applies a plain `message` only to invalid_type issues, so the
-      // union's own issue needs an errorMap to avoid the bare "Invalid input".
-      errorMap: (issue, ctx) =>
-        issue.code === "invalid_union"
-          ? { message: "Expected a string or a list of strings" }
-          : { message: ctx.defaultError },
+    .union([z.string(), z.array(z.string())], {
+      // zod 3 applied a plain `message` only to invalid_type issues, so the
+      // union's own issue needed an errorMap to avoid the bare "Invalid
+      // input"; zod 4 replaces errorMap with the `error` parameter. Returning
+      // a string for invalid_union keeps the message; returning undefined for
+      // every other issue leaves it on zod's default message.
+      error: (issue) =>
+        issue.code === "invalid_union" ? "Expected a string or a list of strings" : undefined,
+    })
+    // zod 3's `.max()` on the array option produced a "dirty" result, so a
+    // list over the cap surfaced a `too_big` issue rather than collapsing into
+    // the union's `invalid_union`. zod 4 checks fail outright (invalid_union),
+    // so the cap is re-applied here (out of the union) to keep the `too_big`
+    // code on that path while a wrong-typed value still hits the union message.
+    .superRefine((v, ctx) => {
+      if (Array.isArray(v) && v.length > TEMPLATE_DATA_LIST_MAX_ITEMS) {
+        ctx.addIssue({
+          code: "too_big",
+          origin: "array",
+          maximum: TEMPLATE_DATA_LIST_MAX_ITEMS,
+          inclusive: true,
+          message: `Array must contain at most ${TEMPLATE_DATA_LIST_MAX_ITEMS} element(s)`,
+        });
+      }
     })
     .transform((v) => (typeof v === "string" ? v : normalizeTemplateDataList(v)))
     .pipe(
@@ -1212,13 +1229,16 @@ export const SUGGESTED_TASK_TYPE_THRESHOLDS: Readonly<Record<TaskType, number>> 
 };
 
 // Validates a PATCH /projects/:id `taskTypeThresholds` write. Unknown taskType
-// keys are REJECTED (not silently dropped): `z.record(taskTypeSchema, ...)`
+// keys are REJECTED (not silently dropped): `z.partialRecord(taskTypeSchema, ...)`
 // fails the whole parse on any key outside the six-value enum, so a typo in a
 // PATCH body surfaces as a 400 immediately rather than becoming a permanent,
 // silent no-op. Any subset of the six keys is valid (including `{}`); every
 // value must be an integer 0-100, same bounds as `confidenceThreshold`.
+// `partialRecord` (not `record`): zod 4 makes a record keyed on an enum
+// EXHAUSTIVE (every key required), so a plain `record` would reject the
+// documented "any subset, including `{}`" contract; partialRecord keeps it.
 export const taskTypeThresholdsSchema = z
-  .record(taskTypeSchema, z.number().int().min(0).max(100))
+  .partialRecord(taskTypeSchema, z.number().int().min(0).max(100))
   .nullable()
   .optional();
 

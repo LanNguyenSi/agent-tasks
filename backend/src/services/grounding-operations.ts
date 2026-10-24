@@ -8,7 +8,7 @@ import { GroundingDecisionError } from "./grounding-transaction.js";
 
 export const routeTransportSchema = z.object({
   endpoint: z.enum(["finish", "merge", "github_merge", "abandon", "transition", "patch", "review"]),
-  body: z.record(z.unknown()),
+  body: z.record(z.string(), z.unknown()),
 }).strict().superRefine((value, ctx) => {
   try { if (canonicalGroundingJson(value).length > 65536) ctx.addIssue({ code: "custom", message: "Transport intent too large" }); }
   catch { ctx.addIssue({ code: "custom", message: "Transport intent must be JSON" }); }

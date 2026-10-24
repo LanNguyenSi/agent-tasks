@@ -21,7 +21,7 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { createHash, randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { ProjectMemberRole } from "@prisma/client";
@@ -96,7 +96,7 @@ function publicInvite(invite: {
 
 projectInviteAdminRouter.post(
   "/projects/:id/invites",
-  zValidator("json", createInviteSchema),
+  zValidate("json", createInviteSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "human") {
@@ -361,7 +361,7 @@ projectInviteAdminRouter.get("/projects/:id/members", async (c) => {
 
 inviteAcceptRouter.post(
   "/preview",
-  zValidator("json", acceptInviteSchema),
+  zValidate("json", acceptInviteSchema),
   async (c) => {
     const { token } = c.req.valid("json");
     const hash = hashToken(token);
@@ -398,7 +398,7 @@ inviteAcceptRouter.post(
 
 inviteAcceptRouter.post(
   "/accept",
-  zValidator("json", acceptInviteSchema),
+  zValidate("json", acceptInviteSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
     if (actor.type !== "human") {

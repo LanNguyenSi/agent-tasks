@@ -1,9 +1,20 @@
 import { describe, it, expect } from "vitest";
+// hono is not a dependency in mcp-server/package.json (and neither is the
+// @hono/zod-validator that the backend z-validate import below pulls in): both
+// resolve through the workspace root's node_modules, the same cross-workspace
+// test-only idiom errors.test.ts documents for its backend/src imports. Test
+// files never reach `npm run build`'s tsc output (mcp-server's tsconfig.json
+// excludes tests/), so no package.json entry is needed and none is added.
+import { Hono } from "hono";
 import { AgentTasksClient } from "../src/client.js";
 import { TASK_TYPE_VALUES, buildTools } from "../src/tools.js";
-import { mapBackendError } from "../src/errors.js";
+import { mapBackendError, type TeachingError } from "../src/errors.js";
 import { z } from "zod";
 import { taskTypeSchema, templateDataSchema } from "../../backend/src/lib/confidence.js";
+// Same cross-workspace test-only import idiom as tests/errors.test.ts: the
+// 400 body is produced here by the BACKEND's own validator wrapper, so this
+// file maps what the real producer sends, not a hand-built approximation.
+import { zValidate } from "../../backend/src/lib/z-validate.js";
 
 const config = { baseUrl: "https://example.test", token: "tok_abc" };
 
@@ -13,8 +24,22 @@ function tool(name: string) {
   return found;
 }
 
+/**
+ * Typed view of mapBackendError's generic-degrade issue summary. The
+ * TeachingError `detail` is deliberately a plain Record<string, unknown>, so
+ * this is the one place that narrows `detail.issues`; no `as unknown as`.
+ */
+function mappedIssues(err: TeachingError): Array<Record<string, unknown>> {
+  const issues = err.error.detail?.issues;
+  return Array.isArray(issues) ? issues : [];
+}
+
 function templateDataDescription(name: string): string {
-  return tool(name).inputShape.templateData.description ?? "";
+  // ZodRawShape's values are typed as the core $ZodType in zod 4, which
+  // carries no `description`; the runtime values are classic z.ZodType
+  // instances (that is what z.enum/z.record build here), whose declared
+  // `description` property reads back what .describe() set.
+  return (tool(name).inputShape.templateData as z.ZodType).description ?? "";
 }
 
 describe("templateData.taskType values in tool descriptions", () => {
@@ -41,14 +66,33 @@ describe("invalid taskType 400", () => {
 });
 
 describe("invalid taskType 400 on the wire", () => {
-  it("maps the JSON-serialized zValidator body to a templateData.taskType issue listing all values", () => {
-    const parsed = z.object({ templateData: templateDataSchema }).safeParse({ templateData: { taskType: "tooling" } });
-    expect(parsed.success).toBe(false);
-    // Same shape the backend sends: c.json({ success: false, error }, 400).
-    const wire = JSON.parse(JSON.stringify({ success: false, error: (parsed as { error: unknown }).error }));
-    const mapped = mapBackendError(400, wire) as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
-    const issues = mapped.error.detail?.issues ?? [];
-    const entry = issues.find((e) => e.path === "templateData.taskType");
+  /**
+   * The real producer: the backend's shared zValidate wrapper mounted with
+   * the real templateData schema on a minimal Hono app, asked to validate an
+   * invalid taskType. The wrapper serializes the zod 4 error explicitly from
+   * `error.issues` (zod 4 makes `issues` non-enumerable, so a bare spread of
+   * the error would lose it), producing on the wire
+   * { success: false, error: { issues: [...], name: "ZodError" } }, which is
+   * what errors.ts consumes.
+   */
+  async function realBackendValidation400(): Promise<unknown> {
+    const app = new Hono();
+    app.post("/v", zValidate("json", z.object({ templateData: templateDataSchema })), (c) =>
+      c.json({ ok: true }),
+    );
+    const res = await app.request("http://test/v", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateData: { taskType: "tooling" } }),
+    });
+    expect(res.status).toBe(400);
+    return res.json();
+  }
+
+  it("maps the backend validator's JSON body to a templateData.taskType issue listing all values", async () => {
+    const wire = await realBackendValidation400();
+    const mapped = mapBackendError(400, wire);
+    const entry = mappedIssues(mapped).find((e) => e.path === "templateData.taskType");
     expect(entry, JSON.stringify(mapped)).toBeDefined();
     expect(entry?.allowed).toBe(taskTypeSchema.options.join("|"));
     expect(taskTypeSchema.options).toHaveLength(6);
@@ -56,13 +100,13 @@ describe("invalid taskType 400 on the wire", () => {
 
   it("renders a numeric enum option as its number", () => {
     const wire = { success: false, error: { issues: [{ code: "invalid_enum_value", path: ["n"], options: ["a", 2, "b"], message: "bad" }] } };
-    const mapped = mapBackendError(400, wire) as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
-    expect(mapped.error.detail?.issues?.[0]?.allowed).toBe("a|2|b");
+    const mapped = mapBackendError(400, wire);
+    expect(mappedIssues(mapped)[0]?.allowed).toBe("a|2|b");
   });
 
   it("marks any other non-string enum option with a visible placeholder", () => {
     const wire = { success: false, error: { issues: [{ code: "invalid_enum_value", path: ["n"], options: ["a", { x: 1 }, "b"], message: "bad" }] } };
-    const mapped = mapBackendError(400, wire) as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
-    expect(mapped.error.detail?.issues?.[0]?.allowed).toBe("a|?|b");
+    const mapped = mapBackendError(400, wire);
+    expect(mappedIssues(mapped)[0]?.allowed).toBe("a|?|b");
   });
 });

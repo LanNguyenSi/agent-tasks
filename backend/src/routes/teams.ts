@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
@@ -77,7 +77,7 @@ teamRouter.get("/teams", async (c) => {
 
 // ── Create team ───────────────────────────────────────────────────────────────
 
-teamRouter.post("/teams", zValidator("json", createTeamSchema), async (c) => {
+teamRouter.post("/teams", zValidate("json", createTeamSchema), async (c) => {
   const actor = c.get("actor");
 
   if (actor.type !== "human") {
@@ -144,7 +144,7 @@ teamRouter.get("/teams/:id", async (c) => {
 
 teamRouter.post(
   "/teams/:id/members",
-  zValidator("json", z.object({ userId: z.string().uuid(), role: z.enum(["HUMAN_MEMBER", "REVIEWER", "ADMIN"]).default("HUMAN_MEMBER") })),
+  zValidate("json", z.object({ userId: z.guid(), role: z.enum(["HUMAN_MEMBER", "REVIEWER", "ADMIN"]).default("HUMAN_MEMBER") })),
   async (c) => {
     const actor = c.get("actor");
 

@@ -19,13 +19,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.resolve(__dirname, "../../src");
 
 // Whitespace-tolerant so a reformatted `z.string()\n  .url(` cannot slip past.
-const FORBIDDEN = /z\s*\.\s*string\s*\(\s*\)\s*\.\s*url\s*\(/;
+// Matches BOTH the v3 form `z.string().url()` and the v4 form `z.url()`: after
+// the zod 4 migration a bare URL check would be `z.url()`, so a bare v4 URL in
+// request-handling code is exactly as dangerous as the old bare `.url()` was.
+// (The migration's own URL checks live in lib/zod-formats.ts as a
+// URL.canParse refine and define no `z.url()` pattern to trip this scan.)
+const FORBIDDEN = /z\s*\.\s*string\s*\(\s*\)\s*\.\s*url\s*\(|\bz\.url\s*\(/;
 
 // The only legitimate bare-url sites:
-//  - lib/url-guard.ts: the canonical helper (defines httpUrl over .url()).
+//  - lib/url-guard.ts: the canonical httpUrl helper (names .url() in prose).
+//  - lib/zod-formats.ts: the canonical urlString URL check (defines it as a
+//    URL.canParse refine; names z.url() only in its doc comment).
 //  - config/index.ts: server env schema (DATABASE_URL etc.) — not request input.
 const ALLOWLIST = [
   path.join("lib", "url-guard.ts"),
+  path.join("lib", "zod-formats.ts"),
   path.join("config", "index.ts"),
 ];
 

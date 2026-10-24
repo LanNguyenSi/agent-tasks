@@ -44,7 +44,10 @@ const cases: Array<{
     safeParse: (input: unknown) => {
       success: boolean;
       data?: unknown;
-      error?: { issues: Array<{ path: Array<string | number>; message: string }> };
+      // zod 4 widened an issue path to PropertyKey[] (adds `symbol`); the
+      // assertion below only calls `path.join(".")`, so this accepts the
+      // zod 4 element type without loosening what is checked.
+      error?: { issues: Array<{ path: Array<string | number | symbol>; message: string }> };
     };
   };
   basePayload: Record<string, unknown>;

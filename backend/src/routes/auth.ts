@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import type { AppVariables } from "../types/hono.js";
 import { config, hasGitHubOAuthConfigured, allowedGitHubLogins } from "../config/index.js";
 import {
@@ -38,13 +38,13 @@ const oauthConfig = {
 };
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(8).max(128),
   name: z.string().trim().min(1).max(100).optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(1),
 });
 
@@ -123,7 +123,7 @@ function buildUserResponse(user: {
 
 // ── Register / Login ─────────────────────────────────────────────────────────
 
-authRouter.post("/register", zValidator("json", registerSchema), async (c) => {
+authRouter.post("/register", zValidate("json", registerSchema), async (c) => {
   const body = c.req.valid("json");
   const email = body.email.toLowerCase().trim();
 
@@ -145,7 +145,7 @@ authRouter.post("/register", zValidator("json", registerSchema), async (c) => {
   return c.json({ user: buildUserResponse(user) }, 201);
 });
 
-authRouter.post("/login", zValidator("json", loginSchema), async (c) => {
+authRouter.post("/login", zValidate("json", loginSchema), async (c) => {
   const body = c.req.valid("json");
   const user = await getUserByEmail(body.email.toLowerCase().trim());
 
@@ -273,7 +273,7 @@ authRouter.get("/github/callback", async (c) => {
 
 authRouter.post(
   "/register-from-project-pilot",
-  zValidator("json", registerFromProjectPilotSchema),
+  zValidate("json", registerFromProjectPilotSchema),
   async (c) => {
     const body = c.req.valid("json");
 
@@ -410,7 +410,7 @@ const delegationSchema = z.object({
   allowAgentPrComment: z.boolean(),
 });
 
-authRouter.put("/delegation", zValidator("json", delegationSchema), async (c) => {
+authRouter.put("/delegation", zValidate("json", delegationSchema), async (c) => {
   const actor = c.get("actor");
   if (!actor || actor.type !== "human") {
     return c.json({ error: "unauthorized", message: "Authentication required" }, 401);

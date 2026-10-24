@@ -64,7 +64,7 @@ export function groundingCompletionErrorResponse(error: unknown, c: Context<{ Va
   return c.json({ error: "grounding_verification_unavailable" }, 503);
 }
 export function groundingCompletionRouteResponse(c: Context<{ Variables: AppVariables }>, result: unknown) {
-  const parsed = z.object({ route: z.record(z.unknown()) }).safeParse(result);
+  const parsed = z.object({ route: z.record(z.string(), z.unknown()) }).safeParse(result);
   if (parsed.success) return c.json(parsed.data.route);
   const pending = z.object({ pending: z.literal(true) }).safeParse(result);
   if (pending.success) return c.json(result as Prisma.JsonObject, 202);
@@ -120,7 +120,18 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         }
         if (!deps.service) unavailable();
         if (!key.success) return c.json({ error: "grounding_operation_key_required", message: "Supply a unique Idempotency-Key for this logical operation; reuse it only for identical retries." }, 400);
-        const parsed = (endpoint === "finish" ? finishSchema : endpoint === "merge" ? mergeSchema : abandonSchema).safeParse(raw);
+        // Parse the selected schema in each branch rather than calling
+        // .safeParse on a `finishSchema | mergeSchema | abandonSchema` union:
+        // in zod 4 a method call on a schema union resolves `.data` to the
+        // INTERSECTION of the three outputs, and abandonSchema (an empty
+        // strict object, inferred `Record<string, never>`) collapses every
+        // field to never, which broke the `parsed.data as …` narrowing below.
+        // Branching the call keeps `.data` a union, matching the base (zod 3)
+        // behaviour where the casts narrowed a `{}`-typed result.
+        const parsed =
+          endpoint === "finish" ? finishSchema.safeParse(raw)
+            : endpoint === "merge" ? mergeSchema.safeParse(raw)
+              : abandonSchema.safeParse(raw);
         if (!parsed.success) return c.json({ error: "validation_error", details: parsed.error.issues }, 400);
         if (endpoint === "finish" && "outcome" in parsed.data) intent = "approve";
         const transport: GroundingRouteTransport = { endpoint, body: parsed.data };

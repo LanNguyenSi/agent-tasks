@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { prisma } from "../lib/prisma.js";
 import { hasProjectAccess, requireProjectWrite } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
@@ -17,11 +17,11 @@ const boardColumnSchema = z.object({
 
 const createBoardSchema = z.object({
   name: z.string().min(1).max(100),
-  projectId: z.string().uuid(),
+  projectId: z.guid(),
   config: z.object({
     columns: z.array(boardColumnSchema).min(1),
     groupBy: z.enum(["none", "service", "level", "priority", "assignee"]).default("none"),
-    filters: z.array(z.record(z.string())).default([]),
+    filters: z.array(z.record(z.string(), z.string())).default([]),
   }),
 });
 
@@ -49,7 +49,7 @@ boardRouter.get("/projects/:projectId/boards", async (c) => {
 
 boardRouter.post(
   "/projects/:projectId/boards",
-  zValidator("json", createBoardSchema.omit({ projectId: true })),
+  zValidate("json", createBoardSchema.omit({ projectId: true })),
   async (c) => {
     const actor = c.get("actor");
     const projectId = c.req.param("projectId");
@@ -113,7 +113,7 @@ boardRouter.get("/boards/:id", async (c) => {
 
 boardRouter.put(
   "/boards/:id",
-  zValidator("json", updateBoardSchema),
+  zValidate("json", updateBoardSchema),
   async (c) => {
     const actor = c.get("actor");
 

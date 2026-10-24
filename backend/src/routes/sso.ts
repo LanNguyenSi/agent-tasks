@@ -13,7 +13,7 @@
 
 import { Hono, type Context, type Next } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import { zValidate } from "../lib/z-validate.js";
 import { prisma } from "../lib/prisma.js";
 import { config } from "../config/index.js";
 import type { AppVariables } from "../types/hono.js";
@@ -331,7 +331,7 @@ ssoAdminRouter.get("/teams/:teamId/sso", async (c) => {
   return c.json({ connection: connection ? publicSsoConnection(connection) : null });
 });
 
-ssoAdminRouter.put("/teams/:teamId/sso", zValidator("json", upsertSchema), async (c) => {
+ssoAdminRouter.put("/teams/:teamId/sso", zValidate("json", upsertSchema), async (c) => {
   const teamId = c.req.param("teamId");
   const team = await prisma.team.findUnique({ where: { id: teamId } });
   if (!team) return notFound(c);

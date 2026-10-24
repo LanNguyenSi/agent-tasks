@@ -55,7 +55,7 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
           const history = await deps.service.lookupRouteOperation(taskId, actor, key, transport);
           if (history) {
             if (history.state !== "COMPLETED") throw new GroundingAccessError("grounding_finalization_pending", 409);
-            return c.json(z.object({ route: z.record(z.unknown()) }).parse(history.result).route);
+            return c.json(z.object({ route: z.record(z.string(), z.unknown()) }).parse(history.result).route);
           }
         }
         // No-op status and result/commentary writes do not create a completion attempt.
@@ -90,7 +90,7 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
           if (decision.from === "abandoned" && decision.to !== "abandoned") await clearDisposition(taskId);
         };
         const result = resolved.success ? await deps.service.complete(taskId, actor, key!, input) : await deps.service.dispose(taskId, actor, key ?? randomUUID(), input, reopenedFromAbandoned);
-        return c.json(z.object({ route: z.record(z.unknown()) }).parse(result).route);
+        return c.json(z.object({ route: z.record(z.string(), z.unknown()) }).parse(result).route);
       } catch (error) { return routeError(error, c, descriptor); }
     });
   }

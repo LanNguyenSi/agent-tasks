@@ -11,9 +11,9 @@ import { assertGroundingScopeWired, type GroundingTaskCompletionDependencies, gr
 
 const mergeKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 const createKey = z.string().trim().min(1).max(255);
-const mergeBody = z.object({ taskId: z.string().uuid(), owner: z.string().min(1).max(255), repo: z.string().min(1).max(255), merge_method: z.enum(["merge", "squash", "rebase"]).default("squash"), idempotencyKey: z.string().optional() }).strict();
-const createBody = z.object({ taskId: z.string().uuid(), owner: z.string().min(1).max(255), repo: z.string().min(1).max(255), head: z.string().min(1).max(1024), base: z.string().min(1).max(1024).default("main"), title: z.string().min(1).max(4096), body: z.string().max(65536).optional(), idempotencyKey: z.string().optional() }).strict();
-const legacyTaskId = z.string().uuid();
+const mergeBody = z.object({ taskId: z.guid(), owner: z.string().min(1).max(255), repo: z.string().min(1).max(255), merge_method: z.enum(["merge", "squash", "rebase"]).default("squash"), idempotencyKey: z.string().optional() }).strict();
+const createBody = z.object({ taskId: z.guid(), owner: z.string().min(1).max(255), repo: z.string().min(1).max(255), head: z.string().min(1).max(1024), base: z.string().min(1).max(1024).default("main"), title: z.string().min(1).max(4096), body: z.string().max(65536).optional(), idempotencyKey: z.string().optional() }).strict();
+const legacyTaskId = z.guid();
 type KeyResult = { value: string } | { missing: true } | { error: string; status: 400 | 409 };
 /** Absence of both header and body key is not itself an error: whether a key is
  * required at all depends on enrollment/scope, resolved by the caller. */
