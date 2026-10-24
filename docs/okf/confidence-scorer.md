@@ -3,7 +3,7 @@ type: invariant
 title: "Confidence scorer: authoritative backend + hand-mirrored frontend"
 description: "backend/src/lib/confidence.ts is the source of truth; the frontend copy is a manually kept-in-sync mirror, enforced live in CI by a cross-package parity test over a shared fixture corpus. The claim-time gate applies the score per project enforcementMode (OFF, WARN default, BLOCK)."
 tags: [confidence, scorer, invariant, keep-in-sync, claim-gate, enforcement]
-timestamp: 2026-10-12T16:01:54Z
+timestamp: 2026-10-24T09:11:35Z
 sources:
   - backend/src/lib/confidence.ts
   - frontend/src/lib/confidence.ts
@@ -19,7 +19,7 @@ sources:
   - backend/prisma/schema.prisma
 ---
 
-`backend/src/lib/confidence.ts` (1637 lines) is authoritative: `calculateConfidence` scores a task's `templateData`/`description` for readiness (computed at create time informationally and applied at claim time by the gate described under **Claim-time enforcement** below; `task_pickup` only surfaces candidates and runs no confidence gate). The risk-modifier write path lives in the same file: `riskModifiersSchema` is the strict, bounded validator `PATCH /projects/:id` applies to `riskModifiers` (the four `RISK_MODIFIER_NAMES` only, each an integer 0-100, the values summing to at most `MAX_RISK_MODIFIER_POINTS_SUM` = 100, unknown keys rejected with 400, `null` clears), while `resolveTriggeredRiskModifiers` stays the unchanged, degrade-safe reader of the stored `Json?` value. `frontend/src/lib/confidence.ts` (1290 lines) is a **hand-maintained port**, explicitly commented `FAITHFUL MIRROR of the backend extractSpecSections ...; keep in sync`; there is no shared package or codegen step between the two files.
+`backend/src/lib/confidence.ts` (1657 lines) is authoritative: `calculateConfidence` scores a task's `templateData`/`description` for readiness (computed at create time informationally and applied at claim time by the gate described under **Claim-time enforcement** below; `task_pickup` only surfaces candidates and runs no confidence gate). The risk-modifier write path lives in the same file: `riskModifiersSchema` is the strict, bounded validator `PATCH /projects/:id` applies to `riskModifiers` (the four `RISK_MODIFIER_NAMES` only, each an integer 0-100, the values summing to at most `MAX_RISK_MODIFIER_POINTS_SUM` = 100, unknown keys rejected with 400, `null` clears), while `resolveTriggeredRiskModifiers` stays the unchanged, degrade-safe reader of the stored `Json?` value. `frontend/src/lib/confidence.ts` (1290 lines) is a **hand-maintained port**, explicitly commented `FAITHFUL MIRROR of the backend extractSpecSections ...; keep in sync`; there is no shared package or codegen step between the two files.
 
 **Parity mechanism**: `frontend/src/lib/confidence.parity.test.ts` is a **real cross-package CI guard**: it imports the backend scorer directly as TypeScript source (via vitest's esbuild transform, no build step needed) and the frontend scorer, runs both over the shared fixture corpus in `frontend/src/lib/__fixtures__/confidence-fixtures.ts`, and asserts `toStrictEqual` per fixture, plus a negative-control test that a perturbed result is NOT strict-equal (guards the comparison itself against going vacuously green). A backend scorer re-tune with no matching frontend edit therefore fails CI here, in the frontend job (the parity test imports backend source directly, so no build or CI ordering change is needed). `frontend/src/lib/confidence.test.ts` separately still asserts hand-copied `expected` ground truth per fixture (its own comment: "If the backend scorer is re-tuned, regenerate these via the backend harness and update here"); that hand-copied set is redundant with, not a substitute for, the parity test's live comparison.
 
@@ -39,7 +39,7 @@ sources:
 | context | `context` |
 | constraints | `constraints` |
 
-Verified byte-identical between `backend/src/lib/confidence.ts:226-247#"constraints"` and `frontend/src/lib/confidence.ts:297-318#"constraints"` as of this writing; also enforced live by the `confidence.parity.test.ts` guard above, which fails on any behavioral divergence regardless of line drift.
+Verified byte-identical between `backend/src/lib/confidence.ts:243-264#"constraints"` and `frontend/src/lib/confidence.ts:297-318#"constraints"` as of this writing; also enforced live by the `confidence.parity.test.ts` guard above, which fails on any behavioral divergence regardless of line drift.
 
 ## Claim-time enforcement
 
