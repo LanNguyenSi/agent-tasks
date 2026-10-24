@@ -4,6 +4,9 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
 ## Unreleased
 
+## 0.11.0
+
+- Depends on `@agent-tasks/mcp-server` 0.18.0 (zod 4, closing GHSA-mrhx-c7xc-m3w5 for bridge installs; see that package's changelog).
 - The "no token available" hint also names the npx form, `npx -y @agent-tasks/mcp-bridge login`, for users who did not install the bridge globally.
 
 ## 0.10.0
