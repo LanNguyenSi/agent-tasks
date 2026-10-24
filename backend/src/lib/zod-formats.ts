@@ -6,10 +6,15 @@ import { z } from "zod";
  * (`+02:00`) and local times (no `Z`) are rejected and the value passes
  * through unchanged. zod 4's `z.iso.datetime()` alone REQUIRES seconds, so the
  * minute-precision form is restored as a second union branch (`precision: -1`
- * means minutes only, no seconds).
+ * means minutes only, no seconds). A rejected value reports code
+ * `invalid_union` with the message `Invalid datetime`, matching the single
+ * `invalid_string`/`Invalid datetime` the zod 3 `.datetime()` used (which was
+ * `invalid_type` for a non-string).
  */
 export function isoDatetime() {
-  return z.union([z.iso.datetime(), z.iso.datetime({ precision: -1 })]);
+  return z.union([z.iso.datetime(), z.iso.datetime({ precision: -1 })], {
+    error: "Invalid datetime",
+  });
 }
 
 /**

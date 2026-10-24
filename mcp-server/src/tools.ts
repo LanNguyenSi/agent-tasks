@@ -444,7 +444,7 @@ export function buildTools(
             "Free-text summary of the work, recorded on the task timeline (plain prose or markdown, max 5000 chars). Not a structured payload: do not wrap it in XML or JSON tags — it is stored and rendered as text.",
           )
           .optional(),
-        // urlString() (lib/zod-formats.ts), NOT z.url(): zod 4's z.url()
+        // urlString() (src/zod-formats.ts), NOT z.url(): zod 4's z.url()
         // trims the input and strips tab/CR/LF from the OUTPUT. This keeps
         // the zod 3 `.url()` behavior: `new URL(value)` must not throw, and
         // the value is returned unchanged.
@@ -498,7 +498,7 @@ export function buildTools(
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        // isoDatetime() (lib/zod-formats.ts), NOT a bare z.iso.datetime():
+        // isoDatetime() (src/zod-formats.ts), NOT a bare z.iso.datetime():
         // zod 4 requires seconds, while zod 3's `.datetime()` also accepted
         // the minute-precision form (HH:MMZ). The union restores it: Z-only,
         // any fractional precision, offsets and local times rejected.
@@ -961,7 +961,7 @@ export function buildTools(
         description: z.string().optional(),
         priority: priorityEnum.optional(),
         workflowId: uuid().optional(),
-        // isoDatetime() (lib/zod-formats.ts), NOT a bare z.iso.datetime():
+        // isoDatetime() (src/zod-formats.ts), NOT a bare z.iso.datetime():
         // zod 4 requires seconds, while zod 3's `.datetime()` also accepted
         // the minute-precision form (HH:MMZ). The union restores it: Z-only,
         // any fractional precision, offsets and local times rejected.

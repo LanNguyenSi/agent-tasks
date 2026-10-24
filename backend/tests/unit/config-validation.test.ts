@@ -218,6 +218,23 @@ describe("backend config: zod 4 env coercions and defaults", () => {
     );
   });
 
+  // Fix A (sites 4 and 5): DATABASE_URL and REDIS_URL are urlString() (the zod
+  // 3 `.url()` behavior). The z.url() revert trims and strips tab/CR/LF from
+  // the OUTPUT, so these whitespace-bearing forms pin the raw value surviving.
+  it('DATABASE_URL=" postgresql://u:p@h/db" (leading space) is kept EXACTLY (no trim)', async () => {
+    expect((await load({ DATABASE_URL: " postgresql://u:p@h/db" })).config.DATABASE_URL).toBe(
+      " postgresql://u:p@h/db",
+    );
+  });
+
+  it("REDIS_URL with a leading space is kept EXACTLY (no trim)", async () => {
+    expect((await load({ REDIS_URL: " redis://redis:6379" })).config.REDIS_URL).toBe(" redis://redis:6379");
+  });
+
+  it("REDIS_URL with an embedded tab is kept EXACTLY (no tab stripping)", async () => {
+    expect((await load({ REDIS_URL: "redis://re\tdis:6379" })).config.REDIS_URL).toBe("redis://re\tdis:6379");
+  });
+
   it("TRUSTED_PROXY_HOPS defaults to 0, accepts the 0 boundary and a positive int", async () => {
     expect((await load({ TRUSTED_PROXY_HOPS: undefined })).config.TRUSTED_PROXY_HOPS).toBe(0);
     expect((await load({ TRUSTED_PROXY_HOPS: "0" })).config.TRUSTED_PROXY_HOPS).toBe(0);

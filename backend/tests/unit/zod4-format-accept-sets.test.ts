@@ -1,18 +1,24 @@
 /**
  * Pins the zod 4 format choices on the repo's OWN schemas and helpers, so an
  * accidental switch to a stricter/simpler v4 default fails here rather than
- * silently narrowing or widening a request field's accept-set (contract 4).
- * Every case goes through a real schema (createTaskSchema, updateTaskSchema,
- * createTokenSchema, httpUrl) or a real route (POST /register), never a bare
- * z.<format>() built inline, which would test the zod library instead of this
- * repo. One input per test case; the "wins" column of the migration report
- * names the input that fails first when a choice is reverted.
+ * silently narrowing or widening a request field's accept-set. Every case goes
+ * through a real schema (createTaskSchema, updateTaskSchema, createTokenSchema,
+ * directPatchSchema, the grounding route-effects patch schema through
+ * readGroundingRoutePlan, httpUrl) or a real route (POST /register), never a
+ * bare z.<format>() built inline, which would test the zod library instead of
+ * this repo. Each case pins one input, so reverting a format choice to a v4
+ * default fails exactly the cases whose accept-set or output that choice
+ * decides (for datetime the accepted minute-precision form; for URL the
+ * whitespace-bearing forms that must survive unchanged).
  *
  * datetime (isoDatetime in lib/zod-formats.ts = z.union of z.iso.datetime()
- * and z.iso.datetime({ precision: -1 })): the zod 3 `.datetime()` accept-set,
- * minutes OR seconds with any fractional precision, Z only; offsets, local
- * times, date-only and T24 are rejected; accepted values pass through
- * unchanged.
+ * and z.iso.datetime({ precision: -1 }), with the union `error` set to
+ * "Invalid datetime"): the zod 3 `.datetime()` accept-set, minutes OR seconds
+ * with any fractional precision, Z only; offsets, local times, date-only and
+ * T24 are rejected; accepted values pass through unchanged. A rejected value
+ * reports code `invalid_union` with message `Invalid datetime` (zod 3 reported
+ * a single `invalid_string`/`Invalid datetime` for a bad string, and
+ * `invalid_type` for a non-string).
  *
  * URL (urlString in lib/zod-formats.ts = z.string().refine(URL.canParse)):
  * the zod 3 `.url()` accept-set AND output. The base (zod 3) checked only that
@@ -74,6 +80,8 @@ import { createTaskSchema, updateTaskSchema } from "../../src/routes/tasks.js";
 import { createTokenSchema } from "../../src/routes/agent-tokens.js";
 import { httpUrl } from "../../src/lib/url-guard.js";
 import { authRouter } from "../../src/routes/auth.js";
+import { directPatchSchema } from "../../src/services/grounding-direct-input.js";
+import { readGroundingRoutePlan } from "../../src/services/grounding-route-effects.js";
 
 const TOKEN_FIXTURE = {
   teamId: "550e8400-e29b-41d4-a716-446655440000",
@@ -219,5 +227,81 @@ describe("guid fields through the real token/task schemas (z.guid, not z.uuid)",
   });
   it("createTaskSchema rejects a non-guid workflowId", () => {
     expect(createTaskSchema.safeParse({ title: "t", workflowId: "not-a-guid" }).success).toBe(false);
+  });
+});
+
+// Fix B (datetime rejection message): the isoDatetime union carries an explicit
+// `error` so a rejected value reports code `invalid_union` with message
+// `Invalid datetime`. The zod 3 `.datetime()` produced a single `invalid_string`
+// issue with that same message for a bad string, and `invalid_type` for a
+// non-string; zod 4's bare union would say `invalid_union`/"Invalid input".
+// Pinned through the real createTaskSchema (the POST /api/projects/:id/tasks
+// body validator), one input per case.
+describe("createTaskSchema.dueAt rejection code and message (invalid_union / Invalid datetime)", () => {
+  it("reports invalid_union + \"Invalid datetime\" for the +02:00 offset form", () => {
+    const r = createTaskSchema.safeParse({ title: "t", dueAt: "2020-01-01T00:00:00+02:00" });
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    const issue = r.error.issues.find((i) => i.path.join(".") === "dueAt");
+    expect(issue?.code).toBe("invalid_union");
+    expect(issue?.message).toBe("Invalid datetime");
+  });
+  it("reports invalid_union + \"Invalid datetime\" for a non-string dueAt (base reported invalid_type)", () => {
+    const r = createTaskSchema.safeParse({ title: "t", dueAt: 1234 });
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    const issue = r.error.issues.find((i) => i.path.join(".") === "dueAt");
+    expect(issue?.code).toBe("invalid_union");
+    expect(issue?.message).toBe("Invalid datetime");
+  });
+  it("still accepts the minute-precision form through the same schema (error option does not change the accept-set)", () => {
+    const r = createTaskSchema.safeParse({ title: "t", dueAt: "2020-01-01T00:00Z" });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.dueAt).toBe("2020-01-01T00:00Z");
+  });
+});
+
+// Fix A (site 2): directPatchSchema.dueAt (grounding direct-input patch) uses
+// the same isoDatetime helper. The mutation that reverts it to a bare
+// z.iso.datetime() drops the minute-precision branch, so the accepted minute
+// form (value unchanged) is the discriminator; the offset reject guards the
+// other direction.
+describe("directPatchSchema.dueAt accept-set (isoDatetime)", () => {
+  it("accepts the minute-precision form 2020-01-01T00:00Z, value unchanged", () => {
+    const r = directPatchSchema.safeParse({ dueAt: "2020-01-01T00:00Z" });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.dueAt).toBe("2020-01-01T00:00Z");
+  });
+  it("rejects the +02:00 offset form (zod 3 was Z-only)", () => {
+    expect(directPatchSchema.safeParse({ dueAt: "2020-01-01T00:00:00+02:00" }).success).toBe(false);
+  });
+});
+
+// Fix A (site 3): the grounding route-effects patch schema (patchSchema, run
+// through the exported readGroundingRoutePlan) carries the same dueAt field.
+// A minimal valid plan is built and round-tripped; the minute-precision dueAt
+// must survive unchanged, which the z.iso.datetime() revert rejects.
+function minimalRoutePlan(patch: Record<string, unknown>) {
+  return {
+    version: 1,
+    kind: "direct",
+    action: "transition",
+    remote: false,
+    patch: { status: "open", ...patch },
+    response: {},
+    acknowledge: false,
+    signals: [],
+    comments: [],
+    audits: [],
+  };
+}
+
+describe("grounding route-effects patch.dueAt accept-set (isoDatetime, via readGroundingRoutePlan)", () => {
+  it("accepts the minute-precision form 2020-01-01T00:00Z, value unchanged", () => {
+    const plan = readGroundingRoutePlan(minimalRoutePlan({ dueAt: "2020-01-01T00:00Z" }));
+    expect(plan.patch.dueAt).toBe("2020-01-01T00:00Z");
+  });
+  it("rejects the +02:00 offset form (zod 3 was Z-only)", () => {
+    expect(() => readGroundingRoutePlan(minimalRoutePlan({ dueAt: "2020-01-01T00:00:00+02:00" }))).toThrow();
   });
 });

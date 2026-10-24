@@ -1,4 +1,10 @@
 import { describe, it, expect } from "vitest";
+// hono is not a dependency in mcp-server/package.json (and neither is the
+// @hono/zod-validator that the backend z-validate import below pulls in): both
+// resolve through the workspace root's node_modules, the same cross-workspace
+// test-only idiom errors.test.ts documents for its backend/src imports. Test
+// files never reach `npm run build`'s tsc output (mcp-server's tsconfig.json
+// excludes tests/), so no package.json entry is needed and none is added.
 import { Hono } from "hono";
 import { AgentTasksClient } from "../src/client.js";
 import { TASK_TYPE_VALUES, buildTools } from "../src/tools.js";

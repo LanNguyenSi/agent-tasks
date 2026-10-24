@@ -130,3 +130,37 @@ describe("createServer tool callback wiring", () => {
     }
   });
 });
+
+// Fix B (datetime rejection message), mcp-server side: the isoDatetime union in
+// src/zod-formats.ts carries an explicit `error`, so a dueAt the SDK's input
+// validation rejects surfaces the base prose "Invalid datetime at dueAt"
+// (zod 4's bare union would say "Invalid input at dueAt"). Driven through a real
+// in-memory client/server pair so the SDK's own argument-validation formatting
+// (the "Invalid arguments for tool <name>: ... at <path>" wrapper) is exercised,
+// not a hand-built message. This must stay byte-identical to the base text:
+// "Invalid arguments for tool task_create: Invalid datetime at dueAt".
+describe("createServer datetime rejection message through a real tool call", () => {
+  it("reports \"Invalid datetime at dueAt\" for a task_create offset dueAt (invalid_union message pinned)", async () => {
+    const server = createServer({ baseUrl: "https://example.test", token: "tok_abc" });
+    const client = new Client({ name: "server-test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const result = await client.callTool({
+        name: "task_create",
+        arguments: {
+          projectId: "11111111-1111-1111-1111-111111111111",
+          title: "t",
+          dueAt: "2020-01-01T00:00:00+02:00",
+        },
+      });
+      expect(result.isError).toBe(true);
+      const content = result.content as Array<{ type: string; text: string }>;
+      expect(content[0]?.text).toContain("Invalid arguments for tool task_create: Invalid datetime at dueAt");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});

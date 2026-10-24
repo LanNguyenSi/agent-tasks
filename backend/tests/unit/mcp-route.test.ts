@@ -371,6 +371,35 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     });
   });
 
+  // Fix A (site 1): the tasks_create dueAt field is isoDatetime(), the same
+  // helper as the REST createTaskSchema. The z.iso.datetime() revert drops the
+  // minute-precision branch, so forwarding the minute form unchanged is the
+  // discriminator; the offset reject guards the other direction.
+  it("tasks_create accepts the minute-precision dueAt and forwards it unchanged", async () => {
+    const projectId = "11111111-1111-1111-1111-111111111111";
+    await callTool("tasks_create", { projectId, title: "Dated task", dueAt: "2020-01-01T00:00Z" });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].body).toEqual({ title: "Dated task", dueAt: "2020-01-01T00:00Z" });
+  });
+
+  it("tasks_create rejects the +02:00 offset dueAt before self-dispatch", async () => {
+    const projectId = "11111111-1111-1111-1111-111111111111";
+    const response = await mcpRequest(
+      app,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tasks_create", arguments: { projectId, title: "t", dueAt: "2020-01-01T00:00:00+02:00" } },
+      },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({
+      result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] },
+    });
+  });
+
   it("tasks_comment sends { content: ... } matching backend createCommentSchema", async () => {
     const taskId = "22222222-2222-2222-2222-222222222222";
     await callTool("tasks_comment", { taskId, content: "progress update" });
