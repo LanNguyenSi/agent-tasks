@@ -14,9 +14,11 @@
 #   2. starts `db` and the one-shot `migrate` and waits, bounded, for migrate
 #      to exit 0 (a failing schema push or SQL file fails the smoke run);
 #   3. starts `backend` and polls GET /api/health from inside the container
-#      (the route checks the database, so 200 + database ok proves the Prisma
-#      client, the compiled dist and the migrated schema work together), then
-#      asserts the compose-declared healthcheck reaches `healthy`;
+#      (the route runs only `SELECT 1`, so 200 + database ok proves the
+#      compiled dist boots and the Prisma client and query engine load and
+#      reach the database; the schema is covered by the migrate exit-0 gate
+#      in step 2, not by this route), then asserts the compose-declared
+#      healthcheck reaches `healthy` and that the backend never restarted;
 #   4. always tears the project, its volumes and its images down.
 # On any failure it dumps the logs of the service that failed and exits 1.
 #
@@ -24,6 +26,8 @@
 # external `traefik` network and disables its Traefik labels, so a smoke run
 # on a host that also runs the real proxy can never join the live route; the
 # script verifies that on the live container instead of trusting the override.
+# Compose runs with `--env-file /dev/null`, so a local run never reads the
+# checkout's `.env`; only the dummy values exported below reach interpolation.
 # Healthcheck parameters are NOT re-encoded here: they come only from
 # docker-compose.prod.yml (the override must never carry a healthcheck).
 #
@@ -57,12 +61,11 @@ COMPOSE_FILE="${REPO_ROOT}/docker-compose.prod.yml"
 COMPOSE_OVERRIDE_FILE="${REPO_ROOT}/tools/compose.smoke-override.yml"
 COMPOSE_PROJECT="${SMOKE_PROJECT_PREFIX:-agent-tasks-backend-smoke}-$$"
 
-# docker-compose.prod.yml declares the shared external `traefik` network at
-# the top level, and Compose requires it to exist even though the override
-# detaches the started services from it. Create it only when absent and
-# remove it only when this run created it and nothing is attached.
+# Only used to verify, on the live container, that the override detached the
+# backend from the shared proxy network. The merged smoke config no longer
+# references that external network, so this script neither creates nor
+# removes it.
 TRAEFIK_NETWORK="traefik"
-CREATED_TRAEFIK_NETWORK=0
 
 if docker compose version >/dev/null 2>&1; then
   COMPOSE_USE_PLUGIN=1
@@ -75,9 +78,9 @@ fi
 
 compose_cmd() {
   if [ "${COMPOSE_USE_PLUGIN}" = "1" ]; then
-    docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
+    docker compose --env-file /dev/null -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
   else
-    docker-compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
+    docker-compose --env-file /dev/null -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
   fi
 }
 
@@ -98,12 +101,6 @@ cleanup() {
   echo "--- cleanup: compose down (project ${COMPOSE_PROJECT}) ---"
   compose_cmd down -v --remove-orphans >/dev/null 2>&1 || true
   docker rmi -f "${COMPOSE_PROJECT}-backend:latest" "${COMPOSE_PROJECT}-migrate:latest" >/dev/null 2>&1 || true
-  if [ "${CREATED_TRAEFIK_NETWORK}" = "1" ]; then
-    net_endpoints=$(docker network inspect -f '{{len .Containers}}' "${TRAEFIK_NETWORK}" 2>/dev/null) || net_endpoints=""
-    if [ "${net_endpoints}" = "0" ]; then
-      docker network rm "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
-    fi
-  fi
 }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT
@@ -127,16 +124,6 @@ fail() {
   done
   exit 1
 }
-
-if ! docker network inspect "${TRAEFIK_NETWORK}" >/dev/null 2>&1; then
-  echo "--- creating external network '${TRAEFIK_NETWORK}' required by docker-compose.prod.yml ---"
-  docker network create "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
-  if ! docker network inspect "${TRAEFIK_NETWORK}" >/dev/null 2>&1; then
-    echo "FAIL: could not create or verify the external network '${TRAEFIK_NETWORK}'" >&2
-    exit 1
-  fi
-  CREATED_TRAEFIK_NETWORK=1
-fi
 
 echo "--- build: migrate (Dockerfile.migrate) and backend (backend/Dockerfile, target prod) ---"
 build_start=$(date +%s)
@@ -207,7 +194,7 @@ while :; do
   fi
   # node:22-slim ships no curl/wget; node's global fetch is the probe. Prints
   # "<status> <body>" and exits 0 only on HTTP 200.
-  if body=$(docker exec "${backend_cid}" node -e "fetch('http://127.0.0.1:3001/api/health').then(async (r) => { console.log(r.status + ' ' + (await r.text())); process.exit(r.status === 200 ? 0 : 1) }).catch(() => process.exit(1))" 2>/dev/null); then
+  if body=$(docker exec "${backend_cid}" node -e "fetch('http://127.0.0.1:3001/api/health', { signal: AbortSignal.timeout(5000) }).then(async (r) => { console.log(r.status + ' ' + (await r.text())); process.exit(r.status === 200 ? 0 : 1) }).catch(() => process.exit(1))" 2>/dev/null); then
     break
   fi
   elapsed=$(($(date +%s) - poll_start))
@@ -240,5 +227,11 @@ while :; do
   sleep "${POLL_INTERVAL_SECS}"
 done
 echo "backend reported healthy after $(($(date +%s) - health_start))s"
+
+# A restart loop can still show "healthy" between restarts; re-read the count.
+final_restarts=$(docker inspect -f '{{.RestartCount}}' "${backend_cid}" 2>/dev/null) || final_restarts=unknown
+if [ "${final_restarts}" != "0" ]; then
+  fail "backend restarted after the ready-poll (RestartCount=${final_restarts})" backend db
+fi
 
 echo "PASS: migrate image completes and the backend prod image serves GET /api/health (database ok) and reaches healthy"

@@ -24,6 +24,10 @@
 # version-robust belt-and-suspenders measure even though detaching the
 # network already makes the router unreachable from this container.
 #
+# Side effect: with both services detached, no service in the merged smoke
+# config references the external `traefik` network, so Compose does not need
+# it to exist and the smoke scripts neither create nor remove it.
+#
 # MUST NEVER contain a `healthcheck:` key. The whole point of the
 # health-assert phase is to assert the healthcheck docker-compose.prod.yml
 # actually ships, read from that single source. A healthcheck key here

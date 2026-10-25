@@ -107,25 +107,14 @@ COMPOSE_PROJECT="agent-tasks-smoke-$$"
 # Docker Compose's implicit build-image naming convention (verified locally
 # via `docker compose config --images`): "<project>-<service>:latest".
 COMPOSE_IMAGE="${COMPOSE_PROJECT}-frontend:latest"
-# Even though the override above detaches the *frontend* service from the
-# `traefik` network, docker-compose.prod.yml still declares it at the
-# top-level `networks:` key and the `backend` service (not started here --
-# `up --no-deps frontend` skips it) still references it there. Verified
-# empirically 2026-08-17: `compose up --no-deps frontend` against the real
-# file + override still fails with "network traefik declared as external,
-# but could not be found" when the network is absent, and still succeeds
-# without it needing to be created when NO service in the file references
-# it at all. So this script still owns creating/removing it. The create
-# side is race-tolerant (create || re-inspect below); the REMOVE side is
-# deliberately only guarded against foreign attachments (a real stack), NOT
-# against a concurrent smoke run: a second local run attaches nothing to
-# this network (the override detaches its frontend), so the creator's
-# cleanup can rm the network between that run's existence check and its
-# `compose up`, which then fails LOUDLY with "network traefik declared as
-# external, but could not be found". Accepted: local-concurrency only (CI
-# is one job per ephemeral runner), and a loud red, never a silent pass.
+# The override detaches both services from the external `traefik` network,
+# so no service in the merged smoke config references it and Compose does not
+# require it to exist (verified by rendering the merged config: only the
+# disabled labels mention traefik). This script therefore neither creates nor
+# removes that network; TRAEFIK_NETWORK is only used for the live-container
+# detach assertion below. Compose also runs with `--env-file /dev/null` so a
+# local run never reads the checkout's `.env`.
 TRAEFIK_NETWORK="traefik"
-CREATED_TRAEFIK_NETWORK=0
 COMPOSE_CID=""
 
 # Prefer the `docker compose` plugin (what GitHub-hosted runners ship);
@@ -143,9 +132,9 @@ fi
 
 compose_cmd() {
   if [ "${COMPOSE_USE_PLUGIN}" = "1" ]; then
-    docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
+    docker compose --env-file /dev/null -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
   else
-    docker-compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
+    docker-compose --env-file /dev/null -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
   fi
 }
 
@@ -161,18 +150,6 @@ cleanup() {
   echo "--- cleanup: compose down (project ${COMPOSE_PROJECT}) ---"
   compose_cmd down -v --remove-orphans >/dev/null 2>&1 || true
   docker rmi -f "${COMPOSE_IMAGE}" >/dev/null 2>&1 || true
-  if [ "${CREATED_TRAEFIK_NETWORK}" = "1" ]; then
-    # This endpoint guard detects FOREIGN attachments only (a real stack
-    # that started using the network mid-test): with the compose override
-    # in place, neither this run's frontend nor a concurrent smoke run's
-    # ever attaches to this network, so a concurrent run is invisible here
-    # (see the comment at TRAEFIK_NETWORK above for the accepted remove-side
-    # race). Only remove the network when it is provably unused right now.
-    net_endpoints=$(docker network inspect -f '{{len .Containers}}' "${TRAEFIK_NETWORK}" 2>/dev/null) || net_endpoints=""
-    if [ "${net_endpoints}" = "0" ]; then
-      docker network rm "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
-    fi
-  fi
 }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT
@@ -268,21 +245,6 @@ echo "PASS: frontend prod image builds, starts, and serves GET / with HTTP 200"
 
 echo "--- health-assert: tag image for compose (project ${COMPOSE_PROJECT}) ---"
 docker tag "${IMAGE_TAG}" "${COMPOSE_IMAGE}"
-
-if ! docker network inspect "${TRAEFIK_NETWORK}" >/dev/null 2>&1; then
-  echo "--- health-assert: creating external network '${TRAEFIK_NETWORK}' (docker-compose.prod.yml's 'backend' service still declares it, so Compose requires it to exist even though only 'frontend' is started) ---"
-  # `docker network create` is not idempotent: a concurrent smoke run can
-  # win the same create race, in which case ours fails with "already
-  # exists". Tolerate that failure and re-verify existence next -- only a
-  # genuine failure (permissions, daemon issue) that leaves the network
-  # still absent afterward is fatal.
-  docker network create "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
-  if ! docker network inspect "${TRAEFIK_NETWORK}" >/dev/null 2>&1; then
-    echo "FAIL: could not create or verify the external network '${TRAEFIK_NETWORK}' required by docker-compose.prod.yml's top-level networks declaration" >&2
-    exit 1
-  fi
-  CREATED_TRAEFIK_NETWORK=1
-fi
 
 # Dummy values so Compose can interpolate docker-compose.prod.yml without
 # warnings -- these belong to the db/backend/migrate services, not frontend,
