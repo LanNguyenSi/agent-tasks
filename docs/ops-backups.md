@@ -202,7 +202,7 @@ To abort before step 5 (for example when the dump is empty), reset the deploy
 checkout to the previous commit and rebuild before starting the backend again:
 the images built in step 2 already carry the new schema, so starting the
 backend on them runs the failing `migrate` again. The destructive commit is
-still on the upstream deploy branch: revert it or hold it there, or complete
+still on the upstream deploy branch: revert it upstream, or trigger no relay deploy until steps 1-6 are complete, or complete
 steps 1-6, before relay deploys again. Otherwise the next relay deploy pulls
 it, `migrate` fails, and the site is down until the automatic rollback
 completes.
@@ -210,7 +210,7 @@ completes.
 After step 5, rolling back the images no longer brings the data back. To
 recover, reset the deploy checkout to the previous commit, rebuild, restore
 the dump with the backend stopped (as in [Restoring](#restoring)), then start
-the backend. As when aborting, revert or hold the destructive commit upstream
+the backend. As when aborting, revert the destructive commit upstream, or trigger no relay deploy until steps 1-6 are complete
 before relay deploys again.
 
 Do not add the flag to `Dockerfile.migrate`, `docker-compose.prod.yml` or

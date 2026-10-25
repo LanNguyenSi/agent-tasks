@@ -45,6 +45,11 @@
 // - What RUN and COPY put into the image (for example a RUN that replaces
 //   npx) and the base image's contents: the guard pins which instructions
 //   exist and the CMD, not their effect on the image filesystem.
+// - Literal values in migrate's `environment:` (Node, npm or Prisma option
+//   variables, PATH) can change what the pinned CMD runs; only the
+//   Dockerfile ENV form is refused.
+// - Destructive Prisma commands that use neither flag (for example a reset)
+//   in services other than migrate.
 //
 // Run: npx vitest run tests/unit/migrate-no-accept-data-loss.test.ts from
 // backend/ (also part of `npm run test --workspace=backend`).
@@ -431,6 +436,7 @@ describe("Dockerfile contract checks", () => {
     ["`|| true` on the chain", CMD_LINE.replace(/"\]$/, ' || true"]'), /not the pinned/],
     ["a shell-form CMD", `CMD ${PINNED_CMD[2]}`, /not the pinned/],
     ["a second build stage", `${CMD_LINE}\nFROM busybox`, /one build stage/],
+    ["a continued instruction at end of file", `${CMD_LINE}\ncmd ["true"] \\`, /exactly one CMD/],
   ])("reject %s", (_name, replacement, expected) => {
     const text = edit(DOCKERFILE_OK, CMD_LINE, replacement);
     expect(dockerfileViolations(text).join("\n")).toMatch(expected);
@@ -440,6 +446,8 @@ describe("Dockerfile contract checks", () => {
     expect(dockerfileViolations(`# syntax=docker/dockerfile:1\n${DOCKERFILE_OK}`).join("\n")).toMatch(
       /parser directive/,
     );
+    expect(dockerfileViolations(`# escape=\`\n${DOCKERFILE_OK}`).join("\n")).toMatch(/parser directive/);
+    expect(dockerfileViolations(`# ESCAPE=\`\n${DOCKERFILE_OK}`).join("\n")).toMatch(/parser directive/);
     const debian = edit(DOCKERFILE_OK, "FROM node:22-slim", "FROM debian:12-slim");
     expect(dockerfileViolations(debian).join("\n")).toMatch(/not the official node image/);
   });
@@ -511,6 +519,13 @@ describe("compose contract checks", () => {
       /migrate build is/,
     ],
     ["the short build form", MIGRATE_BUILD, "    build: .\n", /migrate build is/],
+    ["a swapped build context", "      context: .\n", "      context: ./other\n", /migrate build is/],
+    [
+      "an extra build key",
+      MIGRATE_BUILD,
+      `${MIGRATE_BUILD}      additional_contexts:\n        node:22-slim: docker-image://busybox\n`,
+      /migrate build is/,
+    ],
     ["restart other than no", '  restart: "no"\n', "  restart: on-failure\n", /migrate restart is/],
     [
       "a renamed migrate service",
@@ -544,6 +559,15 @@ describe("compose contract checks", () => {
   it("refuse a duplicated key instead of reading only one of them", () => {
     const dup = edit(COMPOSE_OK, '  restart: "no"\n', '  restart: "no"\n  restart: always\n');
     expect(() => load(dup)).toThrow(/duplicated mapping key/);
+  });
+
+  it("find --force-reset in a service other than migrate", () => {
+    const reset = edit(
+      COMPOSE_OK,
+      "  backend:\n",
+      '  backend:\n    command: ["npx", "prisma", "db", "push", "--force-reset"]\n',
+    );
+    expect(flagHits("yaml", reset)).toContain("--force-reset");
   });
 
   it("find a flag split by a double-quoted line escape", () => {
