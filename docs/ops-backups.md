@@ -143,9 +143,8 @@ data-loss warning for a schema change, `prisma db push` exits non-zero,
 `migrate` fails, and `backend` does not start. The database keeps its old
 schema and data. The warning is not limited to changes that lose rows: adding
 any UNIQUE constraint triggers it whether or not the column holds duplicates.
-Other
-triggers are dropping a populated column or table and type changes Prisma
-cannot apply losslessly.
+Other triggers are dropping a populated column or table and type changes
+Prisma cannot apply losslessly.
 
 What a failed `migrate` does to a running stack (`backend` depends on
 `migrate` with `service_completed_successfully`):
@@ -202,12 +201,17 @@ To apply a destructive change on purpose, on the host:
 To abort before step 5 (for example when the dump is empty), reset the deploy
 checkout to the previous commit and rebuild before starting the backend again:
 the images built in step 2 already carry the new schema, so starting the
-backend on them runs the failing `migrate` again.
+backend on them runs the failing `migrate` again. The destructive commit is
+still on the upstream deploy branch: revert it or hold it there, or complete
+steps 1-6, before relay deploys again. Otherwise the next relay deploy pulls
+it, `migrate` fails, and the site is down until the automatic rollback
+completes.
 
 After step 5, rolling back the images no longer brings the data back. To
 recover, reset the deploy checkout to the previous commit, rebuild, restore
 the dump with the backend stopped (as in [Restoring](#restoring)), then start
-the backend.
+the backend. As when aborting, revert or hold the destructive commit upstream
+before relay deploys again.
 
 Do not add the flag to `Dockerfile.migrate`, `docker-compose.prod.yml` or
 `.relay.yml`.
