@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-10-25T19:07:44Z
+timestamp: 2026-10-25T19:09:26Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -62,7 +62,11 @@ tasks, rejects an active finalization reservation, and rechecks project-admin
 authority. A project-default change selects null-`workflowId` tasks because
 they inherit the default; a definition update also selects explicit references
 to that workflow. Reset selects both explicit references that it detaches and
-inherited tasks. A name-only update and non-default workflow creation leave
+inherited tasks. Customize, template application and reset (and their task
+selection) all act on the oldest default row of a project that holds more
+than one, ties broken by id (`FIRST_DEFAULT_ROW_ORDER`, via
+`findFirstDefaultRow` in `backend/src/routes/workflows.ts`), the row the
+readers use. A name-only update and non-default workflow creation leave
 existing grounding attempts unchanged. Configured GitHub creation and webhook
 writers participate in the same shared context-mutation protocol (see
 `governance-merge.md` and the [receipt contract](../grounding-receipt-contract.md)).
