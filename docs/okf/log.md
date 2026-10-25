@@ -870,6 +870,6 @@ Re-verified `deploy.md` against `.github/workflows/docker-smoke.yml`, `tools/bac
 
 Re-verified after the change that removes `--accept-data-loss` from `Dockerfile.migrate`. `deploy.md`: the migrate `CMD` claim (push without the flag, then the two SQL steps joined by `&&`), the failure behaviour (a destructive diff fails `migrate`, recreated services stay in `Created` until agent-relay's rollback) and the pointer to the deliberate path in `docs/ops-backups.md` match `Dockerfile.migrate` and `docker-compose.prod.yml`; the backend docker smoke paragraph still matches the scripts and the workflow after the squash merge. `backend.md`: `backend/package.json` gained `js-yaml` and `@types/js-yaml` as devDependencies for the migrate guard test; the doc makes no dependency claim that changes. `architecture.md`: the compose topology line (one-shot migrate via `prisma db push`) is unchanged. The three docs were re-stamped.
 
-## 2026-10-25 (workflows.ts: default-row lookups share one helper)
+## 2026-10-25
 
 Re-verified `claim-model.md`, `deploy.md` and `workflow-gates.md` after the workflow routes moved their default-row lookups into `findFirstDefaultRow` (oldest row by `createdAt`, then `id`, `FIRST_DEFAULT_ROW_ORDER`). `claim-model.md` and `deploy.md` cite `FIXED_STATE_NAMES` and `workflowDefinitionSchema` in `backend/src/routes/workflows.ts`, both unchanged. `workflow-gates.md` gained one sentence: customize, template application and reset (and their task selection) act on the oldest default row. The three docs were re-stamped.
