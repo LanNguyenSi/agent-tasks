@@ -860,3 +860,7 @@ Content changes: `cli.md` states the `--force-reason` rule; `task-lifecycle.md` 
 ## 2026-10-12 (review follow-up: stale-when-done sentence, engines floor)
 
 `signals-and-notification-delivery.md` no longer names `task_assigned` in the sentence about pickup skipping pending rows of done tasks: `STALE_WHEN_DONE` in `backend/src/routes/tasks.ts` holds `review_needed` and `task_available` only. `architecture.md` lists `package.json` as a source, which now carries `engines.node` `>=22.9`; it makes no claim about the Node floor, so it was re-stamped without a content change. Both docs were re-stamped.
+
+## 2026-10-25 (deploy.md: backend docker smoke job)
+
+Re-verified `deploy.md` against `.github/workflows/docker-smoke.yml`, `tools/backend-docker-smoke.sh`, `tools/frontend-docker-smoke.sh` and `tools/compose.smoke-override.yml`: the new `backend-prod-images` job (migrate exit 0, `GET /api/health` 200 with database ok, compose healthcheck `healthy`, restart count above zero fails), the widened path filters, the override detaching the smoke backend from `traefik`, and the job staying a non-required check. The backend config and workflow route changes of the zod 4 migration (`backend/src/config/index.ts`, `backend/src/config/grounding-runtime.ts`, `backend/package.json`, `backend/src/routes/workflows.ts`) change no claim in the doc (`emptyAsUnset`, the defaults, `FIXED_STATE_NAMES` and `workflowDefinitionSchema` are unchanged). The doc was re-stamped.

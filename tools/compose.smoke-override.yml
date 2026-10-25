@@ -1,5 +1,6 @@
 # docker-compose.prod.yml override for tools/frontend-docker-smoke.sh's
-# health-assert phase ONLY. Never referenced by the real deploy.
+# health-assert phase and tools/backend-docker-smoke.sh ONLY. Never
+# referenced by the real deploy.
 #
 # Why this exists: docker-compose.prod.yml's frontend service joins the
 # shared external `traefik` network with live Traefik router labels
@@ -23,6 +24,10 @@
 # version-robust belt-and-suspenders measure even though detaching the
 # network already makes the router unreachable from this container.
 #
+# Side effect: with both services detached, no service in the merged smoke
+# config references the external `traefik` network, so Compose does not need
+# it to exist and the smoke scripts neither create nor remove it.
+#
 # MUST NEVER contain a `healthcheck:` key. The whole point of the
 # health-assert phase is to assert the healthcheck docker-compose.prod.yml
 # actually ships, read from that single source. A healthcheck key here
@@ -30,6 +35,13 @@
 # reality.
 services:
   frontend:
+    networks: !override
+      - internal
+    labels:
+      traefik.enable: "false"
+  # Same detach for the backend (tools/backend-docker-smoke.sh): its base
+  # definition carries live Traefik labels for /api and /docs on the real host.
+  backend:
     networks: !override
       - internal
     labels:

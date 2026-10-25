@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Docker smoke covers the backend and migrate images**: `docker-smoke.yml` gains a `backend-prod-images` job (`tools/backend-docker-smoke.sh`) that builds `Dockerfile.migrate` and the `prod` stage of `backend/Dockerfile`, runs db and migrate from `docker-compose.prod.yml` until migrate exits 0, then starts the backend and waits, bounded, for a database-backed `GET /api/health` and for the compose-declared healthcheck to turn healthy. A crash-looping container or a failing migrate fails the job with the service logs, and teardown always runs. The push and pull_request path filters now include `backend/Dockerfile`, `Dockerfile.migrate`, `backend/src/**`, `backend/tsconfig.json`, `backend/prisma/**` and the new script, so a change that breaks only the backend image no longer skips the smoke test. The workflow stays a non-required check. `tools/compose.smoke-override.yml` detaches the smoke backend from the shared `traefik` network as it already did for the frontend.
+
 ## [0.32.0] - 2026-10-25
 
 ### Security
