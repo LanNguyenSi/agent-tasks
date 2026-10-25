@@ -69,6 +69,8 @@ beforeEach(async () => {
 });
 
 describe("workflow mutations act on the oldest default row (the one readers use)", () => {
+  // The route cases below only discriminate while this one holds: it proves
+  // the fixture makes an unordered scan pick the newer row.
   it("fixture: an unordered scan really returns the newer row first", async () => {
     const { oldest, newer } = await twoDefaults();
     const unordered = await store.db.workflow.findFirst({ where: { projectId, isDefault: true } });
@@ -99,5 +101,34 @@ describe("workflow mutations act on the oldest default row (the one readers use)
     expect(res.status).toBe(200);
     expect(await store.db.workflow.findUnique({ where: { id: oldest.id } })).toBeNull();
     expect(await store.db.workflow.findUnique({ where: { id: newer.id } })).not.toBeNull();
+  });
+
+  // The pre-check decides which tasks' grounding context is invalidated and
+  // audited. It must look at the same row the mutation acts on.
+  async function pinnedTasks(oldestId: string, newerId: string) {
+    const mk = (workflowId: string, title: string) =>
+      store.db.task.create({ data: { id: randomUUID(), projectId, workflowId, title } });
+    return { onOldest: await mk(oldestId, "On oldest"), onNewer: await mk(newerId, "On newer") };
+  }
+  async function auditedTaskIds() {
+    const rows = await store.db.auditLog.findMany({ where: { projectId, action: "project.grounding.context_mutated" } });
+    expect(rows).toHaveLength(1);
+    return (rows[0].payload as { taskIds: string[] }).taskIds;
+  }
+
+  it("apply-template pre-check selects the tasks of the oldest default row", async () => {
+    const { oldest, newer } = await twoDefaults();
+    const { onOldest } = await pinnedTasks(oldest.id, newer.id);
+    const res = await call("/workflow/apply-template/release-ops-no-pr", "POST");
+    expect(res.status).toBe(201);
+    expect(await auditedTaskIds()).toEqual([onOldest.id]);
+  });
+
+  it("reset pre-check selects the tasks of the oldest default row", async () => {
+    const { oldest, newer } = await twoDefaults();
+    const { onOldest } = await pinnedTasks(oldest.id, newer.id);
+    const res = await call("/workflow", "DELETE");
+    expect(res.status).toBe(200);
+    expect(await auditedTaskIds()).toEqual([onOldest.id]);
   });
 });

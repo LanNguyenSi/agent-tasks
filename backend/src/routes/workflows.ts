@@ -40,6 +40,17 @@ async function workflowContextMutation<T extends object>(
   });
 }
 
+type WorkflowDb = Pick<typeof prisma, "workflow">;
+
+/**
+ * The project's default row as readers see it: the oldest, ties by id. Every
+ * route that selects or mutates the default row goes through here, so the
+ * order cannot be dropped at one call site.
+ */
+function findFirstDefaultRow(db: WorkflowDb, projectId: string) {
+  return db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+}
+
 function inheritedTaskIds(db: Parameters<Parameters<typeof mutateGroundingContext>[1]["selectAndAuthorize"]>[0], projectId: string) {
   return db.task.findMany({ where: { projectId, workflowId: null }, select: { id: true } }).then(tasks => tasks.map(task => task.id));
 }
@@ -246,10 +257,7 @@ workflowRouter.get("/projects/:projectId/effective-workflow", async (c) => {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return notFound(c);
 
-  const custom = await prisma.workflow.findFirst({
-    where: { projectId, isDefault: true },
-    orderBy: FIRST_DEFAULT_ROW_ORDER,
-  });
+  const custom = await findFirstDefaultRow(prisma, projectId);
 
   if (custom) {
     return c.json({
@@ -276,13 +284,10 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
   if (!(await isProjectAdmin(actor, projectId))) return forbidden(c, "Only team admins can customize a workflow");
   try {
     const result = await workflowContextMutation(projectId, actor, "workflow_customize_grounding_context", async db => {
-      const existing = await db.workflow.findFirst({
-        where: { projectId, isDefault: true },
-        orderBy: FIRST_DEFAULT_ROW_ORDER,
-      });
+      const existing = await findFirstDefaultRow(db, projectId);
       return existing ? [] : inheritedTaskIds(db, projectId);
     }, async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+      const existing = await findFirstDefaultRow(db, projectId);
       if (existing) return { changed: false, conflict: existing.id };
       const workflow = await db.workflow.create({
         data: {
@@ -371,12 +376,12 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
   let workflow;
   try {
     const result = await workflowContextMutation(projectId, actor, "workflow_template_apply_grounding_context", async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+      const existing = await findFirstDefaultRow(db, projectId);
       if (existing && canonicalGroundingJson(existing.definition) === canonicalGroundingJson(template.definition)) return [];
       const tasks = await db.task.findMany({ where: { projectId, OR: [{ workflowId: null }, ...(existing ? [{ workflowId: existing.id }] : [])] }, select: { id: true } });
       return tasks.map(task => task.id);
     }, async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+      const existing = await findFirstDefaultRow(db, projectId);
       const definitionChanged = !existing || canonicalGroundingJson(existing.definition) !== canonicalGroundingJson(template.definition);
       const next = existing
         ? await db.workflow.update({ where: { id: existing.id }, data: { name: template.name, definition: template.definition as object } })
@@ -427,12 +432,12 @@ workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
 
   try {
     const result = await workflowContextMutation(projectId, actor, "workflow_reset_grounding_context", async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+      const existing = await findFirstDefaultRow(db, projectId);
       if (!existing) return [];
       const tasks = await db.task.findMany({ where: { projectId, OR: [{ workflowId: existing.id }, { workflowId: null }] }, select: { id: true } });
       return tasks.map(task => task.id);
     }, async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+      const existing = await findFirstDefaultRow(db, projectId);
       if (!existing) return { changed: false, missing: true, affectedTaskCount: 0, previousWorkflowId: "" };
       const updateResult = await db.task.updateMany({ where: { projectId, workflowId: existing.id }, data: { workflowId: null } });
       await db.workflow.delete({ where: { id: existing.id } });
