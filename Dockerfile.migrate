@@ -6,4 +6,8 @@ COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
 RUN npm ci --workspace=backend --ignore-scripts
 COPY backend/prisma backend/prisma
-CMD ["sh", "-c", "npx prisma db push --schema=/app/backend/prisma/schema.prisma --skip-generate --accept-data-loss && npx prisma db execute --schema=/app/backend/prisma/schema.prisma --file=/app/backend/prisma/grounding-github-fence.sql && npx prisma db execute --schema=/app/backend/prisma/schema.prisma --file=/app/backend/prisma/clear-terminal-claims.sql"]
+# No --accept-data-loss: a schema change Prisma judges destructive makes the
+# push exit non-zero, so this one-shot fails and the backend (which waits on
+# it with service_completed_successfully) is not started. Apply such a change
+# deliberately; see docs/ops-backups.md ("Applying a destructive schema change").
+CMD ["sh", "-c", "npx prisma db push --schema=/app/backend/prisma/schema.prisma --skip-generate && npx prisma db execute --schema=/app/backend/prisma/schema.prisma --file=/app/backend/prisma/grounding-github-fence.sql && npx prisma db execute --schema=/app/backend/prisma/schema.prisma --file=/app/backend/prisma/clear-terminal-claims.sql"]

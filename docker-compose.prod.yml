@@ -49,9 +49,11 @@ services:
       - internal
     restart: "no"
     # One-shot prisma db push container; lives only for the duration
-    # of the schema sync. 512M is far above what a single push uses,
-    # leaving headroom for a future migrate-deploy that would need
-    # more.
+    # of the schema sync. It runs db push WITHOUT --accept-data-loss, so a
+    # destructive schema change fails this service and backend does not start
+    # (docs/ops-backups.md, "Applying a destructive schema change").
+    # 512M is far above what a single push uses, leaving headroom for a
+    # future migrate-deploy that would need more.
     mem_limit: 512m
     logging:
       driver: json-file
