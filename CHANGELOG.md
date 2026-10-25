@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **Approving through the legacy `POST /tasks/:id/review` route no longer leaves the work claim on the finished task.** The approve write cleared only the review lock, so the author kept an active-looking claim on a terminal task until the deploy repair (`clear-terminal-claims`) ran. It now clears the work claim and the review lock in the same compare-and-swap write, using the shared `clearAllClaims` field set, whenever the target is a terminal state of the task's own workflow (also a pinned workflow with a custom terminal name). `request_changes` is unchanged: it clears the review lock and keeps the work claim so the author can resume.
+- **Workflow customize, apply-template and reset act on the default row readers use.** With more than one default workflow row in a project, these three routes selected a default row without an order and could modify or delete a row the readers (and the SQL repair) do not use. They now pick the oldest default row (`FIRST_DEFAULT_ROW_ORDER`: `createdAt`, then `id`), covered by an integration test with two default rows. Duplicate default rows themselves are not collapsed and no unique index is added.
 
 ### Security
 

@@ -278,10 +278,11 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
     const result = await workflowContextMutation(projectId, actor, "workflow_customize_grounding_context", async db => {
       const existing = await db.workflow.findFirst({
         where: { projectId, isDefault: true },
+        orderBy: FIRST_DEFAULT_ROW_ORDER,
       });
       return existing ? [] : inheritedTaskIds(db, projectId);
     }, async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
       if (existing) return { changed: false, conflict: existing.id };
       const workflow = await db.workflow.create({
         data: {
@@ -370,12 +371,12 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
   let workflow;
   try {
     const result = await workflowContextMutation(projectId, actor, "workflow_template_apply_grounding_context", async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
       if (existing && canonicalGroundingJson(existing.definition) === canonicalGroundingJson(template.definition)) return [];
       const tasks = await db.task.findMany({ where: { projectId, OR: [{ workflowId: null }, ...(existing ? [{ workflowId: existing.id }] : [])] }, select: { id: true } });
       return tasks.map(task => task.id);
     }, async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
       const definitionChanged = !existing || canonicalGroundingJson(existing.definition) !== canonicalGroundingJson(template.definition);
       const next = existing
         ? await db.workflow.update({ where: { id: existing.id }, data: { name: template.name, definition: template.definition as object } })
@@ -426,12 +427,12 @@ workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
 
   try {
     const result = await workflowContextMutation(projectId, actor, "workflow_reset_grounding_context", async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
       if (!existing) return [];
       const tasks = await db.task.findMany({ where: { projectId, OR: [{ workflowId: existing.id }, { workflowId: null }] }, select: { id: true } });
       return tasks.map(task => task.id);
     }, async db => {
-      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
       if (!existing) return { changed: false, missing: true, affectedTaskCount: 0, previousWorkflowId: "" };
       const updateResult = await db.task.updateMany({ where: { projectId, workflowId: existing.id }, data: { workflowId: null } });
       await db.workflow.delete({ where: { id: existing.id } });
