@@ -50,6 +50,9 @@
 //   Dockerfile ENV form is refused.
 // - Destructive Prisma commands that use neither flag (for example a reset)
 //   in services other than migrate.
+// - Deliberate obfuscation of a flag (assembled by shell quoting, or encoded)
+//   in a service whose command is not pinned; the scan reads literal text and
+//   decoded `!!binary` scalars only.
 //
 // Run: npx vitest run tests/unit/migrate-no-accept-data-loss.test.ts from
 // backend/ (also part of `npm run test --workspace=backend`).
@@ -87,6 +90,8 @@ function nonCommentLines(text: string): string[] {
 // Every string in a parsed YAML document, mapping keys included.
 function yamlStrings(value: unknown): string[] {
   if (typeof value === "string") return [value];
+  // js-yaml returns `!!binary` scalars as bytes; compose decodes them to text.
+  if (value instanceof Uint8Array) return [Buffer.from(value).toString("utf8")];
   if (Array.isArray(value)) return value.flatMap(yamlStrings);
   if (isMapping(value)) {
     return Object.entries(value).flatMap(([k, v]) => [k, ...yamlStrings(v)]);
@@ -121,8 +126,8 @@ interface Instruction {
 // refused below): a line whose first non-blank character is `#` is a comment,
 // also inside a continuation; a trailing backslash joins the next line with
 // no separator; blank lines are skipped; the instruction name is
-// case-insensitive. Heredocs are not modelled: their body lines are read as
-// instructions, which the instruction allowlist then rejects.
+// case-insensitive. Heredocs (`<<WORD`) are not modelled and are refused
+// outright, because their body lines could otherwise pass as instructions.
 function parseDockerfile(text: string): {
   directives: string[];
   instructions: Instruction[];
@@ -183,6 +188,11 @@ function dockerfileStageViolations(text: string): string[] {
   const v: string[] = [];
   for (const d of directives) {
     v.push(`parser directive changes how Docker reads the file: ${d}`);
+  }
+  for (const i of instructions) {
+    if (/<<-?\s*["']?[A-Za-z_]/.test(i.args)) {
+      v.push(`line ${i.line}: ${i.keyword} uses a heredoc, which this check does not model`);
+    }
   }
   const froms = instructions.filter((i) => i.keyword === "FROM");
   if (froms.length !== 1 || instructions[0]?.keyword !== "FROM") {
@@ -437,6 +447,8 @@ describe("Dockerfile contract checks", () => {
     ["a shell-form CMD", `CMD ${PINNED_CMD[2]}`, /not the pinned/],
     ["a second build stage", `${CMD_LINE}\nFROM busybox`, /one build stage/],
     ["a continued instruction at end of file", `${CMD_LINE}\ncmd ["true"] \\`, /exactly one CMD/],
+    ["a COPY heredoc", `COPY <<CMD /tmp/x\n${CMD_LINE}\nCMD`, /heredoc/],
+    ["a quoted RUN heredoc", `RUN <<-"EOT"\necho hi\nEOT\n${CMD_LINE}`, /heredoc/],
   ])("reject %s", (_name, replacement, expected) => {
     const text = edit(DOCKERFILE_OK, CMD_LINE, replacement);
     expect(dockerfileViolations(text).join("\n")).toMatch(expected);
@@ -568,6 +580,12 @@ describe("compose contract checks", () => {
       '  backend:\n    command: ["npx", "prisma", "db", "push", "--force-reset"]\n',
     );
     expect(flagHits("yaml", reset)).toContain("--force-reset");
+  });
+
+  it("find a flag in a !!binary scalar", () => {
+    const encoded = Buffer.from("npx prisma db push --force-reset").toString("base64");
+    const text = edit(COMPOSE_OK, "name: t\n", `name: t\nx-cmd: !!binary ${encoded}\n`);
+    expect(flagHits("yaml", text)).toContain("npx prisma db push --force-reset");
   });
 
   it("find a flag split by a double-quoted line escape", () => {
