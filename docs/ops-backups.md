@@ -142,15 +142,13 @@ The `migrate` service never passes `--accept-data-loss`. When Prisma prints a
 data-loss warning for a schema change, `prisma db push` exits non-zero,
 `migrate` fails, and `backend` does not start. The database keeps its old
 schema and data. The warning is not limited to changes that lose rows: adding
-any UNIQUE constraint triggers it whether or not the column holds duplicates
-(measured: `@unique` on a column without duplicates also exits 1). Other
+any UNIQUE constraint triggers it whether or not the column holds duplicates.
+Other
 triggers are dropping a populated column or table and type changes Prisma
 cannot apply losslessly.
 
-What a failed `migrate` does to a running stack, measured with a scratch
-compose project (a `db`, the real `Dockerfile.migrate` image, and stand-in
-`backend` and `frontend` services, the backend depending on `migrate` with
-`service_completed_successfully`):
+What a failed `migrate` does to a running stack (`backend` depends on
+`migrate` with `service_completed_successfully`):
 
 - `docker compose up -d` exits 1. A service whose config and image are
   unchanged keeps running, but a deploy that ships a destructive schema change
@@ -197,14 +195,19 @@ To apply a destructive change on purpose, on the host:
    docker compose -f docker-compose.prod.yml run --rm --no-deps migrate sh -c \
      'npx prisma db push --schema=/app/backend/prisma/schema.prisma --skip-generate --accept-data-loss'
    ```
-
-   The same override was run against the scratch project and applied the drop.
 6. Redeploy as usual. The regular `migrate` push now finds nothing to change,
    and the two SQL steps (`grounding-github-fence.sql`,
    `clear-terminal-claims.sql`) run after it.
 
-After the push, recovery means restoring the dump; rolling back the images no
-longer brings the data back.
+To abort before step 5 (for example when the dump is empty), reset the deploy
+checkout to the previous commit and rebuild before starting the backend again:
+the images built in step 2 already carry the new schema, so starting the
+backend on them runs the failing `migrate` again.
+
+After step 5, rolling back the images no longer brings the data back. To
+recover, reset the deploy checkout to the previous commit, rebuild, restore
+the dump with the backend stopped (as in [Restoring](#restoring)), then start
+the backend.
 
 Do not add the flag to `Dockerfile.migrate`, `docker-compose.prod.yml` or
 `.relay.yml`.

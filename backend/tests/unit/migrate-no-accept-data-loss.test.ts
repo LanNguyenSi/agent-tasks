@@ -27,34 +27,28 @@ describe("migrate does not accept data loss", () => {
     "docker-compose.prod.yml",
     ".relay.yml",
   ]) {
-    it(`${file} has no --accept-data-loss outside comments`, () => {
-      const hits = nonCommentLines(read(file)).filter((l) =>
-        l.includes("--accept-data-loss"),
+    it(`${file} has no --accept-data-loss or --force-reset outside comments`, () => {
+      const hits = nonCommentLines(read(file)).filter(
+        (l) => l.includes("--accept-data-loss") || l.includes("--force-reset"),
       );
       expect(hits).toEqual([]);
     });
   }
 
-  it("Dockerfile.migrate CMD runs push, fence SQL, claim repair in order joined by &&", () => {
-    const cmdLine = nonCommentLines(read("Dockerfile.migrate")).find((l) =>
+  // The whole CMD is pinned: any extra operator (`||`, `;`, `|`), flag or
+  // reordering changes fail-closed behaviour, so a change here has to be a
+  // deliberate edit of this expectation.
+  it("Dockerfile.migrate CMD is exactly push, fence SQL, claim repair joined by &&", () => {
+    const cmdLines = nonCommentLines(read("Dockerfile.migrate")).filter((l) =>
       l.trimStart().startsWith("CMD "),
     );
-    expect(cmdLine).toBeDefined();
-    const cmd = cmdLine as string;
-    const push = cmd.indexOf("prisma db push");
-    const fence = cmd.indexOf("grounding-github-fence.sql");
-    const claims = cmd.indexOf("clear-terminal-claims.sql");
-    expect(push).toBeGreaterThan(-1);
-    expect(fence).toBeGreaterThan(push);
-    expect(claims).toBeGreaterThan(fence);
-    const marker = '"-c", "';
-    expect(cmd).toContain(marker);
-    const sh = cmd.slice(cmd.indexOf(marker) + marker.length);
-    const steps = sh.split(" && ");
-    expect(steps).toHaveLength(3);
-    expect(steps[0]).toContain("prisma db push");
-    expect(steps[1]).toContain("grounding-github-fence.sql");
-    expect(steps[2]).toContain("clear-terminal-claims.sql");
-    expect(sh).not.toMatch(/;/);
+    expect(cmdLines).toHaveLength(1);
+    const schema = "--schema=/app/backend/prisma/schema.prisma";
+    const sh = [
+      `npx prisma db push ${schema} --skip-generate`,
+      `npx prisma db execute ${schema} --file=/app/backend/prisma/grounding-github-fence.sql`,
+      `npx prisma db execute ${schema} --file=/app/backend/prisma/clear-terminal-claims.sql`,
+    ].join(" && ");
+    expect(cmdLines[0].trim()).toBe(`CMD ["sh", "-c", "${sh}"]`);
   });
 });
