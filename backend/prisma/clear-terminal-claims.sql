@@ -3,8 +3,8 @@
 -- task whose status is a terminal state of its own effective workflow.
 --
 -- A finished task keeps no claim: the task and merge routes clear them (the
--- legacy review approve and the Grounding webhook do not; this repair is
--- their backstop). Rows written before that held a claim on a finished task,
+-- Grounding webhook does not; this repair is its backstop). Rows written
+-- before that held a claim on a finished task,
 -- and such a claim counts as an active claim again as soon as the task's
 -- workflow stops treating its status as terminal (a workflow switch), which
 -- blocks the holder's next pickup. This statement clears those leftovers.

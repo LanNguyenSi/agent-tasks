@@ -102,7 +102,7 @@ import {
   isStatusOfKind,
   loadWorkflowRows,
 } from "../services/workflow-status-filter.js";
-import { clearAllClaims } from "../services/task-claim-fields.js";
+import { clearAllClaims, clearReview } from "../services/task-claim-fields.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge, type BeforeGithubMerge, type MergeResult } from "../services/github-merge.js";
@@ -8020,9 +8020,10 @@ taskRouter.post(
         task,
         {
           status: newStatus,
-          reviewClaimedByUserId: null,
-          reviewClaimedByAgentId: null,
-          reviewClaimedAt: null,
+          // A terminal landing drops both claims, as the raw transition and
+          // task_finish do; request-changes keeps the work claim so the
+          // author can resume and clears only the review lock.
+          ...(isTerminalState(effectiveDef, newStatus) ? clearAllClaims : clearReview),
           updatedAt: new Date(),
         },
         {},

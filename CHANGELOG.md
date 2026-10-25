@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Approving through the legacy `POST /tasks/:id/review` route no longer leaves the work claim on the finished task.** The approve write cleared only the review lock, so the author kept an active-looking claim on a terminal task until the deploy repair (`clear-terminal-claims`) ran. It now clears the work claim and the review lock in the same compare-and-swap write, using the shared `clearAllClaims` field set, whenever the target is a terminal state of the task's own workflow (also a pinned workflow with a custom terminal name). `request_changes` is unchanged: it clears the review lock and keeps the work claim so the author can resume.
+
 ### Security
 
 - **Production deploys no longer accept data loss.** `Dockerfile.migrate` ran `prisma db push --accept-data-loss` on every deploy, so a schema change that drops a populated column or table was applied silently, and a rollback of the images did not bring the data back. It now runs `prisma db push` without the flag. Upgrade note: any schema change for which Prisma prints a data-loss warning (including adding any UNIQUE constraint, with or without duplicates, dropping a populated column or table, and lossy type changes) now makes the `migrate` service exit non-zero and stops the deploy. `backend` does not start, and the backend and usually the frontend, which compose recreates for such a deploy, are left in `Created` state: the whole site is down until agent-relay's automatic rollback completes, and stays down if that rollback is blocked. Apply such a change deliberately: build, stop the backend, back up, then a one-off `docker compose run --rm --no-deps migrate sh -c '... --accept-data-loss'`, see `docs/ops-backups.md` ("Applying a destructive schema change"). The two SQL steps still follow on success.
