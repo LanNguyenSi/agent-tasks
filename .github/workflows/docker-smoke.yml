@@ -2,13 +2,16 @@ name: Docker Smoke
 
 # Guards the failure class behind the 2026-08-17 prod outage: the frontend
 # prod image built fine, but the container crash-looped at start because
-# runtime-only files were missing from frontend/Dockerfile's prod stage.
+# runtime-only files were missing from frontend/Dockerfile's prod stage. The
+# backend-prod-images job guards the same class for backend/Dockerfile's prod
+# stage and Dockerfile.migrate (build, run migrate, serve GET /api/health).
 # `npm run build` and `docker build` succeeding never caught that -- only
 # actually starting the container and observing it serve a request does.
 # NOTE: this job is paths-filtered. Do NOT add it to branch protection as a
 # plain required status check: PRs not touching these paths would block
 # forever on a check that never reports. A paths-less always-green companion
 # job (or a merge queue) is needed first if it should ever become required.
+# That holds for both jobs below.
 on:
   push:
     branches: [master]
@@ -21,10 +24,20 @@ on:
       # without touching frontend/**. docker-compose.prod.yml declares the
       # frontend healthcheck that the health-assert phase now runs.
       - "backend/package.json"
+      # Inputs of the backend prod image and the migrate image: both
+      # Dockerfiles; backend/src (compiled into dist by the build stage),
+      # backend/tsconfig.json (drives that compile) and backend/prisma
+      # (schema, generated client and the SQL files Dockerfile.migrate runs).
+      - "backend/Dockerfile"
+      - "Dockerfile.migrate"
+      - "backend/src/**"
+      - "backend/tsconfig.json"
+      - "backend/prisma/**"
       - ".dockerignore"
       - "docker-compose.prod.yml"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
+      - "tools/backend-docker-smoke.sh"
       - "tools/compose.smoke-override.yml"
   pull_request:
     branches: [master, main, develop]
@@ -33,10 +46,17 @@ on:
       - "package.json"
       - "package-lock.json"
       - "backend/package.json"
+      # Same backend-image inputs as the push list above.
+      - "backend/Dockerfile"
+      - "Dockerfile.migrate"
+      - "backend/src/**"
+      - "backend/tsconfig.json"
+      - "backend/prisma/**"
       - ".dockerignore"
       - "docker-compose.prod.yml"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
+      - "tools/backend-docker-smoke.sh"
       - "tools/compose.smoke-override.yml"
   workflow_dispatch:
 
@@ -58,3 +78,15 @@ jobs:
 
       - name: Docker prod-image smoke test
         run: bash tools/frontend-docker-smoke.sh
+
+  backend-prod-images:
+    name: Backend prod images
+    runs-on: ubuntu-latest
+    # Backstop, not a measured budget: the script bounds its own phases
+    # (migrate 120s, ready-poll 60s, health-poll 60s) around the image builds.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Docker backend and migrate image smoke test
+        run: bash tools/backend-docker-smoke.sh

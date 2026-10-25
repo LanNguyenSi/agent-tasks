@@ -1,5 +1,6 @@
 # docker-compose.prod.yml override for tools/frontend-docker-smoke.sh's
-# health-assert phase ONLY. Never referenced by the real deploy.
+# health-assert phase and tools/backend-docker-smoke.sh ONLY. Never
+# referenced by the real deploy.
 #
 # Why this exists: docker-compose.prod.yml's frontend service joins the
 # shared external `traefik` network with live Traefik router labels
@@ -30,6 +31,13 @@
 # reality.
 services:
   frontend:
+    networks: !override
+      - internal
+    labels:
+      traefik.enable: "false"
+  # Same detach for the backend (tools/backend-docker-smoke.sh): its base
+  # definition carries live Traefik labels for /api and /docs on the real host.
+  backend:
     networks: !override
       - internal
     labels:
