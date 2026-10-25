@@ -128,13 +128,57 @@ docker compose -f docker-compose.prod.yml up -d backend
 ```
 
 Starting the backend also re-runs the one-shot `migrate` service, which
-applies `prisma db push --accept-data-loss` to the database
+applies `prisma db push` (without `--accept-data-loss`) to the database
 (`Dockerfile.migrate`); restoring a dump taken from the app version being
 deployed keeps that schema sync a no-op.
 
 Then smoke-check: load the board, open a task that has an attachment, and
 confirm the image renders (that exercises the restored database and the
 restored volume together).
+
+## Applying a destructive schema change
+
+The `migrate` service never passes `--accept-data-loss`. When a schema change
+makes Prisma warn about data loss (dropping a column or table that still holds
+values, a type change it applies as drop and add, a UNIQUE constraint over
+duplicate values), `prisma db push` exits non-zero, `migrate` fails, and
+`backend` does not start. The database keeps its old schema and data.
+
+What a failed `migrate` does to a running stack, measured with a scratch
+compose project (a `db`, the real `Dockerfile.migrate` image, and a stand-in
+`backend` that depends on `migrate` with `service_completed_successfully`):
+
+- `docker compose up -d` exits 1. When the backend's own config is unchanged,
+  the running backend keeps running untouched.
+- When the backend is recreated (a new image, or `--force-recreate`, which is
+  the normal case for a deploy that ships new code), compose replaces the old
+  container and leaves the new one in `Created` state, never started. The
+  backend is then down until the schema change is resolved or the deploy is
+  rolled back. A rollback (previous commit, rebuilt old image) runs the old
+  schema's push, which succeeds against the untouched data.
+
+To apply a destructive change on purpose, on the host:
+
+1. Check out the new commit and build the images:
+   `docker compose -f docker-compose.prod.yml build migrate backend`.
+2. Back up the database to a file outside the checkout (agent-relay refuses a
+   tree with untracked files) that only you can read, as in
+   [Backing up, step 1](#1-database-dump), and continue only when the dump is
+   non-empty.
+3. Optional: stop the backend (`docker compose -f docker-compose.prod.yml stop
+   backend`) so it does not serve requests against the changed schema.
+4. Run the push once, with the flag, from a one-off container of the new
+   `migrate` image (the command override replaces the image's `CMD`):
+   `docker compose -f docker-compose.prod.yml run --rm --no-deps migrate sh -c
+   'npx prisma db push --schema=/app/backend/prisma/schema.prisma
+   --skip-generate --accept-data-loss'`. The same override was run against the
+   scratch project and applied the drop.
+5. Redeploy as usual. The regular `migrate` push now finds nothing to change,
+   and the two SQL steps (`grounding-github-fence.sql`,
+   `clear-terminal-claims.sql`) run after it.
+
+Do not add the flag to `Dockerfile.migrate`, `docker-compose.prod.yml` or
+`.relay.yml`.
 
 ## Related
 

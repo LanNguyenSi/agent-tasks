@@ -82,7 +82,7 @@ flowchart TD
 
 ## Data and Consistency
 
-- Relational model in PostgreSQL (`backend/prisma/schema.prisma`), applied with `prisma db push`; there is no migrations directory.
+- Relational model in PostgreSQL (`backend/prisma/schema.prisma`), applied with `prisma db push` (the production one-shot runs it without `--accept-data-loss`, so a destructive change stops the deploy; see `docs/ops-backups.md`); there is no migrations directory.
 - GitHub webhook deliveries are deduplicated by delivery id (`WebhookDelivery`), and side-effecting GitHub verbs such as `pull_requests_merge` accept an optional idempotency key (`ToolInvocation`); the TTL sweep prunes both tables.
 - Claim and transition conflicts are handled explicitly (`409`).
 
