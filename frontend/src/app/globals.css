@@ -7526,6 +7526,13 @@ a.proj-chip:hover {
   margin: 0 0 var(--space-1) 0;
 }
 
+.teams-team-name {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  margin: 0;
+}
+
 .teams-project-count {
   color: var(--muted);
   font-size: var(--text-sm);
@@ -7646,6 +7653,15 @@ a.proj-chip:hover {
   color: var(--muted);
   cursor: default;
   margin: 0;
+}
+
+/* Why an item is disabled: a visible second line inside the item, so it
+   reaches keyboard, screen-reader and touch users (a title does not). */
+.app-dropdown-item-reason {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 
 /* ── NotificationWebhookSection v2 ─────────────────────────────── */

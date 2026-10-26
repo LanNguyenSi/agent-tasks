@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => nav.router,
   useParams: () => ({ id: "p-1" }),
   usePathname: () => "/projects/p-1/board",
+  useSearchParams: () => new URLSearchParams(""),
   useSelectedLayoutSegment: () => "board",
 }));
 

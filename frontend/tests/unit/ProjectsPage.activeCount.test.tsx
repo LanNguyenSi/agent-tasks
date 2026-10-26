@@ -74,7 +74,11 @@ describe("/projects: heading", () => {
     vi.mocked(getTasks).mockResolvedValue([]);
     render(<ProjectsPage />);
     expect(await screen.findByRole("heading", { level: 1, name: "Projects" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: TEAM.name })).toBeInTheDocument();
+    const teamHeading = screen.getByRole("heading", { level: 2, name: TEAM.name });
+    expect(teamHeading).toBeInTheDocument();
+    // Its own class (secondary text colour), not the muted count style.
+    expect(teamHeading).toHaveClass("teams-team-name");
+    expect(teamHeading).not.toHaveClass("teams-project-count");
   });
 });
 

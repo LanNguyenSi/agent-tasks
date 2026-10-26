@@ -132,8 +132,13 @@ export default function TaskHeader({
   // The control lives behind the "More actions" menu: `adminOpen` shows it.
   const [adminOpen, setAdminOpen] = useState(false);
   const adminRowRef = useRef<HTMLDivElement>(null);
+  const adminHintRef = useRef<HTMLSpanElement>(null);
+  // Opening the row moves focus to its first control: the status picker, or
+  // the "no status changes" hint when the workflow offers none.
   useEffect(() => {
-    if (adminOpen) adminRowRef.current?.focus();
+    if (!adminOpen) return;
+    const picker = adminRowRef.current?.querySelector<HTMLElement>('[role="combobox"]');
+    (picker ?? adminHintRef.current)?.focus();
   }, [adminOpen]);
   const [overrideTarget, setOverrideTarget] = useState("");
   const [overrideBusy, setOverrideBusy] = useState(false);
@@ -410,9 +415,11 @@ export default function TaskHeader({
                   type="button"
                   className="app-dropdown-item app-dropdown-item-disabled"
                   disabled
-                  title="Only project admins can override task status"
                 >
                   Change status (admins only)
+                  <span className="app-dropdown-item-reason">
+                    Only project admins can override task status
+                  </span>
                 </button>
               )}
               <button
@@ -434,10 +441,10 @@ export default function TaskHeader({
           only; non-admins see a disabled menu entry with the reason). Never
           rendered mid-edit (mirrors the other controls above). */}
       {!isEditing && isProjectAdmin && adminOpen && (
-        <div className="td-admin-row" ref={adminRowRef} tabIndex={-1}>
+        <div className="td-admin-row" ref={adminRowRef}>
           <span className="td-admin-row-kicker">Admin</span>
           {noOutgoingEdges ? (
-              <span className="td-transition-hint">
+              <span className="td-transition-hint" ref={adminHintRef} tabIndex={-1}>
                 No status changes are defined from this state in the workflow.
               </span>
             ) : (

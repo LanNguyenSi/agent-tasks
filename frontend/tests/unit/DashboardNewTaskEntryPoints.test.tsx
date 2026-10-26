@@ -383,6 +383,56 @@ describe("task modal and the URL", () => {
     expect(mockGetTask).not.toHaveBeenCalled();
   });
 
+  describe("a boot that does not succeed leaves its own navigation alone", () => {
+    // With ?taskId= still in the address bar and no task open, the URL sync
+    // would replace the URL with the bare board path and win over the boot's
+    // redirect. It must not run after a redirect or a boot error. The real
+    // router changes the address bar after the call returns, so these cases
+    // leave the URL as it was (the mock above would rewrite it at once and
+    // hide the race).
+    beforeEach(() => {
+      routerMocks.replace.mockImplementation(() => {});
+    });
+
+    async function settled() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+    }
+
+    it("signed out with ?taskId=: the only navigation is /auth", async () => {
+      window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+      mockGetCurrentUser.mockResolvedValue(null);
+      renderBoard();
+      await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
+      await settled();
+      expect(routerMocks.replace.mock.calls).toEqual([["/auth"]]);
+      expect(routerMocks.replace.mock.lastCall?.[0]).toBe("/auth");
+    });
+
+    it.each([
+      ["a missing project (404)", new ApiRequestError("not_found", "Not found", 404)],
+      ["a project without access (403)", new ApiRequestError("forbidden", "Access denied", 403)],
+    ])("%s with ?taskId=: the only navigation is the Projects page", async (_label, err) => {
+      window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+      mockGetProject.mockRejectedValue(err);
+      renderBoard();
+      await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/projects"));
+      await settled();
+      expect(routerMocks.replace.mock.calls).toEqual([["/projects"]]);
+    });
+
+    it("a boot error with ?taskId=: no navigation at all, the URL is kept", async () => {
+      window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+      mockGetProject.mockRejectedValue(new ApiRequestError("internal", "Server exploded", 500));
+      renderBoard();
+      expect(await screen.findByText("Could not load tasks")).toBeInTheDocument();
+      await settled();
+      expect(routerMocks.replace).not.toHaveBeenCalled();
+      expect(window.location.search).toBe("?taskId=k-1");
+    });
+  });
+
   it("drops a ?taskId= that is not in the project from the URL", async () => {
     window.history.replaceState({}, "", "/projects/p-1/board?taskId=other");
     await renderDashboardReady();
@@ -477,7 +527,7 @@ describe("board admin workflow edges", () => {
         await openModal(role);
         await userEvent.click(await screen.findByRole("button", { name: "More actions" }));
         expect(
-          await screen.findByRole("button", { name: "Change status (admins only)" }),
+          await screen.findByRole("button", { name: /Change status \(admins only\)/ }),
         ).toBeDisabled();
         expect(
           screen.queryByRole("combobox", { name: "Change task status (admin override)" }),

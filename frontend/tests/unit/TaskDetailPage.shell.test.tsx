@@ -13,6 +13,7 @@ const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
   useParams: () => ({ id: "task-1" }),
+  usePathname: () => "/tasks/task-1",
   useSearchParams: () => new URLSearchParams(""),
 }));
 

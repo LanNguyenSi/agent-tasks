@@ -116,6 +116,10 @@ export default function ProjectBoardPage() {
 
   // Separate boot error (prevents board mount) from action error (toast only).
   const [loading, setLoading] = useState(true);
+  // True once a boot ran to the end (project loaded, tasks applied, arrival
+  // `?taskId` read). A redirect (/auth, projects) or a boot error leaves it
+  // false so the URL sync below never fights those navigations.
+  const [bootSucceeded, setBootSucceeded] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
 
   const [showNewTask, setShowNewTask] = useState(false);
@@ -204,11 +208,12 @@ export default function ProjectBoardPage() {
   // The URL follows the modal: `?taskId=<id>` while a task is open, removed when
   // it closes (router.replace, so open and close add no history entries and Back
   // leaves the board instead of toggling the modal). Query and hash (the jump
-  // bar's `#db-col-...`) are otherwise kept. Runs after boot only, so the
-  // arrival `?taskId` is read once by the bootstrap and a reload after close
-  // finds none.
+  // bar's `#db-col-...`) are otherwise kept. Runs after a successful boot only,
+  // so the arrival `?taskId` is read once by the bootstrap, a reload after
+  // close finds none, and a boot that redirected (signed out, project missing)
+  // or failed leaves its own navigation alone.
   useEffect(() => {
-    if (loading) return;
+    if (loading || !bootSucceeded) return;
     const params = new URLSearchParams(window.location.search);
     if ((params.get("taskId") ?? null) === activeTaskId) return;
     if (activeTaskId) params.set("taskId", activeTaskId);
@@ -218,7 +223,7 @@ export default function ProjectBoardPage() {
       `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
       { scroll: false },
     );
-  }, [activeTaskId, loading, router]);
+  }, [activeTaskId, loading, bootSucceeded, router]);
 
   useEffect(() => {
     if (!activeTaskId) {
@@ -282,6 +287,7 @@ export default function ProjectBoardPage() {
   // A `?taskId=` on arrival opens that task; closing the modal removes it (see
   // the URL sync above).
   useEffect(() => {
+    setBootSucceeded(false);
     void (async () => {
       try {
         const me = await getCurrentUser();
@@ -320,6 +326,7 @@ export default function ProjectBoardPage() {
             ? requestedTaskId
             : null,
         );
+        setBootSucceeded(true);
       } catch (err) {
         setBootError((err as Error).message);
       } finally {

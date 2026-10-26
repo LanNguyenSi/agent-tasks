@@ -23,6 +23,13 @@ function rule(selector: string): string {
   return blocks.join("\n");
 }
 
+describe("secondary text tokens", () => {
+  it("the team-name heading and the disabled-menu-item reason use the secondary text colour, not the muted one", () => {
+    expect(rule(".teams-team-name")).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(rule(".app-dropdown-item-reason")).toMatch(/color:\s*var\(--text-secondary\)/);
+  });
+});
+
 /** Joined bodies of every media block that opens with `query`. */
 function media(query: string): string {
   const header = `@media ${query} {`;

@@ -246,9 +246,11 @@ describe("TaskHeader admin status override", () => {
     // Nothing on the page until the menu is opened.
     expect(screen.queryByText("Only project admins can override task status")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "More actions" }));
-    const entry = await screen.findByRole("button", { name: "Change status (admins only)" });
+    const entry = await screen.findByRole("button", { name: /Change status \(admins only\)/ });
     expect(entry).toBeDisabled();
-    expect(entry).toHaveAttribute("title", "Only project admins can override task status");
+    // The reason is visible text inside the item, not only a title.
+    expect(within(entry).getByText("Only project admins can override task status")).toBeVisible();
+    expect(entry).not.toHaveAttribute("title");
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
@@ -256,8 +258,7 @@ describe("TaskHeader admin status override", () => {
     renderHeader(makeTask({ status: "open" }), vi.fn(), false, { isProjectAdmin: true });
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     await openAdminStatusControl();
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
-    expect(screen.getByText("Admin").closest(".td-admin-row")).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Change task status (admin override)" })).toHaveFocus();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "More actions" })).toHaveFocus();
@@ -363,9 +364,9 @@ describe("TaskHeader admin status override", () => {
       statusOverrideTargets: [],
     });
     await openAdminStatusControl();
-    expect(
-      screen.getByText("No status changes are defined from this state in the workflow."),
-    ).toBeInTheDocument();
+    const hint = screen.getByText("No status changes are defined from this state in the workflow.");
+    expect(hint).toBeInTheDocument();
+    expect(hint).toHaveFocus();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Set status" })).not.toBeInTheDocument();
   });

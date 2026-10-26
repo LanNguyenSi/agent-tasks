@@ -141,7 +141,7 @@ describe("TaskDetail — variant", () => {
   it("modal variant shows the override disabled with a reason for a non-admin", async () => {
     render(<TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin={false} />);
     await userEvent.click(screen.getByRole("button", { name: "More actions" }));
-    const btn = await screen.findByRole("button", { name: "Change status (admins only)" });
+    const btn = await screen.findByRole("button", { name: /Change status \(admins only\)/ });
     expect(btn).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Set status" })).toBeNull();
   });
