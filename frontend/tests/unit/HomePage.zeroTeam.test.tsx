@@ -62,6 +62,15 @@ describe("/home with no teams", () => {
     expect(getTeamTasks).not.toHaveBeenCalled();
   });
 
+  it("and the shared lookup fails: redirects to /onboarding like no shared projects", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects).mockRejectedValue(new Error("projects unavailable"));
+    render(<HomeDashboardPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/onboarding"));
+    expect(getTeamTasks).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();
+  });
+
   it("with shared projects: no redirect, lists them with the Create a team action", async () => {
     setAccess([], [SHARED]);
     render(<HomeDashboardPage />);

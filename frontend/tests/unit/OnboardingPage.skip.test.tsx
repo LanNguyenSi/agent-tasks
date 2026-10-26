@@ -64,6 +64,16 @@ describe("/onboarding", () => {
     expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 
+  it("no teams, shared lookup fails: the form without a skip link, no redirect", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects).mockRejectedValue(new Error("projects unavailable"));
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create Team" })).toBeInTheDocument();
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+
   it.each([
     { name: "a team, no shared projects", shared: [] as Project[] },
     { name: "a team and shared projects", shared: [SHARED] },

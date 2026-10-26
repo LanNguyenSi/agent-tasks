@@ -7,8 +7,9 @@
  *   2. the team id remembered in localStorage under `agent-tasks:lastTeamId`
  *      (written by rememberTeam, same key the Projects page switcher always used);
  *   3. the first team of the list;
- *   4. `null` when the user has no teams at all (callers redirect to
- *      /onboarding in that case).
+ *   4. `null` when the user has no teams at all (callers render their
+ *      zero-team state or redirect to /onboarding when `needsOnboarding`
+ *      holds, see lib/access.ts).
  *
  * `pickCurrentTeam` is the pure core (both ids passed in, no I/O) so the
  * precedence matrix is testable in the node environment. `resolveCurrentTeam`

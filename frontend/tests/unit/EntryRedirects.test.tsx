@@ -51,7 +51,31 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+// A failing shared lookup reads as "no shared projects": a team-less user is
+// sent to /onboarding exactly as before the lookup existed.
+function failSharedLookup() {
+  vi.mocked(getTeams).mockResolvedValue([]);
+  vi.mocked(getProjects).mockRejectedValue(new Error("projects unavailable"));
+}
+
 describe("landing page (/) redirect for a signed-in user", () => {
+  it("shared lookup fails for a team-less user -> /onboarding", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(USER);
+    failSharedLookup();
+    render(<LandingPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/onboarding"));
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("two or more teams -> /home and the unscoped project listing is never requested", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(USER);
+    vi.mocked(getTeams).mockResolvedValue([TEAM, { ...TEAM, id: "t2" } as Team]);
+    vi.mocked(getProjects).mockRejectedValue(new Error("400 multiple_teams"));
+    render(<LandingPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
+    expect(getProjects).not.toHaveBeenCalled();
+  });
+
   it.each(COMBOS)("$name -> $target", async ({ teams, shared, target }) => {
     vi.mocked(getCurrentUser).mockResolvedValue(USER);
     setAccess(teams, shared);
@@ -69,6 +93,14 @@ describe("landing page (/) redirect for a signed-in user", () => {
 });
 
 describe("/auth redirect for an already signed-in user", () => {
+  it("shared lookup fails for a team-less user -> /onboarding", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(USER);
+    failSharedLookup();
+    render(<AuthPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/onboarding"));
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1);
+  });
+
   it.each(COMBOS)("$name -> $target", async ({ teams, shared, target }) => {
     vi.mocked(getCurrentUser).mockResolvedValue(USER);
     setAccess(teams, shared);
@@ -79,6 +111,19 @@ describe("/auth redirect for an already signed-in user", () => {
 });
 
 describe("/auth redirect after submitting the login form", () => {
+  it("shared lookup fails for a team-less user -> /onboarding, no error under the form", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(null);
+    vi.mocked(login).mockResolvedValue(undefined as never);
+    failSharedLookup();
+    render(<AuthPage />);
+    await userEvent.type(await screen.findByLabelText("Email"), "a@b.co");
+    await userEvent.type(screen.getByLabelText("Password"), "password123");
+    await userEvent.click(screen.getByRole("button", { name: /^Sign in$/ }));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/onboarding"));
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("projects unavailable")).toBeNull();
+  });
+
   it.each(COMBOS)("$name -> $target", async ({ teams, shared, target }) => {
     vi.mocked(getCurrentUser).mockResolvedValue(null);
     vi.mocked(login).mockResolvedValue(undefined as never);

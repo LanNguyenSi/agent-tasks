@@ -135,8 +135,8 @@ agent-tasks/
 | `/` | Landing page; signed-in users go to `/onboarding` only when they have neither a team nor a shared project (`needsOnboarding` in `frontend/src/lib/access.ts`), else to `/home` |
 | `/auth` | Login / Register |
 | `/auth/error` | Login error page |
-| `/onboarding` | First team creation |
-| `/home` | Signed-in start page: the team's tasks across projects |
+| `/onboarding` | First team creation; optional (a "Skip for now" link) when you already have shared projects |
+| `/home` | Signed-in start page: the team's tasks across projects; without a team, the projects shared with you |
 | `/projects` | Projects list (project management, GitHub sync); `?teamId=<id>` pre-selects a team |
 | `/dashboard` | Legacy: redirects to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/projects` |
 | `/tasks` | Task list |

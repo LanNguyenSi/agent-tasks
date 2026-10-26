@@ -65,6 +65,20 @@ describe("getAccessContext", () => {
     expect(needsOnboarding(ctx)).toBe(false);
   });
 
+  it("zero teams and a failing shared lookup: counts as nothing shared and flags the error", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects).mockRejectedValue(new Error("boom"));
+    const ctx = await getAccessContext();
+    expect(ctx).toEqual({ teams: [], sharedProjects: [], sharedProjectsError: true });
+    expect(needsOnboarding(ctx)).toBe(true);
+  });
+
+  it("the error flag is absent when the shared lookup succeeds", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects).mockResolvedValue([SHARED]);
+    expect(await getAccessContext()).not.toHaveProperty("sharedProjectsError");
+  });
+
   it("a failing team request rejects instead of reading as 'needs onboarding'", async () => {
     vi.mocked(getTeams).mockRejectedValue(new Error("boom"));
     await expect(getAccessContext()).rejects.toThrow("boom");

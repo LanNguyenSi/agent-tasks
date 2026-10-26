@@ -68,6 +68,14 @@ describe("/projects with no teams", () => {
     expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();
   });
 
+  it("and the shared lookup fails: redirects to /onboarding like no shared projects", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects).mockRejectedValue(new Error("projects unavailable"));
+    render(<ProjectsPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/onboarding"));
+    expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();
+  });
+
   it("with shared projects: lists them, offers Create a team, hides create and sync controls", async () => {
     setAccess([], [SHARED]);
     render(<ProjectsPage />);

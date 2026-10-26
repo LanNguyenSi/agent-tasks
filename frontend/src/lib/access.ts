@@ -22,6 +22,8 @@ export interface AccessContext {
   teams: Team[];
   /** Projects shared with a user who has no team; always empty when `teams` is not. */
   sharedProjects: Project[];
+  /** Set (only) when the shared-projects lookup failed and was treated as empty. */
+  sharedProjectsError?: true;
 }
 
 /** True only for a user with no teams and no shared projects. */
@@ -34,9 +36,19 @@ export function needsOnboarding(ctx: AccessContext): boolean {
  * user without teams: it is what the backend serves a team-less human (their
  * shared projects), while for a user with several teams it answers
  * `400 multiple_teams` and it cannot change the outcome anyway.
+ *
+ * The shared lookup fails soft: if it rejects, the user counts as having no
+ * shared projects (`sharedProjectsError` records that), so a brand-new user
+ * still reaches the create-team form and the entry redirects behave as they
+ * did before shared projects mattered (no teams -> /onboarding). A failing
+ * team request keeps rejecting: that is a real error, not "no access".
  */
 export async function getAccessContext(): Promise<AccessContext> {
   const teams = await getTeams();
-  const sharedProjects = teams.length === 0 ? await getProjects() : [];
-  return { teams, sharedProjects };
+  if (teams.length > 0) return { teams, sharedProjects: [] };
+  try {
+    return { teams, sharedProjects: await getProjects() };
+  } catch {
+    return { teams, sharedProjects: [], sharedProjectsError: true };
+  }
 }
