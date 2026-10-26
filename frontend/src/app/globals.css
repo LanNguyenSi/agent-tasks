@@ -1601,53 +1601,13 @@ input[type="checkbox"] {
   }
 }
 
-/* 390px: ensure no horizontal overflow on any primary surface */
-@media (max-width: 420px) {
-  .td-page {
-    padding: var(--space-3);
-  }
-
-  .td-head-row {
-    gap: var(--space-1);
-  }
-
-  .td-head-right {
-    gap: var(--space-1);
-    flex-shrink: 1;
-  }
-
-  .tasks-content {
-    padding: var(--space-3);
-  }
-
-  .db-filter-bar {
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .db-board {
-    padding: var(--space-3);
-  }
-
-  .db-list-wrap {
-    padding: var(--space-3);
-  }
-
-  .db-status-summary {
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .db-state-wrap {
-    padding: var(--space-4) var(--space-3);
-  }
-}
-
 @media (max-width: 1100px) {
   .dashboard-select-grid {
     grid-template-columns: 1fr;
   }
 
   .task-detail-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1763,6 +1723,8 @@ input[type="checkbox"] {
   font-size: var(--text-sm);
   line-height: 1.6;
   color: var(--text);
+  /* Long unbroken identifiers or URLs must wrap, not widen the page. */
+  overflow-wrap: anywhere;
 }
 
 .prose-markdown > *:first-child { margin-top: 0; }
@@ -3377,7 +3339,7 @@ html[data-theme="light"] {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--page-gutter);
   background: color-mix(in srgb, var(--surface) 70%, var(--bg) 30%);
   border-bottom: 1px solid var(--border);
 }
@@ -3669,12 +3631,12 @@ html[data-theme="light"] {
 
 /* List view wrapper */
 .db-list-wrap {
-  padding: var(--space-4) var(--space-5) var(--space-6);
+  padding: var(--space-4) var(--page-gutter) var(--space-6);
 }
 
 /* Access-banner inset (project-access shared info) */
 .db-access-banner {
-  padding: var(--space-3) var(--space-5) 0;
+  padding: var(--space-3) var(--page-gutter) 0;
 }
 
 /* Status summary chips in list view (shown below the toolbar) */
@@ -3682,13 +3644,13 @@ html[data-theme="light"] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--page-gutter);
   border-bottom: 1px solid var(--border);
 }
 
 /* Empty states and loading wrapper */
 .db-state-wrap {
-  padding: var(--space-6) var(--space-5);
+  padding: var(--space-6) var(--page-gutter);
 }
 
 /* Project picker menu scroll container */
@@ -4073,6 +4035,13 @@ html[data-theme="light"] {
 /* Scope segmented-control strip: bottom gap reduced since filter band follows */
 .tasks-scope-tabs {
   align-self: flex-start;
+  /* Five scopes do not fit at 390px: scroll inside the strip, never the page. */
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.tasks-scope-tabs .tabs-tab {
+  flex-shrink: 0;
 }
 
 /* Filter band: status/priority chips + project/pagesize selects */
@@ -4840,6 +4809,7 @@ html[data-theme="light"] {
   line-height: 1.6;
   color: var(--text-secondary);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Composer */
@@ -5546,7 +5516,7 @@ html[data-theme="light"] {
 /* Responsive: collapse two columns to one under 900 px */
 @media (max-width: 900px) {
   .td-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .td-main {
@@ -8238,7 +8208,7 @@ a.proj-chip:hover {
  */
 @media (max-width: 520px) {
   .app-header-inner {
-    padding: 0 var(--space-3);
+    padding: 0 var(--page-gutter);
     gap: var(--space-2);
   }
 
@@ -8265,5 +8235,100 @@ a.proj-chip:hover {
   /* Hide the username text; keep avatar for account access */
   .app-user-name {
     display: none;
+  }
+}
+
+/* ── Board column jump bar ────────────────────────────────────────
+ * Shown only while the board columns are stacked (under 640px): one chip per
+ * column with its task count; each links to that column's section. Sits
+ * sticky below the app header. */
+.db-jump {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .db-jump {
+    display: flex;
+    gap: var(--space-2);
+    position: sticky;
+    top: var(--app-header-height);
+    z-index: 30;
+    padding: var(--space-2) var(--page-gutter);
+    overflow-x: auto;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .db-jump-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex-shrink: 0;
+    min-height: 32px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .db-jump-chip:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+  }
+
+  .db-jump-count {
+    color: var(--muted);
+  }
+
+  /* The toolbar is three rows tall at this width; keeping it sticky as well
+     would cover the jump bar and eat a seventh of the screen. It scrolls away
+     and the jump bar takes the sticky slot under the app header. */
+  .db-toolbar {
+    position: static;
+  }
+
+  /* Landing on a column leaves it clear of the sticky bars. */
+  .db-col {
+    scroll-margin-top: calc(var(--app-header-height) + 56px);
+  }
+}
+
+/* ── 390px: compact paddings on the primary surfaces ──────────────
+ * Kept at the end of the file: these override base rules, and an override
+ * placed before its base rule never applies. Side padding stays on the
+ * page gutter so every band keeps one left edge. */
+@media (max-width: 420px) {
+  .td-page {
+    padding: var(--space-3) var(--page-gutter) 0;
+  }
+
+  .td-head-row {
+    gap: var(--space-1);
+  }
+
+  .td-head-right {
+    gap: var(--space-1);
+    flex-shrink: 1;
+  }
+
+  .tasks-content {
+    padding: var(--space-3) var(--page-gutter);
+  }
+
+  .db-board {
+    padding: var(--space-3) var(--page-gutter);
+  }
+
+  .db-list-wrap {
+    padding: var(--space-3) var(--page-gutter);
+  }
+
+  .db-state-wrap {
+    padding: var(--space-4) var(--page-gutter);
   }
 }

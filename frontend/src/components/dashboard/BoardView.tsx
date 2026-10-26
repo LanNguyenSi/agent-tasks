@@ -36,6 +36,11 @@ const COLUMN_BADGE_TONE: Record<string, BadgeTone> = {
   done: "status-done",
 };
 
+/** DOM id of a board column section; the jump bar links to it. */
+export function columnDomId(status: string): string {
+  return `db-col-${status}`;
+}
+
 function getInitials(task: Task): string {
   const name = task.claimedByUser?.name ?? task.claimedByUser?.login ?? task.claimedByAgent?.name ?? "";
   const words = name.trim().split(/\s+/);
@@ -201,7 +206,29 @@ export default function BoardView({
 }: BoardViewProps) {
   const [showAllDone, setShowAllDone] = useState(false);
 
+  const columnCounts = STATUSES.map((status) => ({
+    status,
+    label: STATUS_LABELS[normalizeStatus(status)] ?? normalizeStatus(status),
+    count: tasks.filter((t) => t.status === status).length,
+  }));
+
   return (
+    <>
+    {/* Column jump bar: only shown while the columns are stacked (CSS hides
+        it from 640px up). Links to the column sections by id. */}
+    <nav className="db-jump" aria-label="Jump to column">
+      {columnCounts.map(({ status, label, count }) => (
+        <a
+          key={status}
+          className="db-jump-chip"
+          href={`#${columnDomId(status)}`}
+          aria-label={`Jump to ${label}, ${count} task${count !== 1 ? "s" : ""}`}
+        >
+          {label}
+          <span className="db-jump-count" aria-hidden="true">{count}</span>
+        </a>
+      ))}
+    </nav>
     <div className="db-board" aria-label="Board">
       {STATUSES.map((status) => {
         const normStatus = normalizeStatus(status);
@@ -215,6 +242,7 @@ export default function BoardView({
         return (
           <section
             key={status}
+            id={columnDomId(status)}
             className={`db-col db-col--${normStatus}`}
             aria-label={`${columnLabel}, ${columnTasks.length} task${columnTasks.length !== 1 ? "s" : ""}`}
           >
@@ -270,5 +298,6 @@ export default function BoardView({
         );
       })}
     </div>
+    </>
   );
 }

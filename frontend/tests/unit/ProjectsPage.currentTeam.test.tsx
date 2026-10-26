@@ -116,7 +116,7 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
 
     render(<ProjectsPage />);
     expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
-    expect(mockGetProjects).toHaveBeenCalledWith("t2");
+    await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
     // URL-selected team becomes the remembered one (same key as the switcher).
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
   });
@@ -127,7 +127,7 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
 
     render(<ProjectsPage />);
     expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
-    expect(mockGetProjects).toHaveBeenCalledWith("t2");
+    await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
   });
 
   it("has no in-page team select (the header switcher owns switching)", async () => {
