@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout, type Team } from "../lib/api";
 import { rememberTeam } from "../lib/currentTeam";
-import { settingsHref, teamSettingsHref } from "../lib/routes";
+import { newTeamHref, settingsHref, teamSettingsHref } from "../lib/routes";
 import { sectionHref, teamSwitchHref, useResolvedTeam } from "../lib/teamSwitch";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
@@ -137,6 +137,14 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
                     {team.id === currentTeam.id && <Icon name="check" size={12} />}
                   </button>
                 ))}
+                <Link
+                  href={newTeamHref()}
+                  role="menuitem"
+                  onClick={() => setTeamMenuOpen(false)}
+                  className="app-dropdown-item app-team-new"
+                >
+                  + New team
+                </Link>
               </div>
             </DropdownMenu>
           </>
@@ -228,6 +236,16 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
                     className="app-dropdown-item"
                   >
                     Create a team
+                  </Link>
+                )}
+                {teams && teamCount > 0 && (
+                  <Link
+                    href={newTeamHref()}
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                    className="app-dropdown-item"
+                  >
+                    New team
                   </Link>
                 )}
                 <button

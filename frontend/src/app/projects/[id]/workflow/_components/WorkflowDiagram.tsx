@@ -165,6 +165,11 @@ export function WorkflowDiagram({ def, onArrowClick, loading }: WorkflowDiagramP
       {def.states.length === 0 && (
         <p className="wf-table-hint">No states defined.</p>
       )}
+
+      <p className="wf-table-hint" data-testid="wf-gate-legend">
+        An arrow is a transition between two states. The number next to it is how
+        many gates (checks) must pass before a task can take that transition.
+      </p>
     </div>
   );
 }

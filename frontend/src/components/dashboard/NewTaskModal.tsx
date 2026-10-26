@@ -16,7 +16,13 @@ import {
   type TaskTemplate,
   type TemplatePreset,
 } from "../../lib/api";
-import { calculateConfidence, TASK_TYPES, type TaskType } from "../../lib/confidence";
+import {
+  calculateConfidence,
+  resolveEffectiveThreshold,
+  TASK_TYPES,
+  type TaskType,
+  type TaskTypeThresholds,
+} from "../../lib/confidence";
 import { DEFAULT_CREATE_STATUS } from "../../lib/status";
 import { buildSavedTemplateData } from "../../lib/templateData";
 import ConfidenceBadge from "../ConfidenceBadge";
@@ -62,6 +68,12 @@ interface NewTaskModalProps {
    *  project isn't actually blocking it (see CreateConfidencePanel's own
    *  doc for the null/undefined-as-advisory default). */
   enforcementMode: EnforcementMode | null;
+  /** Project confidence threshold (and the optional per-task-type overrides),
+   *  threaded to the live header badge so its tier matches the post-create
+   *  panel and the task page. Omit only when the caller has no project; the
+   *  badge then falls back to the global default threshold. */
+  confidenceThreshold?: number | null;
+  taskTypeThresholds?: TaskTypeThresholds | null;
   /**
    * Initial status hint from the caller (e.g. a board column's + button).
    * Defaults to DEFAULT_CREATE_STATUS (backlog). Any value the Status
@@ -88,6 +100,8 @@ export default function NewTaskModal({
   templateFields,
   templatePresets,
   enforcementMode,
+  confidenceThreshold = null,
+  taskTypeThresholds = null,
   initialStatus,
   onTaskCreated,
   onEditTask,
@@ -240,8 +254,20 @@ export default function NewTaskModal({
   }
 
   // ── Confidence badge shown in the collapsible header ──────────
+  // Tier against the project's effective threshold (same resolver as
+  // TaskDetail), keyed on the taskType picked in the form. With no project
+  // thresholds threaded the badge keeps its own global-default fallback and
+  // omits the threshold sentence from the tooltip.
+  const effectiveThreshold =
+    confidenceThreshold === null && taskTypeThresholds === null
+      ? null
+      : resolveEffectiveThreshold(
+          taskType === "" ? undefined : taskType,
+          taskTypeThresholds,
+          confidenceThreshold,
+        ).effectiveThreshold;
   const templateHeaderBadge = templateFields ? (
-    <ConfidenceBadge score={confidenceScore} size="sm" tabIndex={-1} />
+    <ConfidenceBadge score={confidenceScore} size="sm" tabIndex={-1} threshold={effectiveThreshold} />
   ) : null;
 
   // ── Modal body: confidence panel or form ──────────────────────

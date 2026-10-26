@@ -29,7 +29,6 @@ import {
   type TaskConfidenceDetail,
   type RewriteSuggestion,
 } from "@/lib/api";
-import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { Button } from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 
@@ -196,11 +195,19 @@ export default function ImprovementPanel({
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
         </svg>
         <span className="ip-title">Improvement panel</span>
-        <ConfidenceBadge score={score} size="sm" tabIndex={-1} />
+        {/* the panel's server scorer verdict used to render
+            a second 0-100 badge next to the Agent Template badge; two
+            numbers on one page, confusingly. The verdict now reads as a
+            named check ("Template check") plus its threshold sentence;
+            the task page's single 0-100 score is the Agent Template
+            ConfidenceBadge, the value board cards use. */}
+        <span className="ip-template-check">Template check</span>
         <span className="ip-verdict">
           {passes
             ? `At or above the ${threshold} threshold`
-            : `Below the ${threshold} threshold`}
+            : blocking && score >= threshold
+              ? "Blocked by a required field"
+              : `Below the ${threshold} threshold`}
         </span>
       </button>
 

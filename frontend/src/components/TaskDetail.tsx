@@ -52,7 +52,7 @@ import { isHttpUrl, parsePrNumberFromUrl } from "../lib/pr";
 import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
-import ConfidenceBadge from "./ConfidenceBadge";
+import ConfidenceBadge, { getConfidenceTier } from "./ConfidenceBadge";
 import ImprovementPanel from "./task-detail/ImprovementPanel";
 import Markdown from "./Markdown";
 import TaskArtifactsSection from "./TaskArtifactsSection";
@@ -414,8 +414,12 @@ export default function TaskDetail({
     [task.templateData, editTemplateData, editTaskType],
   );
 
-  // Live confidence score (reflects edit state in edit mode).
-  const confidenceScore = useMemo(() => {
+  // Live confidence score + effective threshold (reflects edit state in edit
+  // mode). One computation feeds the Agent Template badge, the sidebar bar
+  // and its tier colour, so all three always agree (the task
+  // page shows ONE score; the client mirror of the server scorer, i.e. the
+  // value board cards use).
+  const liveConfidence = useMemo(() => {
     if (!templateFields) return null;
     const conf = calculateConfidence({
       title: isEditing ? editTitle : task.title,
@@ -423,8 +427,18 @@ export default function TaskDetail({
       templateData: isEditing ? editedTemplateData : task.templateData,
       templateFields,
     });
-    return conf.score;
-  }, [templateFields, isEditing, editTitle, editDescription, editedTemplateData, task]);
+    const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+      conf.inferredTaskType,
+      taskTypeThresholds,
+      confidenceThreshold,
+    );
+    return { conf, effectiveThreshold, thresholdSource };
+  }, [templateFields, isEditing, editTitle, editDescription, editedTemplateData, task, taskTypeThresholds, confidenceThreshold]);
+
+  const confidenceScore = liveConfidence ? liveConfidence.conf.score : null;
+  const confidenceTier = liveConfidence
+    ? getConfidenceTier(liveConfidence.conf.score, liveConfidence.effectiveThreshold)
+    : undefined;
 
   const startEditing = useCallback(() => {
     initEditState();
@@ -896,12 +910,12 @@ export default function TaskDetail({
             <h2 className="td-section-title">Agent Template</h2>
           </div>
           {(() => {
-            const conf = calculateConfidence({
-              title: isEditing ? editTitle : task.title,
-              description: isEditing ? editDescription || null : task.description ?? null,
-              templateData: isEditing ? editedTemplateData : task.templateData,
-              templateFields,
-            });
+            // same live computation the sidebar consumes (liveConfidence
+            // above); one score, one effective threshold, one tier across the
+            // page. Inputs are identical to the section's previous inline
+            // calculateConfidence call.
+            if (!liveConfidence) return null;
+            const { conf, effectiveThreshold, thresholdSource } = liveConfidence;
             // M2 (task f186b88b): compare against the EFFECTIVE threshold, not
             // the flat project value — a project with a per-task-type override
             // (e.g. security: 90) must show below-threshold for a typed task
@@ -909,12 +923,8 @@ export default function TaskDetail({
             // the flat `confidenceThreshold`. `conf.inferredTaskType` is the
             // scorer's echo of the EXPLICIT templateData.taskType (never a
             // heuristic guess), matching what resolveEffectiveThreshold and
-            // the /start claim gate both key on.
-            const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
-              conf.inferredTaskType,
-              taskTypeThresholds,
-              confidenceThreshold,
-            );
+            // the /start claim gate both key on. (Resolved once in the
+            // liveConfidence memo above; destructured here.)
             // M2 (task a9dc7e58): only `BLOCK` actually stops a claim server-side
             // (see backend lib/enforcement-mode.ts); `WARN` and `OFF` are both
             // advisory-only there, so both get the same non-blocking copy here —
@@ -950,7 +960,7 @@ export default function TaskDetail({
             return (
               <div className="td-conf-section">
                 <div className="td-conf-badge-row">
-                  <ConfidenceBadge score={conf.score} size="md" />
+                  <ConfidenceBadge score={conf.score} size="md" threshold={effectiveThreshold} />
                   {warning.show && (
                     <span className="td-conf-threshold-warn">
                       {belowThreshold ? (
@@ -1342,6 +1352,7 @@ export default function TaskDetail({
         task={task}
         user={user}
         confidenceScore={confidenceScore}
+        confidenceTier={confidenceTier}
         onRelease={() => void handleRelease()}
         claimBusy={claimBusy}
         isProjectAdmin={isProjectAdmin}

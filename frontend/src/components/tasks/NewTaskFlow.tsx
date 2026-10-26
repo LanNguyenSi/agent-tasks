@@ -101,6 +101,8 @@ export default function NewTaskFlow({
         templateFields={project.taskTemplate?.fields ?? null}
         templatePresets={project.taskTemplate?.presets ?? []}
         enforcementMode={project.enforcementMode ?? null}
+        confidenceThreshold={project.confidenceThreshold ?? null}
+        taskTypeThresholds={project.taskTypeThresholds ?? null}
         onTaskCreated={onTaskCreated}
         onEditTask={onEditTask}
       />
