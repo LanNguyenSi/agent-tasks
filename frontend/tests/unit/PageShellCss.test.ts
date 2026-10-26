@@ -38,6 +38,58 @@ describe("--page-gutter", () => {
   });
 });
 
+describe("PageShell variants and frame", () => {
+  it.each([
+    [".pshell-content--default", /max-width:\s*calc\(1200px \+ 2 \* var\(--page-gutter\)\)/],
+    [".pshell-content--narrow", /max-width:\s*calc\(760px \+ 2 \* var\(--page-gutter\)\)/],
+    [".pshell-content--wide", /max-width:\s*none\b/],
+  ])("%s caps the content width as documented", (selector, cap) => {
+    expect(rule(selector)).toMatch(cap);
+  });
+
+  it("flush drops the slot padding, centered only adds auto side margins", () => {
+    expect(rule(".pshell-content--flush")).toMatch(/padding:\s*0\s*;/);
+    expect(rule(".pshell-content--centered")).toMatch(/margin-left:\s*auto/);
+    expect(rule(".pshell-content--centered")).toMatch(/margin-right:\s*auto/);
+    for (const v of ["default", "narrow", "wide"]) {
+      expect(rule(`.pshell-content--${v}`)).not.toMatch(/margin/);
+    }
+  });
+
+  it("fills the viewport below the sticky app header, not the whole viewport", () => {
+    expect(rule(":root")).toMatch(/--app-header-height:\s*48px/);
+    expect(rule(".app-header")).toMatch(/height:\s*var\(--app-header-height\)/);
+    const min = rule(".pshell").match(/min-height:\s*([^;]+);/)?.[1];
+    expect(min).toBe("calc(100vh - var(--app-header-height))");
+  });
+});
+
+describe("task detail loading and error frames", () => {
+  const frame = (selector: string) => {
+    const body = rule(selector);
+    return ["max-width", "margin", "padding"].map((prop) => body.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`))?.[1]);
+  };
+
+  it.each([".td-loading-wrap", ".td-error-wrap"])("%s uses the same frame as .td-page", (selector) => {
+    const page = frame(".td-page");
+    expect(page.every(Boolean)).toBe(true);
+    expect(frame(selector)).toEqual(page);
+  });
+
+  it("the page frame is left-aligned with the page gutter", () => {
+    const [maxWidth, margin, padding] = frame(".td-page");
+    expect(maxWidth).toBe("calc(1200px + 2 * var(--page-gutter))");
+    expect(margin).toBe("0");
+    expect(padding).toMatch(/var\(--page-gutter\)/);
+  });
+
+  it("the skeleton neither caps nor centres itself inside the wrapper", () => {
+    const body = rule(".td-skeleton");
+    expect(body).not.toMatch(/max-width/);
+    expect(body).not.toMatch(/margin/);
+  });
+});
+
 describe("header nav states", () => {
   it("styles the active link with --surface-active, defined in both themes", () => {
     const active = rule('.app-nav-link[aria-current="page"]');

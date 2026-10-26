@@ -11,6 +11,8 @@ html[data-theme="light"] {
   /* Side gutter shared by the app header, page headers, project hub band and
      content slots (see PageShell); tightens on narrow screens. */
   --page-gutter: 24px;
+  /* Height of the sticky app header; pages that fill the viewport subtract it. */
+  --app-header-height: 48px;
 
   /* Surfaces (3 elevation steps + page) */
   --bg: #08090c;
@@ -367,7 +369,9 @@ input[type="checkbox"] {
    side padding. */
 .pshell {
   width: 100%;
-  min-height: 100vh;
+  /* The sticky app header sits above <main>: filling 100vh would scroll a
+     short page by the header's height. */
+  min-height: calc(100vh - var(--app-header-height));
 }
 
 .pshell-content {
@@ -784,7 +788,7 @@ input[type="checkbox"] {
   position: sticky;
   top: 0;
   z-index: 30;
-  height: 48px;
+  height: var(--app-header-height);
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
@@ -4239,15 +4243,19 @@ html[data-theme="light"] {
 
 /* ── Task detail v2 ────────────────────────────────────────────── */
 
-/* Error/loading wrappers in the task detail page shell */
+/* Error/loading wrappers in the task detail page shell. They use the same
+   frame as .td-page below (left-aligned, 1200px column, page gutter) so the
+   content does not jump sideways when the task loads. */
 .td-error-wrap {
-  padding: var(--space-5);
-  max-width: 1168px;
-  margin: 0 auto;
+  max-width: calc(1200px + 2 * var(--page-gutter));
+  margin: 0;
+  padding: var(--space-5) var(--page-gutter) 0;
 }
 
 .td-loading-wrap {
-  padding: var(--space-5);
+  max-width: calc(1200px + 2 * var(--page-gutter));
+  margin: 0;
+  padding: var(--space-5) var(--page-gutter) 0;
 }
 
 /* Page context frame */
@@ -5511,8 +5519,8 @@ html[data-theme="light"] {
 /* ── TaskDetailSkeleton ──────────────────────────────────────────────────── */
 
 .td-skeleton {
-  max-width: 1168px;
-  margin: 0 auto;
+  /* Framed by .td-loading-wrap: no cap or centring of its own. */
+  width: 100%;
 }
 
 .td-skeleton-header {

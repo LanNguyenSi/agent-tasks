@@ -13,8 +13,10 @@
 // The header slot is always full width and renders straight into <main> (no
 // wrapper, so a sticky PageHeader keeps <main> as its containing block).
 // Bands rendered in it (PageHeader, the project hub header and tab row) carry
-// their own gutter so their bottom borders can span the viewport. `flush` drops the content slot's gutter for
-// children that own theirs (the board, the tasks table region).
+// their own gutter so their bottom borders can span the viewport. `flush`
+// drops the content slot's gutter for children that own theirs (the board,
+// the tasks table region); a flush slot may also hold its own sticky header,
+// as /tasks does with its PageHeader.
 //
 // Usage:
 //   <PageShell variant="narrow" header={<PageHeader title="Settings" />}>

@@ -130,8 +130,8 @@ export interface BacklogRowActionHandlers {
 // actions column enough to clip its buttons (the original bug this const
 // fixes). We keep the present-case sum at exactly 100% to prevent this.
 // (b) The backlogActions column is 16% (not 13%) so its two sm buttons
-// (Promote, Discard, ~70px each with gap) fit side-by-side when the table
-// is capped at ~1152px by .page-shell. The title column gives up 16pp
+// (Promote, Discard, ~70px each with gap) fit side-by-side without a width
+// cap on the table (it fills the wide page slot). The title column gives up 16pp
 // (34% -> 18%) via this const -- 13pp absorb the appended column, 3pp more
 // widen it for side-by-side buttons -- because its ellipsis already
 // handles overflow.
