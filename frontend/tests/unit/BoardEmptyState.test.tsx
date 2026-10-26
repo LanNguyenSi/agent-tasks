@@ -215,7 +215,8 @@ describe("Connect an agent link", () => {
   });
 
   it.each([
-    ["a team member", { accessRole: "MEMBER", accessSource: "team" }],
+    ["a team member", { accessRole: "HUMAN_MEMBER", accessSource: "team" }],
+    ["a team reviewer", { accessRole: "REVIEWER", accessSource: "team" }],
     ["a per-project admin", { accessRole: "PROJECT_ADMIN", accessSource: "project" }],
     ["a per-project share with no role", { accessRole: null, accessSource: "project" }],
   ])("is hidden for %s, who cannot create agent tokens", async (_label, access) => {
