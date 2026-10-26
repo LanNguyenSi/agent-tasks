@@ -114,3 +114,45 @@ describe("/dashboard while redirecting", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+describe("projectId validation", () => {
+  it.each([
+    ["an encoded traversal", "..%2F..%2Fsettings%23"],
+    ["a slash", "a%2Fb"],
+    ["a backslash", "a%5Cb"],
+    ["a dot-dot", ".."],
+    ["a dot segment", "a.b"],
+    ["a space", "a%20b"],
+    ["an empty value", ""],
+  ])("rejects %s from the query and falls back to the stored board", async (_label, value) => {
+    window.localStorage.setItem("dashboard:lastProject:t1", "p-t1");
+    expect(await redirectFrom(`/dashboard?projectId=${value}`)).toBe("/projects/p-t1/board");
+  });
+
+  it("goes to the Projects page when the query value is invalid and nothing is stored", async () => {
+    expect(await redirectFrom("/dashboard?projectId=..%2F..%2Fsettings%23")).toBe("/teams");
+  });
+
+  it.each([
+    ["a UUID", "3f2b8c1e-9d4a-4e6b-8a1f-0c5d7e9b2a41"],
+    ["a short id", "p1"],
+    ["an id with an underscore", "p_1"],
+  ])("accepts %s", async (_label, value) => {
+    expect(await redirectFrom(`/dashboard?projectId=${value}`)).toBe(`/projects/${value}/board`);
+  });
+
+  it.each([
+    ["the team's slot", "/dashboard?teamId=t1"],
+    ["the last team's slot", "/dashboard"],
+  ])("rejects an invalid stored id in %s", async (_label, url) => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
+    window.localStorage.setItem("dashboard:lastProject:t1", "../../settings#");
+    expect(await redirectFrom(url)).toBe(url.includes("teamId") ? "/teams?teamId=t1" : "/teams");
+  });
+
+  it("skips an invalid stored id and uses a valid one from another team", async () => {
+    window.localStorage.setItem("dashboard:lastProject:t1", "a/b");
+    window.localStorage.setItem("dashboard:lastProject:t2", "p-t2");
+    expect(await redirectFrom("/dashboard")).toBe("/projects/p-t2/board");
+  });
+});

@@ -25,7 +25,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { User, Team, Project, Task } from "../../src/lib/api";
+import { ApiRequestError, type User, type Team, type Project, type Task } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -55,6 +55,7 @@ import {
   getProject,
   getTasks,
   getTask,
+  getEffectiveWorkflow,
 } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);
@@ -62,6 +63,7 @@ const mockGetTeams = vi.mocked(getTeams);
 const mockGetProject = vi.mocked(getProject);
 const mockGetTasks = vi.mocked(getTasks);
 const mockGetTask = vi.mocked(getTask);
+const mockGetEffectiveWorkflow = vi.mocked(getEffectiveWorkflow);
 
 const USER: User = {
   id: "u-1",
@@ -231,13 +233,63 @@ describe("board bootstrap from the route's project", () => {
     expect(mockGetProject).not.toHaveBeenCalled();
   });
 
-  it("sends a user without access to the project to the Projects page", async () => {
-    mockGetProject.mockRejectedValue(new Error("Access denied"));
+  it("renders the board without a team crumb when the team lookup fails", async () => {
+    mockGetTeams.mockRejectedValue(new Error("teams down"));
+    await renderDashboardReady();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    expect(screen.queryByText("Team Alpha")).not.toBeInTheDocument();
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+    expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
+  });
+
+  it("sends a user whose project is gone (404) to the Projects page and forgets it", async () => {
+    window.localStorage.setItem("dashboard:lastProject:t-1", "p-1");
+    window.localStorage.setItem("dashboard:lastProject:t-2", "p-1");
+    window.localStorage.setItem("dashboard:lastProject:t-3", "p-other");
+    // Same value under a key that is not a last-board entry: left alone.
+    window.localStorage.setItem("agent-tasks:lastTeamId", "p-1");
+    mockGetProject.mockRejectedValue(new ApiRequestError("not_found", "Not found", 404));
+    renderBoard();
+
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/teams"));
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1);
+    expect(mockGetTasks).not.toHaveBeenCalled();
+    expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("dashboard:lastProject:t-1")).toBeNull();
+    expect(window.localStorage.getItem("dashboard:lastProject:t-2")).toBeNull();
+    expect(window.localStorage.getItem("dashboard:lastProject:t-3")).toBe("p-other");
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("p-1");
+  });
+
+  it("sends a user without access (403) to the Projects page and forgets the project", async () => {
+    window.localStorage.setItem("dashboard:lastProject:t-1", "p-1");
+    mockGetProject.mockRejectedValue(new ApiRequestError("forbidden", "Access denied", 403));
     renderBoard();
 
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/teams"));
     expect(mockGetTasks).not.toHaveBeenCalled();
-    expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("dashboard:lastProject:t-1")).toBeNull();
+  });
+
+  it("shows the boot error with Retry, no redirect and the stored board kept, on a server error", async () => {
+    window.localStorage.setItem("dashboard:lastProject:t-1", "p-1");
+    mockGetProject.mockRejectedValue(new ApiRequestError("internal", "Server exploded", 500));
+    renderBoard();
+
+    expect(await screen.findByText("Could not load tasks")).toBeInTheDocument();
+    expect(screen.getByText("Server exploded")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("dashboard:lastProject:t-1")).toBe("p-1");
+  });
+
+  it("shows the boot error, no redirect, on a network failure", async () => {
+    mockGetProject.mockRejectedValue(new TypeError("Failed to fetch"));
+    renderBoard();
+
+    expect(await screen.findByText("Could not load tasks")).toBeInTheDocument();
+    expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 
   it("opens the task modal for ?taskId= when the task is in the project", async () => {
@@ -294,4 +346,37 @@ describe("board task poll", () => {
     });
     expect(mockGetTasks).toHaveBeenCalledTimes(2);
   });
+});
+
+describe("board admin workflow edges", () => {
+  async function settle() {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  beforeEach(() => {
+    mockGetEffectiveWorkflow.mockResolvedValue({
+      definition: { transitions: [] },
+    } as unknown as Awaited<ReturnType<typeof getEffectiveWorkflow>>);
+  });
+
+  it.each(["ADMIN", "PROJECT_ADMIN"])("loads the effective workflow for a %s", async (role) => {
+    mockGetProject.mockResolvedValue({ ...PROJECT, accessRole: role });
+    await renderDashboardReady();
+    await settle();
+
+    expect(mockGetEffectiveWorkflow).toHaveBeenCalledWith("p-1");
+  });
+
+  it.each(["HUMAN_MEMBER", "REVIEWER", "PROJECT_CONTRIBUTOR", "PROJECT_VIEWER", undefined])(
+    "does not load the effective workflow for role %s",
+    async (role) => {
+      mockGetProject.mockResolvedValue({ ...PROJECT, accessRole: role });
+      await renderDashboardReady();
+      await settle();
+
+      expect(mockGetEffectiveWorkflow).not.toHaveBeenCalled();
+    },
+  );
 });

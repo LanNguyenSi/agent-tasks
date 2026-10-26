@@ -21,18 +21,28 @@ const LAST_PROJECT_KEY_PREFIX = "dashboard:lastProject:";
 // Written by the Projects page (app/teams/page.tsx).
 const LAST_TEAM_KEY = "agent-tasks:lastTeamId";
 
+// A project id is a UUID or a short slug-like id; anything else (path
+// separators, `..`, encoded fragments) must never reach the board URL.
+const PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function validProjectId(value: string | null): string | null {
+  return value && PROJECT_ID_PATTERN.test(value) ? value : null;
+}
+
 function readStoredLastProjectId(teamId: string | null): string | null {
   try {
     const storage = window.localStorage;
-    if (teamId) return storage.getItem(LAST_PROJECT_KEY_PREFIX + teamId);
+    if (teamId) return validProjectId(storage.getItem(LAST_PROJECT_KEY_PREFIX + teamId));
     const lastTeamId = storage.getItem(LAST_TEAM_KEY);
     const lastTeamProject = lastTeamId
-      ? storage.getItem(LAST_PROJECT_KEY_PREFIX + lastTeamId)
+      ? validProjectId(storage.getItem(LAST_PROJECT_KEY_PREFIX + lastTeamId))
       : null;
     if (lastTeamProject) return lastTeamProject;
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
-      const projectId = key?.startsWith(LAST_PROJECT_KEY_PREFIX) ? storage.getItem(key) : null;
+      const projectId = key?.startsWith(LAST_PROJECT_KEY_PREFIX)
+        ? validProjectId(storage.getItem(key))
+        : null;
       if (projectId) return projectId;
     }
   } catch {
@@ -47,7 +57,7 @@ export default function DashboardRedirectPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const teamId = params.get("teamId") || null;
-    const projectId = params.get("projectId") || readStoredLastProjectId(teamId);
+    const projectId = validProjectId(params.get("projectId")) ?? readStoredLastProjectId(teamId);
     if (!projectId) {
       router.replace(projectsHref({ teamId: teamId ?? undefined }));
       return;

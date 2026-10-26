@@ -13,6 +13,7 @@ import {
   getEffectiveWorkflow,
   isProjectAdminRole,
   isProjectWriteRole,
+  ApiRequestError,
   type User,
   type Team,
   type Project,
@@ -69,14 +70,35 @@ const LIST_PAGE_SIZE = 12;
 
 // Last board opened per team. Read only by the legacy /dashboard redirect
 // (app/dashboard/page.tsx), which resumes it; keep the key format in sync.
+const LAST_PROJECT_KEY_PREFIX = "dashboard:lastProject:";
+
 function getTeamProjectStorageKey(teamId: string): string {
-  return `dashboard:lastProject:${teamId}`;
+  return `${LAST_PROJECT_KEY_PREFIX}${teamId}`;
 }
 
 function storeProjectId(teamId: string, projectId: string): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(getTeamProjectStorageKey(teamId), projectId);
+  } catch {
+    // No-op for blocked storage contexts.
+  }
+}
+
+// Drop every team's remembered board that points at a project this user can no
+// longer open, so a bare /dashboard stops resuming it.
+function forgetProjectId(projectId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const storage = window.localStorage;
+    const stale: string[] = [];
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith(LAST_PROJECT_KEY_PREFIX) && storage.getItem(key) === projectId) {
+        stale.push(key);
+      }
+    }
+    for (const key of stale) storage.removeItem(key);
   } catch {
     // No-op for blocked storage contexts.
   }
@@ -260,10 +282,16 @@ export default function ProjectBoardPage() {
         let project: Project;
         try {
           project = await getProject(projectId);
-        } catch {
-          // Missing or not accessible: same fallback as the hub layout.
-          router.replace(projectsHref());
-          return;
+        } catch (err) {
+          // Missing or not accessible: same fallback as the hub layout, and
+          // forget the stale last-board entry so /dashboard stops resuming it.
+          // Any other failure (500, network) is a boot error with a Retry.
+          if (err instanceof ApiRequestError && (err.status === 403 || err.status === 404)) {
+            forgetProjectId(projectId);
+            router.replace(projectsHref());
+            return;
+          }
+          throw err;
         }
         setSelectedProject(project);
         setTeamName(userTeams.find((t) => t.id === project.teamId)?.name ?? null);
