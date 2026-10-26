@@ -27,8 +27,8 @@ describe("sectionHref", () => {
   });
 
   it("is what a team switch from that section navigates to", () => {
-    expect(teamSwitchHref("/home", "t2")).toBe(sectionHref("home", "t2"));
-    expect(teamSwitchHref("/projects/p1/board", "t2")).toBe(sectionHref("projects", "t2"));
-    expect(teamSwitchHref("/tasks/x", "t2")).toBe(sectionHref("tasks", "t2"));
+    expect(teamSwitchHref("/home", "t2")).toBe("/home?teamId=t2");
+    expect(teamSwitchHref("/projects/p1/board", "t2")).toBe("/projects?teamId=t2");
+    expect(teamSwitchHref("/tasks/x", "t2")).toBe("/tasks?teamId=t2");
   });
 });

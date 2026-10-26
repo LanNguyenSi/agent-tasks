@@ -375,7 +375,7 @@ describe("AppHeader avatar menu", () => {
     const menu = openMenu();
     expect(entries(menu)).toEqual([
       ["Settings", "/settings"],
-      ["Team settings", "/settings/team"],
+      ["Team settings", "/settings/team?teamId=t1"],
       ["Logout", null],
     ]);
   });

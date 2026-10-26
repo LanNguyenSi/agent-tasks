@@ -212,7 +212,7 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
                 </Link>
                 {teams && teamCount > 0 && (
                   <Link
-                    href={teamSettingsHref()}
+                    href={navTeamId ? `${teamSettingsHref()}?teamId=${navTeamId}` : teamSettingsHref()}
                     role="menuitem"
                     onClick={() => setMenuOpen(false)}
                     className="app-dropdown-item"
