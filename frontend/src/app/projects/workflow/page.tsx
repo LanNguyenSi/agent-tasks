@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import EmptyState from "../../../components/ui/EmptyState";
 import { Button } from "../../../components/ui/Button";
 import { Skeleton } from "../../../components/ui/Skeleton";
+import { boardHref } from "../../../lib/routes";
 
 export default function WorkflowRedirectPage() {
   const router = useRouter();
@@ -42,7 +43,7 @@ export default function WorkflowRedirectPage() {
           title="Missing project ID"
           description="This URL is missing the required projectId parameter. Navigate to a project to open its workflow editor."
           action={
-            <Button href="/dashboard" variant="primary" size="sm">
+            <Button href={boardHref()} variant="primary" size="sm">
               Go to dashboard
             </Button>
           }

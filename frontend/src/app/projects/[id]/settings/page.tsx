@@ -16,6 +16,7 @@ import {
   type TaskTemplate,
   type TemplatePreset,
 } from "../../../../lib/api";
+import { boardHref } from "../../../../lib/routes";
 import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import Card from "../../../../components/ui/Card";
@@ -453,7 +454,7 @@ export default function ProjectSettingsPage() {
               variant="ghost"
               onClick={() =>
                 router.push(
-                  `/dashboard?teamId=${project.teamId}&projectId=${projectId}`,
+                  boardHref({ teamId: project.teamId, projectId }),
                 )
               }
               disabled={savingSettings}

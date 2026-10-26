@@ -16,6 +16,7 @@ import {
 } from "../../../lib/api";
 import Card from "../../../components/ui/Card";
 import { normalizeStatus } from "../../../lib/taskDisplay";
+import { boardHref } from "../../../lib/routes";
 import { StatusChip } from "../../../components/ui/StatusChip";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import AlertBanner from "../../../components/ui/AlertBanner";
@@ -96,7 +97,7 @@ export default function ProjectOverviewPage() {
     (s) => !STATUS_ORDER.includes(s),
   );
   const allStatuses = [...knownStatuses, ...customStatuses];
-  const boardHref = `/dashboard?teamId=${project.teamId}&projectId=${projectId}`;
+  const boardUrl = boardHref({ teamId: project.teamId, projectId });
   const govLabel = project.governanceMode
     ? (GOV_LABELS[project.governanceMode] ?? project.governanceMode)
     : "—";
@@ -157,7 +158,7 @@ export default function ProjectOverviewPage() {
       </Card>
 
       <div className="proj-overview-actions">
-        <Button href={boardHref} variant="primary" size="sm">
+        <Button href={boardUrl} variant="primary" size="sm">
           Open board
         </Button>
         <Button
@@ -182,7 +183,7 @@ export default function ProjectOverviewPage() {
           style={{ marginTop: "var(--space-5)", color: "var(--muted)", fontSize: "var(--text-sm)" }} /* dynamic: top spacing */
         >
           No tasks yet.{" "}
-          <Link href={boardHref}>Open the board</Link> to create the first one.
+          <Link href={boardUrl}>Open the board</Link> to create the first one.
         </p>
       )}
     </>

@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { getProject, type Project } from "../../../lib/api";
+import { boardHref } from "../../../lib/routes";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../components/projects/ProjectSubnav";
 
@@ -39,7 +40,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
         if (!cancelled) setProject(proj);
       } catch {
         // Redirect to dashboard if the project is inaccessible
-        if (!cancelled) router.replace("/dashboard");
+        if (!cancelled) router.replace(boardHref());
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -57,8 +58,8 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   // dashboard restores both from these URL params. Until the project is
   // loaded, a plain /dashboard link keeps the row height stable.
   const dashboardHref = project
-    ? `/dashboard?teamId=${project.teamId}&projectId=${project.id}`
-    : "/dashboard";
+    ? boardHref({ teamId: project.teamId, projectId: project.id })
+    : boardHref();
 
   return (
     <>
