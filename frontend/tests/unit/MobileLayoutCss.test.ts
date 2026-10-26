@@ -113,6 +113,12 @@ describe("board column jump bar", () => {
     expect(narrow.body).toMatch(/\.db-toolbar \{\s*position:\s*static/);
   });
 
+  it("sticks right below the app header, and a jumped-to column lands below both bars", () => {
+    const narrow = media("(max-width: 639px)");
+    expect(narrow.body).toMatch(/\.db-jump \{[^}]*top:\s*var\(--app-header-height\)/);
+    expect(narrow.body).toMatch(/\.db-col \{[^}]*scroll-margin-top:\s*calc\(var\(--app-header-height\) \+ \d+px\)/);
+  });
+
   it("is declared after the base rules it relies on (page-header sticky)", () => {
     const sticky = topRules(".page-header")[0]!;
     expect(media("(max-width: 639px)").at).toBeGreaterThan(sticky.at);
