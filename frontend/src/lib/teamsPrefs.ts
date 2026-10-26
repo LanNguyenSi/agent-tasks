@@ -1,5 +1,5 @@
 /**
- * Pure helpers + localStorage persistence for the /teams page view-mode
+ * Pure helpers + localStorage persistence for the /projects page view-mode
  * preference: "cards" (default for small team) or "table" (default for
  * large team). A stored preference acts as a sticky override.
  *

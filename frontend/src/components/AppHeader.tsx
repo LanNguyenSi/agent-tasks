@@ -24,7 +24,10 @@ export default function AppHeader({ user }: AppHeaderProps) {
   const isHome = pathname.startsWith("/home");
   const isDashboard = pathname.startsWith("/dashboard");
   const isTasks = pathname.startsWith("/tasks");
-  const isTeams = pathname.startsWith("/teams");
+  // Exact match: the Projects list is current only on `/projects` itself,
+  // not on the `/projects/<id>/...` hub tabs (same as before the move, when
+  // `/teams` never matched `/projects/...`).
+  const isProjects = pathname === "/projects";
   const isSettings = pathname.startsWith("/settings");
 
   return (
@@ -60,7 +63,7 @@ export default function AppHeader({ user }: AppHeaderProps) {
           <Link
             href={projectsHref()}
             className="app-nav-link"
-            aria-current={isTeams ? "page" : undefined}
+            aria-current={isProjects ? "page" : undefined}
           >
             Projects
           </Link>

@@ -443,7 +443,7 @@ describe("TaskHeader breadcrumb board links", () => {
     renderWithCrumb({ teamId: "t-9", projectId: "p-9" });
     expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
       "href",
-      "/teams?teamId=t-9",
+      "/projects?teamId=t-9",
     );
     expect(screen.getByRole("link", { name: "Backend" })).toHaveAttribute(
       "href",
@@ -455,7 +455,7 @@ describe("TaskHeader breadcrumb board links", () => {
     renderWithCrumb({ teamId: "t-9" });
     expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
       "href",
-      "/teams?teamId=t-9",
+      "/projects?teamId=t-9",
     );
     expect(screen.queryByRole("link", { name: "Backend" })).not.toBeInTheDocument();
   });

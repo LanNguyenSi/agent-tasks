@@ -53,7 +53,7 @@ describe("project hub layout", () => {
   ])("sends a project that answers %i to the Projects page", async (status, code) => {
     mockGetProject.mockRejectedValue(new ApiRequestError(code, "nope", status));
     renderLayout("board");
-    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/teams"));
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/projects"));
     expect(nav.router.replace).toHaveBeenCalledTimes(1);
   });
 

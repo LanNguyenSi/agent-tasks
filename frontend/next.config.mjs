@@ -22,6 +22,24 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_API_URL: resolveApiOrigin(),
   },
+  // Legacy `/teams` -> `/projects` (UI/IA stage 3). Exact source: only the
+  // `/teams` list URL redirects, `/teams/tokens` keeps its own page. Next
+  // appends the request's query string to a destination that carries none,
+  // so `/teams?teamId=t1` 307s to `Location: /projects?teamId=t1` (proven
+  // with `curl -sI` against `next start`, and pinned by
+  // tests/unit/next-config.test.ts). permanent: false -> 307, so browsers
+  // do not cache a redirect the IA restructure may still move.
+  // `next start` evaluates redirects() at boot (same lifecycle as env above),
+  // so the prod image needs no src for it.
+  async redirects() {
+    return [
+      {
+        source: "/teams",
+        destination: "/projects",
+        permanent: false,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
