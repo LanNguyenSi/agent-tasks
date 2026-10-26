@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   discoverSso,
   getCurrentUser,
-  getTeams,
   login,
   register,
   type SsoDiscoverResult,
@@ -15,6 +14,7 @@ import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import { AuthShell } from "../../components/AuthShell";
+import { getAccessContext, needsOnboarding } from "../../lib/access";
 
 type Mode = "login" | "register";
 
@@ -120,8 +120,8 @@ function AuthPageInner() {
           router.replace(redirectTarget);
           return;
         }
-        const teams = await getTeams();
-        router.replace(teams.length === 0 ? "/onboarding" : "/home");
+        const ctx = await getAccessContext();
+        router.replace(needsOnboarding(ctx) ? "/onboarding" : "/home");
         return;
       }
       setCheckingSession(false);
@@ -149,8 +149,8 @@ function AuthPageInner() {
         router.replace(redirectTarget);
         return;
       }
-      const teams = await getTeams();
-      router.replace(teams.length === 0 ? "/onboarding" : "/home");
+      const ctx = await getAccessContext();
+      router.replace(needsOnboarding(ctx) ? "/onboarding" : "/home");
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);

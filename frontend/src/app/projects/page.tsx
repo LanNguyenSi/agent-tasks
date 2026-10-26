@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
-  getTeams,
   getProjects,
   getTasks,
   createProject,
@@ -23,6 +22,8 @@ import {
   type TeamsViewMode,
 } from "../../lib/teamsPrefs";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
+import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import { boardHref, settingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
@@ -178,6 +179,8 @@ export default function ProjectsPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  // Projects shared with a user who has no team (zero-team state only).
+  const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -225,9 +228,17 @@ export default function ProjectsPage() {
       }
       setUser(me);
 
-      const userTeams = await getTeams();
-      if (userTeams.length === 0) {
+      const ctx = await getAccessContext();
+      if (needsOnboarding(ctx)) {
         router.replace("/onboarding");
+        return;
+      }
+      const userTeams = ctx.teams;
+      if (userTeams.length === 0) {
+        // No team but shared projects: list them (no create or sync, those
+        // need a team) and offer to create a team.
+        setSharedProjects(ctx.sharedProjects);
+        setLoading(false);
         return;
       }
       setTeams(userTeams);
@@ -559,6 +570,25 @@ export default function ProjectsPage() {
 
   return (
     <main className="page-shell">
+      {!selectedTeam && (
+        <>
+          <div className="teams-header-row">
+            <div>
+              <h1 className="teams-page-title">Projects</h1>
+              <p className="teams-project-count">
+                {sharedProjects.length} shared {sharedProjects.length === 1 ? "project" : "projects"}
+              </p>
+            </div>
+            <div className="teams-actions">
+              <Button href="/onboarding" variant="secondary">
+                Create a team
+              </Button>
+            </div>
+          </div>
+          <SharedProjectsList projects={sharedProjects} />
+        </>
+      )}
+
       {selectedTeam && (
         <>
           <div className="teams-header-row">
