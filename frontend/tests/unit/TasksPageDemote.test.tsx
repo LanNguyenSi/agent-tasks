@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
 /**
  * /tasks page -- the "Move to backlog" row action end to end at page level:
- * clicking it PATCHes the task with status "backlog" and then re-fetches the
- * list (so the view reflects the new status); a rejected request (e.g. 409
- * because an agent claimed the task first) shows the "Action failed" banner
- * with the server message and does not re-fetch. The cell itself (visibility,
- * claim hint) is covered in TasksPageBacklogActions.test.tsx.
+ * opening the row's "..." menu and clicking the item PATCHes the task with
+ * status "backlog" and then re-fetches the list (so the view reflects the new
+ * status); a rejected request (e.g. 409 because an agent claimed the task
+ * first) shows the "Action failed" banner with the server message and does
+ * not re-fetch. The menu itself (items, claim hint, keyboard) is covered in
+ * TasksPageBacklogActions.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
@@ -86,6 +87,11 @@ function listResponse(tasks: Task[]) {
   };
 }
 
+/** Open one row's "..." actions menu (the panel renders in a portal). */
+async function openRowMenu(title: string): Promise<void> {
+  await userEvent.click(await screen.findByRole("button", { name: `Actions for ${title}` }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetCurrentUser.mockResolvedValue(USER);
@@ -103,6 +109,7 @@ describe("/tasks page -- Move to backlog row action", () => {
     mockUpdateTask.mockResolvedValue({ ...open, status: "backlog" });
 
     render(<TasksPage />);
+    await openRowMenu("Promoted by mistake");
     const button = await screen.findByRole("button", { name: "Move to backlog" });
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(1);
 
@@ -110,6 +117,7 @@ describe("/tasks page -- Move to backlog row action", () => {
 
     await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledWith("task-1", { status: "backlog" }));
     // The refreshed list replaces the open row's action with Promote/Discard.
+    await openRowMenu("Promoted by mistake");
     expect(await screen.findByRole("button", { name: "Promote" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
     expect(mockGetTeamTasks.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -121,6 +129,7 @@ describe("/tasks page -- Move to backlog row action", () => {
     mockUpdateTask.mockRejectedValue(new Error("Task state changed before the request completed"));
 
     render(<TasksPage />);
+    await openRowMenu("Promoted by mistake");
     const button = await screen.findByRole("button", { name: "Move to backlog" });
     await userEvent.click(button);
 
@@ -128,18 +137,21 @@ describe("/tasks page -- Move to backlog row action", () => {
     expect(screen.getByText("Task state changed before the request completed")).toBeInTheDocument();
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(1);
     // The row is still open and the action is available again.
+    await openRowMenu("Promoted by mistake");
     expect(screen.getByRole("button", { name: "Move to backlog" })).toBeEnabled();
   });
 
-  it("an open row with a claim is disabled and never calls the API", async () => {
+  it("an open row with a claim offers no action and never calls the API", async () => {
     mockGetTeamTasks.mockResolvedValue(
       listResponse([makeTask({ id: "task-1", status: "open", claimedByAgentId: "agent-1" })]),
     );
 
     render(<TasksPage />);
-    const button = await screen.findByRole("button", { name: "Move to backlog" });
-    expect(button).toBeDisabled();
-    await userEvent.click(button);
+    await openRowMenu("Promoted by mistake");
+    expect(screen.queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/Release the claim before moving this task back to backlog/),
+    ).toBeInTheDocument();
     expect(mockUpdateTask).not.toHaveBeenCalled();
   });
 });

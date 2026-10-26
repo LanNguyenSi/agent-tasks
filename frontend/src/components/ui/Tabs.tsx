@@ -29,6 +29,10 @@ interface TabsProps {
 
 export function Tabs({ tabs, value, onChange, label, className }: TabsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // With no tab matching `value` (a deliberate "no tab selected" state, e.g.
+  // the /tasks custom filter) the first tab stays in the tab sequence so the
+  // tablist remains keyboard-reachable; arrow keys then select a tab.
+  const hasSelectedTab = tabs.some((tab) => tab.value === value);
 
   function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
     const count = tabs.length;
@@ -70,7 +74,7 @@ export function Tabs({ tabs, value, onChange, label, className }: TabsProps) {
             key={tab.value}
             role="tab"
             aria-selected={isSelected}
-            tabIndex={isSelected ? 0 : -1}
+            tabIndex={isSelected || (!hasSelectedTab && index === 0) ? 0 : -1}
             className="tabs-tab"
             onClick={() => onChange(tab.value)}
             onKeyDown={(e) => handleKeyDown(e, index)}

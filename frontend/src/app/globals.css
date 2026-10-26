@@ -4032,12 +4032,36 @@ html[data-theme="light"] {
   gap: var(--space-3);
 }
 
+/* Scope-tab row: the segmented control plus the custom-filter state (a
+   "Custom filter" chip and a Reset action) shown in place of a selected tab
+   when the chips no longer match the active tab's preset. */
+.tasks-scope-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.tasks-custom-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 /* Scope segmented-control strip: bottom gap reduced since filter band follows */
 .tasks-scope-tabs {
   align-self: flex-start;
   /* Five scopes do not fit at 390px: scroll inside the strip, never the page. */
   max-width: 100%;
   overflow-x: auto;
+}
+
+/* Inside the scope row the strip stays scrollable but shares the line with
+   the custom-filter chip (min-width: 0 so it can shrink and scroll instead
+   of widening the page at 390px). */
+.tasks-scope-row .tasks-scope-tabs {
+  align-self: center;
+  min-width: 0;
 }
 
 .tasks-scope-tabs .tabs-tab {
@@ -4095,7 +4119,10 @@ html[data-theme="light"] {
   pointer-events: none;
 }
 
-/* Task title cell: truncated to one line inside the grid column */
+/* Task title cell: wraps to at most two lines inside the (free-width) title
+   column; the `title` attribute still carries the full text. Scoped to the
+   tasks table region because the Projects list reuses .tasks-row-title in a
+   fixed-width column, where single-line truncation is still right. */
 .tasks-row-title {
   font-size: var(--text-sm);
   font-weight: 600;
@@ -4103,6 +4130,34 @@ html[data-theme="light"] {
   text-overflow: ellipsis;
   white-space: nowrap;
   display: block;
+}
+
+.tasks-table-region .tasks-row-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow: hidden;
+}
+
+/* Task-list columns at desktop widths (stacked card mode below 900px is
+   untouched): no column declares a width, so the table is in auto layout
+   (see _components/columns.tsx). Keeping the header and the data cells on
+   one line makes Project, Due, Updated, Status and Priority shrink to
+   their content, and the Task column, the only flexible one, takes all
+   remaining width at 1440px. */
+@media (min-width: 901px) {
+  .tasks-table-region .table-th,
+  .tasks-table-region .table-td:not([data-col="title"]) {
+    white-space: nowrap;
+  }
+
+  /* Long project names truncate under this cap (.table-cell-secondary
+     supplies the ellipsis) instead of stealing width from the title. */
+  .tasks-table-region .table-td[data-col="project"] .table-cell-secondary {
+    max-width: 18rem;
+  }
 }
 
 /* Title cell wrapper for the tasks browser and dashboard list view: the
@@ -4161,13 +4216,37 @@ html[data-theme="light"] {
   margin-top: var(--space-1);
 }
 
-/* Promote/Discard row actions in the backlogActions column (backlog rows only).
-   flex-wrap: wrap is a safety net for edge cases where the cell becomes too
-   narrow: very narrow viewports, longer button labels from i18n, or future
-   font changes. The default case (normal viewport + English labels) fits
-   both buttons side-by-side, but if wrapping occurs here, flex-wrap ensures
-   they stack (Promote above Discard) instead of overflowing the fixed-width
-   cell. justify-content: flex-end keeps wrapped buttons right-aligned. */
+/* One "..." trigger per row opening the row actions menu (columns.tsx); the
+   same geometry as the Projects list kebab (.project-row-actions-btn). */
+.tasks-row-actions-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tasks-row-actions-btn:hover:not(:disabled) {
+  background: var(--primary-muted);
+  color: var(--text);
+}
+
+.tasks-row-actions-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Row-actions wrapper holding the "..." menu trigger, right-aligned in its
+   cell. flex-wrap: wrap stays as a safety net for edge cases where the cell
+   becomes too narrow (very narrow viewports, future wider triggers); with
+   one icon button it never wraps in practice. */
 .tasks-row-actions {
   display: inline-flex;
   flex-wrap: wrap;

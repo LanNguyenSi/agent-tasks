@@ -9,7 +9,6 @@ import {
   type Team,
   type TeamTasksCounts,
   type TeamTasksProject,
-  type User,
 } from "../../lib/api";
 import { projectsHref, taskHref } from "../../lib/routes";
 import { useCurrentTeam } from "../../lib/teamSwitch";
@@ -141,6 +140,15 @@ function parseSort(value: string | null): { column: SortColumn; direction: SortD
   return { column: col as SortColumn, direction: dir };
 }
 
+// Order-insensitive set equality, used by the custom-filter check: the chips
+// match the scope tab's preset when they hold exactly the same values, no
+// matter the URL order (e.g. status=open,in_progress == the Active preset).
+function sameValues(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((v) => set.has(v));
+}
+
 // Skeleton shown during initial bootstrap and as the Suspense fallback.
 // Used by both paths so the transition from Suspense -> inner -> loaded is smooth.
 function TasksPageSkeleton() {
@@ -179,7 +187,6 @@ function TasksPageInner() {
   const listQuery = searchParams.toString();
   const listHref = listQuery ? `/tasks?${listQuery}` : "/tasks";
 
-  const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so a switch and back/forward always agree.
@@ -294,7 +301,6 @@ function TasksPageInner() {
       try {
         const me = await getCurrentUser();
         if (!me) { router.replace("/auth"); return; }
-        setUser(me);
         const ctx = await getAccessContext();
         if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
         const fetchedTeams = ctx.teams;
@@ -536,7 +542,25 @@ function TasksPageInner() {
     router.replace(`/tasks?${next.toString()}`);
   }
 
+  // Tab-row "Reset": drops exactly the overrides that made the view a custom
+  // filter (status, priority, mine) and keeps the active scope tab (and
+  // teamId), i.e. goes back to the tab's own preset.
+  function resetFilterToPreset(): void {
+    updateParams({ status: null, priority: null, mine: null });
+  }
+
   // ── Derived values ────────────────────────────────────────────
+
+  // Custom filter: the effective status/priority chips or the mine flag no
+  // longer match the active scope tab's preset. Derived from the resolved
+  // filter values, not the URL's presence, so an explicit chip set equal to
+  // the preset is not custom. When true the tab row shows no selected tab,
+  // the H1 reads "Tasks · custom filter", and the row offers Reset.
+  // Project and search stay ordinary filters (their own clear affordances).
+  const isCustomFilter =
+    !sameValues(statusFilter, preset.statuses ?? []) ||
+    !sameValues(priorityFilter, preset.priorities ?? []) ||
+    mineOnly !== (preset.mine === true);
 
   const totalCount = filteredTotal;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
@@ -621,9 +645,9 @@ function TasksPageInner() {
 
   return (
     <PageShell variant="wide" flush>
-      {/* ── Sticky PageHeader: title + search + mine toggle + new task ── */}
+      {/* ── Sticky PageHeader: title + search + new task ── */}
       <PageHeader
-        title={SCOPE_LABELS[scope]}
+        title={isCustomFilter ? "Tasks · custom filter" : SCOPE_LABELS[scope]}
         summary={
           summaryParts.length > 0 ? (
             <span className="num">{summaryParts.join(" · ")}</span>
@@ -645,23 +669,10 @@ function TasksPageInner() {
           <KeyHint>/</KeyHint>
         </div>
 
-        {/* Mine toggle — tri-state chip next to search */}
-        {user && (
-          <button
-            type="button"
-            className={`filter-chip ${mineOnly ? "filter-chip-active" : ""}`}
-            aria-pressed={mineOnly}
-            onClick={() => {
-              if (mineOnly) {
-                updateParams({ mine: preset.mine ? "0" : null });
-              } else {
-                updateParams({ mine: preset.mine ? null : "1" });
-              }
-            }}
-          >
-            Mine
-          </button>
-        )}
+        {/* No "Mine" toggle: "my tasks" is the My Tasks scope tab (scope=mine).
+            The `mine` URL param is still parsed (bookmarks, Home's My Tasks
+            link) and is one of the inputs of the custom-filter state, whose
+            Reset action clears it. */}
 
         {/* New task primary button — opens the in-place create flow */}
         <Button
@@ -678,20 +689,36 @@ function TasksPageInner() {
       {/* ── Content area ── */}
       <div className="tasks-content">
 
-        {/* Scope segmented control */}
-        <Tabs
-          tabs={scopeTabs}
-          value={scope}
-          onChange={(s) => {
-            const next = new URLSearchParams();
-            const teamId = searchParams.get("teamId");
-            if (teamId) next.set("teamId", teamId);
-            if (s !== "all") next.set("scope", s);
-            router.replace(`/tasks?${next.toString()}`);
-          }}
-          label="Task scope"
-          className="tasks-scope-tabs"
-        />
+        {/* Scope segmented control. In the custom-filter state no tab is
+            selected (value ""), the strip shows a "Custom filter" chip, and
+            "Reset" goes back to the active tab's preset. */}
+        <div className="tasks-scope-row">
+          <Tabs
+            tabs={scopeTabs}
+            value={isCustomFilter ? "" : scope}
+            onChange={(s) => {
+              const next = new URLSearchParams();
+              const teamId = searchParams.get("teamId");
+              if (teamId) next.set("teamId", teamId);
+              if (s !== "all") next.set("scope", s);
+              router.replace(`/tasks?${next.toString()}`);
+            }}
+            label="Task scope"
+            className="tasks-scope-tabs"
+          />
+          {isCustomFilter && (
+            <div className="tasks-custom-filter" role="status">
+              <span className="filter-chip filter-chip-active">Custom filter</span>
+              <button
+                type="button"
+                className="filter-chip filter-chip-clear"
+                onClick={resetFilterToPreset}
+              >
+                Reset
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Done-scope recency sub-filter: Recent / Older / All */}
         {scope === "done" && (
