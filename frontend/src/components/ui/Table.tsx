@@ -19,7 +19,7 @@
 //   />
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type SyntheticEvent } from "react";
 import { Icon } from "./Icon";
 
 export interface ColumnDef<T = Record<string, unknown>> {
@@ -40,6 +40,19 @@ export interface ColumnDef<T = Record<string, unknown>> {
 }
 
 type SortDir = "ascending" | "descending" | "none";
+
+/**
+ * True when a row event started inside the row's own DOM. React events
+ * bubble along the component tree, so an event from a portaled child of a
+ * cell (a DropdownMenu panel or any popover rendered into document.body)
+ * still reaches the row's onClick/onKeyDown although its target is not in
+ * the row. The row handlers ignore such events: otherwise a click on a menu
+ * item, or Enter on it (whose preventDefault would also cancel the item's
+ * own activation), would navigate the row instead of running the item.
+ */
+function isFromRowDom(e: SyntheticEvent<HTMLTableRowElement>): boolean {
+  return e.currentTarget.contains(e.target as Node);
+}
 
 interface TableProps<T extends object> {
   columns: ColumnDef<T>[];
@@ -237,9 +250,13 @@ export function Table<T extends object>({
                   className={["table-tr", hasClick ? "table-tr--link" : "", extraClass].filter(Boolean).join(" ")}
                   onClick={
                     onRowClick
-                      ? () => onRowClick(row)
+                      ? (e) => {
+                          if (!isFromRowDom(e)) return;
+                          onRowClick(row);
+                        }
                       : href
                       ? (e) => {
+                          if (!isFromRowDom(e)) return;
                           if ((e.target as HTMLElement).closest("a")) return;
                           const anchor = e.currentTarget.querySelector<HTMLAnchorElement>("a.table-row-link");
                           anchor?.click();
@@ -250,6 +267,7 @@ export function Table<T extends object>({
                   onKeyDown={
                     hasClick
                       ? (e) => {
+                          if (!isFromRowDom(e)) return;
                           if (e.key === "Enter" || (onRowClick && e.key === " ")) {
                             e.preventDefault();
                             if (onRowClick) {
