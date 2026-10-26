@@ -1,7 +1,8 @@
 "use client";
 
 // Project settings page: /projects/[id]/settings.
-// Split into three sectioned cards: Governance, Notifications, Task template.
+// Split into four sectioned cards: General (project details, moved here from
+// the dropped Overview tab), Governance, Notifications, Task template.
 // The hub layout (layout.tsx) renders the project name H1 and subnav; this
 // page renders the settings content only.
 
@@ -233,6 +234,50 @@ export default function ProjectSettingsPage() {
 
       {project && (
         <>
+          {/* ── General ────────────────────────────────────────────── */}
+          <Card
+            surface="raised"
+            // eslint-disable-next-line no-restricted-syntax
+            style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing */
+          >
+            <div className="proj-card-section">
+              <p className="proj-section-head">General</p>
+              <div className="proj-overview-grid">
+                <div>
+                  <p className="proj-meta-label">Slug</p>
+                  <p className="proj-meta-value">{project.slug}</p>
+                </div>
+                {project.githubRepo && (
+                  <div>
+                    <p className="proj-meta-label">GitHub repository</p>
+                    <p className="proj-meta-value">
+                      <a
+                        href={`https://github.com/${project.githubRepo}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {project.githubRepo}
+                      </a>
+                    </p>
+                  </div>
+                )}
+                <div>
+                  <p className="proj-meta-label">Created</p>
+                  <p className="proj-meta-value">
+                    {new Date(project.createdAt).toLocaleDateString(
+                      undefined,
+                      {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                      },
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+
           {/* ── Governance ─────────────────────────────────────────── */}
           <Card
             surface="raised"
