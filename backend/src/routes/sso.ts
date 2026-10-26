@@ -219,7 +219,7 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
     const isSecure = config.NODE_ENV === "production";
     c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure), { append: true });
 
-    return c.redirect(`${config.FRONTEND_URL}/teams`);
+    return c.redirect(`${config.FRONTEND_URL}/home`);
   } catch (err) {
     // Never include the raw error (may contain token-exchange response body) —
     // log the message alone and fall through to a generic reason.

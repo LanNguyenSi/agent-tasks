@@ -499,7 +499,7 @@ describe("GET /sso/:teamSlug/callback", () => {
     );
   });
 
-  it("happy path: session cookie set, transient cookies cleared, redirect to /teams", async () => {
+  it("happy path: session cookie set, transient cookies cleared, redirect to /home", async () => {
     mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
     mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
     mocks.decryptClientSecret.mockResolvedValue("client-secret-plain");
@@ -520,7 +520,7 @@ describe("GET /sso/:teamSlug/callback", () => {
     );
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("http://localhost:3000/teams");
+    expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
 
     // createSessionToken was called with the DB user id and the session secret.
     expect(mocks.createSessionToken).toHaveBeenCalledWith(

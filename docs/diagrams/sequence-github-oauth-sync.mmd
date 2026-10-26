@@ -12,7 +12,7 @@ sequenceDiagram
     GitHub->>API: GET /api/auth/github/callback?code
     API->>GitHub: exchange code, fetch user
     API->>DB: upsert user
-    API-->>WebUI: session cookie, redirect /teams
+    API-->>WebUI: session cookie, redirect /home
 
     Note over Human,DB: 2. Later: explicit repo sync by a team member
     Human->>API: POST /api/teams/:id/sync

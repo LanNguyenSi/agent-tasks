@@ -246,7 +246,7 @@ authRouter.get("/github/callback", async (c) => {
     c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure), { append: true });
     clearOAuthCookies(c);
 
-    return c.redirect(`${config.FRONTEND_URL}/teams`);
+    return c.redirect(`${config.FRONTEND_URL}/home`);
   } catch (err) {
     logger.error(
       { component: "oauth", err, errMessage: err instanceof Error ? err.message : String(err) },
