@@ -155,7 +155,7 @@ describe("header nav click while the page loads its teams", () => {
     ["Home", "/home", "Tasks", "/tasks"],
     ["Tasks", "/tasks", "brand", "/home"],
   ])(
-    "open %s, click %s before its teams arrive: lands on the clicked section",
+    "on %s (%s), a click on %s (%s) before that page's teams arrive lands on the clicked section",
     async (first, firstPath, second, secondPath) => {
       // The header shows Beta (remembered) on a page outside the sections.
       window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
