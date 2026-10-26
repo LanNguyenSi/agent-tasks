@@ -17,6 +17,7 @@ import {
   type AgentToken,
   type GithubTokenHealth,
 } from "../../lib/api";
+import { ssoSettingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -476,7 +477,7 @@ export default function SettingsPage() {
                   </a>{" "}
                   and hand it out-of-band to whoever owns IdP setup.
                 </p>
-                <Button href="/settings/sso" variant="secondary">
+                <Button href={ssoSettingsHref()} variant="secondary">
                   Manage SSO connection
                 </Button>
               </section>

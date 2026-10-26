@@ -22,6 +22,7 @@ import {
   resolveInitialView,
   type TeamsViewMode,
 } from "../../lib/teamsPrefs";
+import { boardHref, settingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -646,7 +647,7 @@ export default function TeamsPage() {
           {!user?.githubConnected && (
             <AlertBanner tone="warning" title="GitHub is not connected yet">
               Sync is unavailable until GitHub is connected.{" "}
-              <Link href="/settings" className="settings-inline-link">
+              <Link href={settingsHref()} className="settings-inline-link">
                 Connect now
               </Link>
             </AlertBanner>
@@ -811,7 +812,7 @@ export default function TeamsPage() {
                   <ProjectCard
                     key={project.id}
                     project={project}
-                    href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`}
+                    href={boardHref({ teamId: selectedTeam.id, projectId: project.id })}
                     onDelete={
                       !project.githubRepo
                         ? () =>
@@ -837,7 +838,7 @@ export default function TeamsPage() {
                 rowHref={
                   selectedTeam
                     ? (project) =>
-                        `/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`
+                        boardHref({ teamId: selectedTeam.id, projectId: project.id })
                     : undefined
                 }
                 sortKey={sortColumn}

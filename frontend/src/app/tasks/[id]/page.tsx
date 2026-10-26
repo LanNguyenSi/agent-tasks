@@ -22,6 +22,7 @@ import {
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
 import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../../lib/confidence";
+import { boardHref } from "../../../lib/routes";
 import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
 
 /**
@@ -122,10 +123,10 @@ export default function TaskDetailPage() {
       .then((detail) => setImprovementPanel(detail));
   }
 
-  const boardHref =
+  const boardUrl =
     project && task
-      ? `/dashboard?teamId=${project.teamId}&projectId=${task.projectId}`
-      : "/dashboard";
+      ? boardHref({ teamId: project.teamId, projectId: task.projectId })
+      : boardHref();
 
   // `accessRole` (from GET /projects/:id, fetched above via getProject) covers
   // both a team ADMIN and a per-project-only PROJECT_ADMIN — unlike
@@ -134,7 +135,7 @@ export default function TaskDetailPage() {
   const isProjectWrite = isProjectWriteRole(project?.accessRole);
 
   function goToBoard() {
-    router.push(boardHref);
+    router.push(boardUrl);
   }
 
   return (

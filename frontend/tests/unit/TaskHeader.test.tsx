@@ -406,3 +406,61 @@ describe("backlog Promote/Discard", () => {
     expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
   });
 });
+
+describe("TaskHeader breadcrumb board links", () => {
+  // Pins the boardHref truth table at the breadcrumb call site: team +
+  // project crumbs link to /dashboard carrying the team context, the
+  // project crumb adds projectId, and no crumbs render without a teamId.
+  function renderWithCrumb(overrides: { teamId?: string; projectId?: string }) {
+    render(
+      <TaskHeader
+        task={makeTask({})}
+        user={me}
+        variant="page"
+        teamId={overrides.teamId}
+        teamName="Example Team"
+        projectId={overrides.projectId}
+        projectName="Backend"
+        isEditing={false}
+        advanceBusy={false}
+        onStartEditing={vi.fn()}
+        onAdvance={vi.fn()}
+        onDeleteRequest={vi.fn()}
+        onPromote={vi.fn()}
+        onDiscardRequest={vi.fn()}
+        onDemote={vi.fn()}
+        backlogActionBusy={false}
+        onScrollToReview={vi.fn()}
+        isProjectAdmin={false}
+        statusOverrideTargets={null}
+        onOverrideStatus={vi.fn().mockResolvedValue({ kind: "success" })}
+      />,
+    );
+  }
+
+  it("links the team crumb with teamId and the project crumb with teamId + projectId", () => {
+    renderWithCrumb({ teamId: "t-9", projectId: "p-9" });
+    expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
+      "href",
+      "/dashboard?teamId=t-9",
+    );
+    expect(screen.getByRole("link", { name: "Backend" })).toHaveAttribute(
+      "href",
+      "/dashboard?teamId=t-9&projectId=p-9",
+    );
+  });
+
+  it("links the team crumb with teamId alone when there is no project", () => {
+    renderWithCrumb({ teamId: "t-9" });
+    expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
+      "href",
+      "/dashboard?teamId=t-9",
+    );
+    expect(screen.queryByRole("link", { name: "Backend" })).not.toBeInTheDocument();
+  });
+
+  it("renders no breadcrumb without a teamId", () => {
+    renderWithCrumb({ projectId: "p-9" });
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+  });
+});

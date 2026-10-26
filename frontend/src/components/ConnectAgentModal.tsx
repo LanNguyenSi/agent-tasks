@@ -6,6 +6,7 @@ import { Button } from "./ui/Button";
 import AlertBanner from "./ui/AlertBanner";
 import { Tabs, type TabItem } from "./ui/Tabs";
 import { createAgentToken, type AgentToken } from "../lib/api";
+import { apiTokensSettingsHref } from "../lib/routes";
 
 type TabId = "mcp" | "cli" | "api";
 
@@ -302,7 +303,7 @@ export default function ConnectAgentModal({
           )}
           <AlertBanner tone="warning">
             This token is shown once. It has been saved to{" "}
-            <a href="/settings#api-tokens" className="connect-agent-link">
+            <a href={apiTokensSettingsHref()} className="connect-agent-link">
               Settings &rarr; API Tokens
             </a>{" "}
             where you can revoke it later -- but you cannot view the value again.

@@ -15,6 +15,7 @@ import {
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
 import { normalizeStatus } from "../../lib/taskDisplay";
+import { boardHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
@@ -46,7 +47,7 @@ type HomeScope = {
 function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
   return (
     <Link
-      href={`/dashboard?teamId=${teamId}&projectId=${task.projectId}&taskId=${task.id}`}
+      href={boardHref({ teamId, projectId: task.projectId, taskId: task.id })}
       aria-label={`${task.title}, ${task.projectName}, ${task.status.replace(/_/g, " ")}, ${task.priority} priority`}
       className="home-task-row"
     >

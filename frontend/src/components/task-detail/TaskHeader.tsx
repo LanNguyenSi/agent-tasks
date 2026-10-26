@@ -11,6 +11,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import type { Task, User, TransitionRuleFailure } from "@/lib/api";
 import { normalizeStatus } from "@/lib/status";
+import { boardHref } from "@/lib/routes";
 import { DEMOTE_LABEL, demoteBlockedHint } from "@/lib/backlogDemote";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { Icon } from "@/components/ui/Icon";
@@ -227,12 +228,7 @@ export default function TaskHeader({
   const transitionHint = transitions.find((t) => t.hint)?.hint;
   const demoteHint = demoteBlockedHint(task);
 
-  const boardHref =
-    teamId && projectId
-      ? `/dashboard?teamId=${teamId}&projectId=${projectId}`
-      : teamId
-        ? `/dashboard?teamId=${teamId}`
-        : "/dashboard";
+  const boardUrl = boardHref({ teamId, projectId });
 
   return (
     <div>
@@ -241,7 +237,7 @@ export default function TaskHeader({
         <nav className="td-breadcrumb" aria-label="Breadcrumb">
           {teamName && (
             <>
-              <Link href={`/dashboard?teamId=${teamId}`}>{teamName}</Link>
+              <Link href={boardHref({ teamId })}>{teamName}</Link>
               <span className="td-breadcrumb-sep" aria-hidden="true">
                 /
               </span>
@@ -249,7 +245,7 @@ export default function TaskHeader({
           )}
           {projectName && projectId && (
             <>
-              <Link href={boardHref}>{projectName}</Link>
+              <Link href={boardUrl}>{projectName}</Link>
               <span className="td-breadcrumb-sep" aria-hidden="true">
                 /
               </span>

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { logout } from "../lib/api";
+import { boardHref, projectsHref, settingsHref } from "../lib/routes";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
 
@@ -43,7 +44,7 @@ export default function AppHeader({ user }: AppHeaderProps) {
             Home
           </Link>
           <Link
-            href="/dashboard"
+            href={boardHref()}
             className="app-nav-link"
             aria-current={isDashboard ? "page" : undefined}
           >
@@ -57,14 +58,14 @@ export default function AppHeader({ user }: AppHeaderProps) {
             Tasks
           </Link>
           <Link
-            href="/teams"
+            href={projectsHref()}
             className="app-nav-link"
             aria-current={isTeams ? "page" : undefined}
           >
             Teams
           </Link>
           <Link
-            href="/settings"
+            href={settingsHref()}
             className="app-nav-link"
             aria-current={isSettings ? "page" : undefined}
           >
@@ -109,7 +110,7 @@ export default function AppHeader({ user }: AppHeaderProps) {
             >
               <div role="menu">
                 <Link
-                  href="/settings"
+                  href={settingsHref()}
                   role="menuitem"
                   onClick={() => setMenuOpen(false)}
                   className="app-dropdown-item"

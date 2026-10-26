@@ -7,6 +7,7 @@ import Card from "../../../components/ui/Card";
 import ConfirmDialog from "../../../components/ui/ConfirmDialog";
 import FormField from "../../../components/ui/FormField";
 import { PageHeader } from "../../../components/ui/PageHeader";
+import { settingsHref } from "../../../lib/routes";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -184,7 +185,7 @@ export default function SsoSettingsPage() {
     <main className="page-shell page-shell--narrow">
       <PageHeader
         breadcrumb={
-          <a href="/settings" className="settings-breadcrumb">
+          <a href={settingsHref()} className="settings-breadcrumb">
             Settings
           </a>
         }

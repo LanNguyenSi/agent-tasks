@@ -50,6 +50,7 @@ import TaskListView from "../../components/dashboard/TaskListView";
 import NewTaskModal from "../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../lib/taskDisplay";
 import { DEFAULT_CREATE_STATUS } from "../../lib/status";
+import { projectsHref } from "../../lib/routes";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -613,7 +614,7 @@ export default function DashboardPage() {
           title="No team selected"
           description="Join or create a team to get started."
           action={
-            <Button href="/teams" size="sm">
+            <Button href={projectsHref()} size="sm">
               Go to Teams
             </Button>
           }
@@ -628,7 +629,7 @@ export default function DashboardPage() {
           title="This team has no projects yet."
           description="Create a project to start tracking tasks."
           action={
-            <Button href={`/teams?teamId=${selectedTeamId}`} size="sm">
+            <Button href={projectsHref({ teamId: selectedTeamId })} size="sm">
               Create project
             </Button>
           }

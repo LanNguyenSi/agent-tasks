@@ -12,6 +12,7 @@ import {
   type TeamTasksProject,
   type User,
 } from "../../lib/api";
+import { boardHref } from "../../lib/routes";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { KeyHint } from "../../components/ui/KeyHint";
@@ -489,7 +490,7 @@ function TasksPageInner() {
     return (
       <main className="tasks-shell">
         <PageHeader title="All Tasks">
-          <Button href="/dashboard" variant="ghost" size="sm">
+          <Button href={boardHref()} variant="ghost" size="sm">
             Dashboard
           </Button>
         </PageHeader>
