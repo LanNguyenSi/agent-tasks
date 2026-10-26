@@ -21,6 +21,7 @@ import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { PageShell } from "../../components/ui/PageShell";
 import ThemePreferenceField from "../../components/ThemePreferenceField";
 import { formatRelativeTime } from "../../components/settings/formatRelativeTime";
 
@@ -141,9 +142,7 @@ export default function SettingsPage() {
     : false;
 
   return (
-    <main className="page-shell">
-      <PageHeader title="Settings" />
-
+    <PageShell header={<PageHeader title="Settings" />}>
       <div className="settings-layout">
         {/* Sticky side-nav: hidden under 1000px via CSS */}
         <aside className="settings-side-nav" aria-label="Settings sections">
@@ -372,6 +371,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-    </main>
+    </PageShell>
   );
 }

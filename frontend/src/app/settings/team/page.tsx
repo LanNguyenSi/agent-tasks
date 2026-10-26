@@ -20,6 +20,7 @@ import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import { FullPageLoader } from "../../../components/ui/FullPageLoader";
 import { PageHeader } from "../../../components/ui/PageHeader";
+import { PageShell } from "../../../components/ui/PageShell";
 import ApiTokensSection from "../../../components/settings/ApiTokensSection";
 
 // Section ids for the sticky side-nav anchors.
@@ -130,16 +131,18 @@ export default function TeamSettingsPage() {
   }
 
   return (
-    <main className="page-shell">
-      <PageHeader
-        breadcrumb={
-          <a href={settingsHref()} className="settings-breadcrumb">
-            Settings
-          </a>
-        }
-        title="Team settings"
-      />
-
+    <PageShell
+      header={
+        <PageHeader
+          breadcrumb={
+            <a href={settingsHref()} className="settings-breadcrumb">
+              Settings
+            </a>
+          }
+          title="Team settings"
+        />
+      }
+    >
       <div className="settings-layout">
         {/* Sticky side-nav: hidden under 1000px via CSS */}
         <aside className="settings-side-nav" aria-label="Team settings sections">
@@ -233,6 +236,6 @@ export default function TeamSettingsPage() {
           </div>
         </div>
       </div>
-    </main>
+    </PageShell>
   );
 }

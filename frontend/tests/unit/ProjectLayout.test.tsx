@@ -3,8 +3,9 @@
  * Project hub layout (app/projects/[id]/layout.tsx): an inaccessible
  * project falls back to the Projects page (never to the bare /dashboard,
  * which resumes the last board and could loop back to the same project),
- * and the board tab renders outside the 1200px content container that
- * the other tabs sit in. The band's crumb is `Projects / <project picker>`:
+ * and the board tab renders in the wide, flush content slot while the
+ * other tabs sit in the 1200px column; every tab renders the hub band and
+ * body inside exactly one <main>. The band's crumb is `Projects / <project picker>`:
  * the Projects link goes through the routes builder, the picker lists the
  * team's projects (or the shared ones for a user without a team) and keeps
  * the tab when it switches projects; the page has exactly one H1.
@@ -89,7 +90,7 @@ describe("project hub layout", () => {
     renderLayout("settings");
     expect(await screen.findByText("Server exploded")).toBeInTheDocument();
     expect(screen.queryByText("tab body")).not.toBeInTheDocument();
-    expect(screen.getByText("Server exploded").closest(".proj-hub-content")).not.toBeNull();
+    expect(screen.getByText("Server exploded").closest(".pshell-content--default")).not.toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
@@ -108,16 +109,57 @@ describe("project hub layout", () => {
     expect(nav.router.replace).not.toHaveBeenCalled();
   });
 
-  it("renders the board outside the hub content container", async () => {
+  it("renders the board in the wide, flush content slot (no 1200px column)", async () => {
     renderLayout("board");
     expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
-    expect(screen.getByText("tab body").closest(".proj-hub-content")).toBeNull();
+    const slot = screen.getByText("tab body").closest(".pshell-content");
+    expect(slot).toHaveClass("pshell-content--wide", "pshell-content--flush");
+    expect(slot).not.toHaveClass("pshell-content--default");
   });
 
-  it("keeps the other tabs inside the hub content container", async () => {
+  it("keeps the other tabs in the 1200px content slot", async () => {
     renderLayout("members");
     expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
-    expect(screen.getByText("tab body").closest(".proj-hub-content")).not.toBeNull();
+    const slot = screen.getByText("tab body").closest(".pshell-content");
+    expect(slot).toHaveClass("pshell-content--default");
+    expect(slot).not.toHaveClass("pshell-content--wide", "pshell-content--flush");
+  });
+
+  it.each(["board", "members", "workflow", "settings"])(
+    "renders exactly one <main> holding the hub band and the %s body",
+    async (segment) => {
+      renderLayout(segment);
+      await screen.findByRole("heading", { level: 1, name: "Project One" });
+      const mains = screen.getAllByRole("main");
+      expect(mains).toHaveLength(1);
+      const main = mains[0]!;
+      // The band (crumb, H1, tab row) sits inside the one main, in front of the body.
+      expect(within(main).getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
+      expect(within(main).getByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+      expect(main.querySelector(".proj-hub-header")).not.toBeNull();
+      expect(main.querySelector(".proj-subnav")).not.toBeNull();
+      const body = within(main).getByText("tab body");
+      expect(
+        main.querySelector(".proj-subnav")!.compareDocumentPosition(body) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    },
+  );
+
+  it("keeps one <main> while the project loads and after a failed load", async () => {
+    mockGetProject.mockReturnValueOnce(new Promise(() => {}));
+    const first = render(
+      <ProjectLayout>
+        <p>tab body</p>
+      </ProjectLayout>,
+    );
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    first.unmount();
+
+    mockGetProject.mockRejectedValue(new ApiRequestError("internal", "Server exploded", 500));
+    renderLayout("members");
+    await screen.findByText("Could not load project");
+    expect(screen.getAllByRole("main")).toHaveLength(1);
   });
 });
 
