@@ -62,7 +62,7 @@ export default function AppHeader({ user }: AppHeaderProps) {
             className="app-nav-link"
             aria-current={isTeams ? "page" : undefined}
           >
-            Teams
+            Projects
           </Link>
           <Link
             href={settingsHref()}

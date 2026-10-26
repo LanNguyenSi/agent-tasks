@@ -51,7 +51,7 @@ granted liberally for project-management needs, and a stolen browser session
 should not be enough to repoint a team's IdP (which would let an attacker
 redirect all logins to a provider they control).
 
-Instead, SSO admin endpoints require an **AgentToken with the `sso:admin`
+Instead, SSO admin endpoints require an **API token with the `sso:admin`
 scope**:
 
 - Tokens are team-scoped — a token for team A cannot configure team B, even
@@ -63,7 +63,7 @@ scope**:
 
 A typical rollout:
 
-1. Team admin generates an AgentToken with scope `sso:admin` under
+1. Team admin generates an API token with scope `sso:admin` under
    Settings → API Tokens.
 2. Token is handed **out-of-band** (password manager, secure channel) to
    whoever owns IdP configuration — this is usually not the same person.

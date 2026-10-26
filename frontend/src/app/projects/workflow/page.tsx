@@ -6,7 +6,7 @@
  *
  * Reads the projectId query parameter and issues a client-side
  * router.replace to the canonical hub URL. Missing or invalid IDs
- * show an EmptyState with a "Go to dashboard" action instead of
+ * show an EmptyState with a "Go to projects" action instead of
  * a broken page.
  */
 
@@ -44,7 +44,7 @@ export default function WorkflowRedirectPage() {
           description="This URL is missing the required projectId parameter. Navigate to a project to open its workflow editor."
           action={
             <Button href={boardHref()} variant="primary" size="sm">
-              Go to dashboard
+              Go to projects
             </Button>
           }
         />

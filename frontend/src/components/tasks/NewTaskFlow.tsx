@@ -130,10 +130,10 @@ export default function NewTaskFlow({
         <EmptyState
           icon="box"
           title="No projects yet"
-          description="Tasks live in a project. Create one from the dashboard first."
+          description="Tasks live in a project. Create one from the projects page first."
           action={
             <Button size="sm" href={boardHref()}>
-              Go to dashboard
+              Go to projects
             </Button>
           }
         />

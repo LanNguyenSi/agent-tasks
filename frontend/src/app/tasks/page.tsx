@@ -491,7 +491,7 @@ function TasksPageInner() {
       <main className="tasks-shell">
         <PageHeader title="All Tasks">
           <Button href={boardHref()} variant="ghost" size="sm">
-            Dashboard
+            Projects
           </Button>
         </PageHeader>
         <div className="tasks-content">

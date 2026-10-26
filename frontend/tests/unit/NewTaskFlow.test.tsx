@@ -8,7 +8,7 @@
  *   - choosing a project + Continue loads it and hands off to NewTaskModal.
  *   - exactly one project: the picker step is skipped, the form opens
  *     directly with that project.
- *   - zero projects: empty state pointing to the dashboard, no Continue.
+ *   - zero projects: empty state pointing to projects, no Continue.
  *   - getProject failure: error banner, flow stays on step 1.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -119,7 +119,7 @@ describe("NewTaskFlow", () => {
   it("shows an empty state when there are no projects", () => {
     renderFlow([]);
     expect(screen.getByText("No projects yet")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to dashboard" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Go to projects" })).toHaveAttribute(
       "href",
       "/dashboard",
     );
