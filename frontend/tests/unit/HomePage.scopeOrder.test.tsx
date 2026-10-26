@@ -5,7 +5,7 @@
  *
  * Both surfaces render the same `homeScopes` list in home/page.tsx, in
  * the D1 order: My Tasks, Priority, Backlog, Open Tasks, In Review,
- * Recently Done. This test pins the DOM order of the stat-tile labels
+ * Done (14 days). This test pins the DOM order of the stat-tile labels
  * and the widget h2 titles so a future edit that reorders one surface
  * (or swaps two entries in the shared list) turns this red.
  *
@@ -106,15 +106,15 @@ function makeCounts(over: Partial<TeamTasksCounts> = {}): TeamTasksCounts {
   };
 }
 
-// D1: My Tasks, Priority, Backlog, Open Tasks, In Review, Recently Done.
-const EXPECTED_STAT_LABELS = ["Mine", "Priority", "Backlog", "Open", "In Review", "Recently Done"];
+// D1: My Tasks, Priority, Backlog, Active Tasks, In Review, Done (14 days).
+const EXPECTED_STAT_LABELS = ["Mine", "Priority", "Backlog", "Active", "In Review", "Done \u00b7 14 days"];
 const EXPECTED_WIDGET_TITLES = [
   "My Tasks",
   "Priority (High / Critical)",
   "Backlog",
-  "Open Tasks",
+  "Active Tasks",
   "In Review",
-  "Recently Done",
+  "Done \u00b7 14 days",
 ];
 
 async function renderHomePage() {
@@ -185,7 +185,7 @@ describe("home page — current-team resolution (lib/currentTeam)", () => {
 
     render(<HomeDashboardPage />);
     await vi.waitFor(() => {
-      expect(mockGetTeamTasks).toHaveBeenCalledWith("team-2");
+      expect(mockGetTeamTasks).toHaveBeenCalledWith("team-2", expect.anything());
     });
     window.localStorage.clear();
   });
@@ -206,7 +206,7 @@ describe("home page — current-team resolution (lib/currentTeam)", () => {
 
     render(<HomeDashboardPage />);
     await vi.waitFor(() => {
-      expect(mockGetTeamTasks).toHaveBeenCalledWith("team-2");
+      expect(mockGetTeamTasks).toHaveBeenCalledWith("team-2", expect.anything());
     });
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
     window.localStorage.clear();
@@ -214,7 +214,7 @@ describe("home page — current-team resolution (lib/currentTeam)", () => {
 });
 
 describe("home page — widget plumbing", () => {
-  it("(a) Backlog widget title link and more-link href end with &status=backlog (moreHrefOverride)", async () => {
+  it("(a) Backlog widget title is plain text and its more-link href ends with &status=backlog (moreHrefOverride)", async () => {
     await renderHomePage();
 
     const grid = document.querySelector(".home-widgets-grid");
@@ -225,10 +225,10 @@ describe("home page — widget plumbing", () => {
     const backlogWidget = widgets[2]; // My Tasks, Priority, then Backlog
     if (!backlogWidget) throw new Error("Backlog widget not found");
 
-    // Check title link href
-    const titleLink = backlogWidget.querySelector(".home-widget-title-link") as HTMLAnchorElement;
-    expect(titleLink).not.toBeNull();
-    expect(titleLink.href).toContain("status=backlog");
+    // The stat tile is the single link per scope: the widget title is text.
+    const title = backlogWidget.querySelector(".home-widget-title") as HTMLElement;
+    expect(title.textContent).toBe("Backlog");
+    expect(title.closest("a")).toBeNull();
 
     // Check more-link href
     const moreLink = backlogWidget.querySelector(".home-widget-more") as HTMLAnchorElement;
@@ -236,7 +236,7 @@ describe("home page — widget plumbing", () => {
     expect(moreLink.href).toContain("status=backlog");
   });
 
-  it("(b) Recently Done widget shows link to scope=done&recency=older when olderCount > 0", async () => {
+  it("(b) Done widget shows link to scope=done&recency=older when olderCount > 0", async () => {
     mockGetCurrentUser.mockResolvedValue(makeUser());
     mockGetTeams.mockResolvedValue([makeTeam()]);
     mockGetTeamTasks.mockResolvedValue({
@@ -260,10 +260,10 @@ describe("home page — widget plumbing", () => {
     const grid = document.querySelector(".home-widgets-grid");
     if (!grid) throw new Error("widget grid not found");
 
-    // Find the Recently Done widget (last widget in D1 order)
+    // Find the Done widget (last widget in D1 order)
     const widgets = Array.from(grid.querySelectorAll(".home-widget-card"));
-    const doneWidget = widgets[5]; // Six widgets total, Recently Done is last
-    if (!doneWidget) throw new Error("Recently Done widget not found");
+    const doneWidget = widgets[5]; // Six widgets total, Done is last
+    if (!doneWidget) throw new Error("Done widget not found");
 
     // Check for the older done link
     const olderLinks = Array.from(doneWidget.querySelectorAll(".widget-link")) as HTMLAnchorElement[];
@@ -297,21 +297,21 @@ describe("home page — widget plumbing", () => {
     const grid = document.querySelector(".home-widgets-grid");
     if (!grid) throw new Error("widget grid not found");
 
-    // Find the My Tasks widget (first widget in D1 order) - should have "Browse open tasks" button
+    // Find the My Tasks widget (first widget in D1 order) - should have "Browse active tasks" button
     const widgets = Array.from(grid.querySelectorAll(".home-widget-card"));
     const myTasksWidget = widgets[0];
     if (!myTasksWidget) throw new Error("My Tasks widget not found");
 
-    // Check for "Browse open tasks" button with href containing scope=open
+    // Check for "Browse active tasks" button with href containing scope=open
     const browseOpenButton = Array.from(myTasksWidget.querySelectorAll("a, button")).find(
-      (el) => el.textContent?.includes("Browse open tasks")
+      (el) => el.textContent?.includes("Browse active tasks")
     ) as HTMLAnchorElement | null;
     expect(browseOpenButton).not.toBeNull();
     expect(browseOpenButton?.href).toContain("scope=open");
 
-    // Find the Open Tasks widget (fourth widget in D1 order) - should have "View all tasks" button
+    // Find the Active Tasks widget (fourth widget in D1 order) - should have "View all tasks" button
     const openTasksWidget = widgets[3];
-    if (!openTasksWidget) throw new Error("Open Tasks widget not found");
+    if (!openTasksWidget) throw new Error("Active Tasks widget not found");
 
     // Check for "View all tasks" button with href containing scope=all
     const viewAllButton = Array.from(openTasksWidget.querySelectorAll("a, button")).find(
