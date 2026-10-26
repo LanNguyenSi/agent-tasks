@@ -25,17 +25,27 @@ interface DropdownMenuProps {
   className?: string;
 }
 
-/** Collect focusable, non-disabled menu items from a container element. */
+/** Collect the menu items keyboard focus can land on. Disabled items are
+ *  skipped, with one exception: an explicit role="menuitem" carrying
+ *  aria-disabled="true" (the claim-hint item of the /tasks row-actions menu,
+ *  the menu's only content while the task holds a claim) stays in the
+ *  cycle, so focus always has something to land on. Elements that merely
+ *  look disabled (.app-dropdown-item-disabled without that role) stay out,
+ *  as before. */
 function getFocusableItems(container: HTMLElement): HTMLElement[] {
   return Array.from(
     container.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), a[href], [role="menuitem"]:not([aria-disabled="true"])',
+      'button:not(:disabled), a[href], [role="menuitem"]',
     ),
-  ).filter(
-    (el) =>
+  ).filter((el) => {
+    if (el.getAttribute("role") === "menuitem" && el.getAttribute("aria-disabled") === "true") {
+      return true;
+    }
+    return (
       !el.classList.contains("app-dropdown-item-disabled") &&
-      el.getAttribute("aria-disabled") !== "true",
-  );
+      el.getAttribute("aria-disabled") !== "true"
+    );
+  });
 }
 
 export default function DropdownMenu({

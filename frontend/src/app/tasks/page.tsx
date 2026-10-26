@@ -542,9 +542,10 @@ function TasksPageInner() {
     router.replace(`/tasks?${next.toString()}`);
   }
 
-  // Tab-row "Reset": drops exactly the overrides that made the view a custom
-  // filter (status, priority, mine) and keeps the active scope tab (and
-  // teamId), i.e. goes back to the tab's own preset.
+  // Tab-row "Reset to <tab label>": drops exactly the overrides that made
+  // the view a custom filter (status, priority, mine) and keeps the active
+  // scope tab (and teamId), i.e. goes back to the tab's own preset. The tab
+  // label in the name tells it apart from the filter band's "Clear filters".
   function resetFilterToPreset(): void {
     updateParams({ status: null, priority: null, mine: null });
   }
@@ -691,7 +692,7 @@ function TasksPageInner() {
 
         {/* Scope segmented control. In the custom-filter state no tab is
             selected (value ""), the strip shows a "Custom filter" chip, and
-            "Reset" goes back to the active tab's preset. */}
+            "Reset to <tab label>" goes back to the active tab's preset. */}
         <div className="tasks-scope-row">
           <Tabs
             tabs={scopeTabs}
@@ -714,7 +715,7 @@ function TasksPageInner() {
                 className="filter-chip filter-chip-clear"
                 onClick={resetFilterToPreset}
               >
-                Reset
+                Reset to {SCOPE_TAB_LABELS[scope]}
               </button>
             </div>
           )}

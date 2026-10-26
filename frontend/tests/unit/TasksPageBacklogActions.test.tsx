@@ -18,7 +18,7 @@
  *     table in auto layout (Project/Due/Updated shrink to content, the Task
  *     column takes the free width; pinned with the CSS below).
  */
-import { describe, it, expect, vi, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
@@ -31,6 +31,19 @@ import {
 } from "../../src/app/tasks/_components/columns";
 import { Table } from "../../src/components/ui/Table";
 import type { Task } from "../../src/lib/api";
+
+// The row-level tests below mount the Table with rowHref, so the title cell
+// renders a next/link and a row click is a navigation. next/link and
+// next/navigation become the fake router of tests/setup/fakeNavigation (a
+// link click is a router.push), which is how those tests detect navigation.
+vi.mock("next/navigation", async () => {
+  const m = await import("../setup/fakeNavigation");
+  return { usePathname: m.usePathname, useRouter: m.useRouter, useSearchParams: m.useSearchParams };
+});
+vi.mock("next/link", async () => ({
+  default: (await import("../setup/fakeNavigation")).FakeLink,
+}));
+import { nav, router } from "../setup/fakeNavigation";
 
 function task(over: Partial<Task> & { id: string; title: string; status: string }): EnrichedTask {
   return {
@@ -62,26 +75,31 @@ interface RenderedRow {
   onDemote: Spy;
 }
 
+function makeSpies(): RenderedRow {
+  return { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn() };
+}
+
+/** The columns with the rowActions column for `rows` and `spies` wired in. */
+function columnsFor(spies: RenderedRow, rows: EnrichedTask[], busyTaskId: string | null) {
+  return buildTaskPageColumns(
+    {
+      onPromote: spies.onPromote,
+      onDiscard: spies.onDiscard,
+      onDemote: spies.onDemote,
+      busyTaskId,
+    },
+    rows,
+  );
+}
+
 /** Render one row's actions cell (the trigger; the panel only while open). */
 function renderActionsCell(
   t: EnrichedTask,
   opts: { busyTaskId?: string | null } = {},
   rows: EnrichedTask[] = [t],
 ): RenderedRow {
-  const spies: RenderedRow = {
-    onPromote: vi.fn(),
-    onDiscard: vi.fn(),
-    onDemote: vi.fn(),
-  };
-  const cols = buildTaskPageColumns(
-    {
-      onPromote: spies.onPromote,
-      onDiscard: spies.onDiscard,
-      onDemote: spies.onDemote,
-      busyTaskId: opts.busyTaskId ?? null,
-    },
-    rows,
-  );
+  const spies = makeSpies();
+  const cols = columnsFor(spies, rows, opts.busyTaskId ?? null);
   const col = cols.find((c) => c.key === "rowActions");
   render(<>{col?.render ? col.render(t) : null}</>);
   return spies;
@@ -239,6 +257,167 @@ describe("/tasks row actions menu", () => {
       const t = task({ id: "o-4", title: "Open task 4", status: "open" });
       const { panel } = await openMenu(t, { busyTaskId: "o-4" });
       expect(within(panel).getByRole("button", { name: "Move to backlog" })).toBeDisabled();
+    });
+  });
+
+  // The menu panel is portaled to document.body, but React events bubble
+  // through the portal to the owning table row, which navigates on click and
+  // on Enter (Table.tsx row link). These tests mount the REAL Table with
+  // rowHref plus the rowActions column (like page.tsx) and pin that nothing
+  // inside the open menu reaches that row: the fake router must never be
+  // called, and the row must never be treated as clicked.
+  describe("inside a real table row (rowHref)", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      nav.reset("/tasks?scope=all&status=backlog");
+    });
+
+    /** Render one task in the real Table with the page's rowHref. */
+    function renderRow(t: EnrichedTask): RenderedRow {
+      const spies = makeSpies();
+      render(
+        <Table
+          columns={columnsFor(spies, [t], null)}
+          rows={[t]}
+          rowKey={(r) => r.id}
+          rowHref={(r) => `/tasks/${r.id}?from=/tasks`}
+        />,
+      );
+      return spies;
+    }
+
+    /** Open the row's menu with the keyboard (the trigger itself). */
+    async function openByKeyboard(t: EnrichedTask): Promise<HTMLElement> {
+      trigger(t).focus();
+      await userEvent.keyboard("{Enter}");
+      return menuPanel();
+    }
+
+    function expectNoNavigation(): void {
+      expect(router.push).not.toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+    }
+
+    it("Enter opens the menu and Enter on Promote runs it without navigating the row", async () => {
+      const t = task({ id: "r-1", title: "Row task", status: "backlog" });
+      const spies = renderRow(t);
+      const panel = await openByKeyboard(t);
+      expect(within(panel).getByRole("button", { name: "Promote" })).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      expect(spies.onPromote).toHaveBeenCalledTimes(1);
+      expect(spies.onPromote).toHaveBeenCalledWith(t);
+      expectNoNavigation();
+    });
+
+    it("Space on Promote runs it without navigating the row", async () => {
+      const t = task({ id: "r-2", title: "Row task", status: "backlog" });
+      const spies = renderRow(t);
+      await openByKeyboard(t);
+      await userEvent.keyboard(" ");
+      expect(spies.onPromote).toHaveBeenCalledTimes(1);
+      expect(spies.onPromote).toHaveBeenCalledWith(t);
+      expectNoNavigation();
+    });
+
+    it("Enter on Move to backlog runs it without navigating the row", async () => {
+      const t = task({ id: "r-3", title: "Open row task", status: "open" });
+      const spies = renderRow(t);
+      const panel = await openByKeyboard(t);
+      expect(within(panel).getByRole("button", { name: "Move to backlog" })).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      expect(spies.onDemote).toHaveBeenCalledTimes(1);
+      expect(spies.onDemote).toHaveBeenCalledWith(t);
+      expectNoNavigation();
+    });
+
+    it("Space on Move to backlog runs it without navigating the row", async () => {
+      const t = task({ id: "r-4", title: "Open row task", status: "open" });
+      const spies = renderRow(t);
+      await openByKeyboard(t);
+      await userEvent.keyboard(" ");
+      expect(spies.onDemote).toHaveBeenCalledTimes(1);
+      expect(spies.onDemote).toHaveBeenCalledWith(t);
+      expectNoNavigation();
+    });
+
+    it("a mouse click on an item runs it without navigating the row", async () => {
+      const t = task({ id: "r-5", title: "Row task", status: "backlog" });
+      const spies = renderRow(t);
+      await userEvent.click(trigger(t));
+      const panel = await menuPanel();
+      await userEvent.click(within(panel).getByRole("button", { name: "Promote" }));
+      expect(spies.onPromote).toHaveBeenCalledTimes(1);
+      expectNoNavigation();
+    });
+
+    it("a click on the open panel's background neither runs an action nor navigates the row", async () => {
+      const t = task({ id: "r-6", title: "Row task", status: "backlog" });
+      const spies = renderRow(t);
+      await userEvent.click(trigger(t));
+      const panel = await menuPanel();
+      await userEvent.click(panel);
+      expect(spies.onPromote).not.toHaveBeenCalled();
+      expect(spies.onDiscard).not.toHaveBeenCalled();
+      expectNoNavigation();
+    });
+
+    it("a click on the disabled claim hint neither runs an action nor navigates the row", async () => {
+      const t = task({ id: "r-7", title: "Claimed task", status: "open", claimedByAgentId: "a-1" });
+      const spies = renderRow(t);
+      await userEvent.click(trigger(t));
+      const panel = await menuPanel();
+      await userEvent.click(within(panel).getByText(/Release the claim/));
+      expect(spies.onDemote).not.toHaveBeenCalled();
+      expectNoNavigation();
+    });
+
+    it("keys reach document listeners while closed (global shortcuts) but not while open", async () => {
+      const t = task({ id: "r-9", title: "Row task", status: "backlog" });
+      renderRow(t);
+      const seen: string[] = [];
+      const listener = (e: globalThis.KeyboardEvent) => seen.push(e.key);
+      document.addEventListener("keydown", listener);
+      try {
+        trigger(t).focus();
+        await userEvent.keyboard("x");
+        expect(seen).toContain("x");
+        await userEvent.keyboard("{Enter}");
+        await menuPanel();
+        await userEvent.keyboard("y");
+        expect(seen).not.toContain("y");
+      } finally {
+        document.removeEventListener("keydown", listener);
+      }
+    });
+
+    it("with the menu closed, a click on the actions cell area still navigates the row", async () => {
+      const t = task({ id: "r-10", title: "Row task", status: "backlog" });
+      renderRow(t);
+      await userEvent.click(document.querySelector(".tasks-row-actions") as HTMLElement);
+      expect(router.push).toHaveBeenCalledWith("/tasks/r-10?from=/tasks");
+    });
+
+    it("the claim hint is a disabled menu item focus can land on, and Enter on it does nothing", async () => {
+      const t = task({ id: "r-8", title: "Claimed task", status: "open", reviewClaimedByUserId: "u-2" });
+      const spies = renderRow(t);
+      trigger(t).focus();
+      await userEvent.keyboard("{Enter}");
+      const panel = await menuPanel();
+      const hint = within(panel).getByRole("menuitem", { name: /Release the claim/ });
+      expect(hint).toHaveAttribute("aria-disabled", "true");
+      // The menu's only content, so opening lands on it, and the arrow keys
+      // keep cycling onto it instead of leaving focus nowhere.
+      await waitFor(() => expect(hint).toHaveFocus());
+      await userEvent.keyboard("{ArrowDown}");
+      expect(hint).toHaveFocus();
+      await userEvent.keyboard("{ArrowUp}");
+      expect(hint).toHaveFocus();
+      // Enter does nothing: no action, the menu stays open, focus stays put.
+      await userEvent.keyboard("{Enter}");
+      expect(spies.onDemote).not.toHaveBeenCalled();
+      expectNoNavigation();
+      expect(document.querySelector(".app-dropdown-menu")).not.toBeNull();
+      expect(hint).toHaveFocus();
     });
   });
 

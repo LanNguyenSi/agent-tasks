@@ -120,9 +120,15 @@ export interface BacklogRowActionHandlers {
 // The table row itself is a clickable link (rowHref, see page.tsx), so the
 // trigger stops propagation on click and on Enter/Space keydown to keep the
 // row from navigating -- same pattern as ProjectRowActions in
-// app/projects/page.tsx -- and the panel is the shared keyboard-operable
-// DropdownMenu primitive (ArrowUp/ArrowDown/Home/End move between items,
-// Escape closes and returns focus to the trigger).
+// app/projects/page.tsx -- and while the menu is open the actions wrapper
+// also stops click and keydown from reaching the row: the panel is portaled
+// to document.body, but React events still bubble through the portal to the
+// row, whose click/Enter handler would navigate instead of running the
+// action (the wrapper sits above the DropdownMenu in the React tree, so the
+// panel's own arrow-key/Escape handling sees the event first). The panel is
+// the shared keyboard-operable DropdownMenu primitive (ArrowUp/ArrowDown/
+// Home/End move between items, Escape closes and returns focus to the
+// trigger).
 // `rows` is the set of currently rendered table rows (the current page).
 // The row-actions column is only appended when at least one of those rows
 // is a backlog or an open task -- otherwise a page of in-progress, review or
@@ -157,6 +163,14 @@ export function buildTaskPageColumns(
 // row. Disabled while the row's action is in flight: every item of a busy
 // row is disabled, and once the menu is open the trigger follows suit so a
 // second click only ever closes it.
+// While the menu is open, the wrapper stops click and keydown: the panel is
+// portaled to document.body but React events bubble through the portal to
+// the owning Table row, whose onClick/onKeyDown navigate it (Table.tsx) --
+// without this, Enter on an item, or a click on the panel background or on
+// the disabled claim hint, opens the task instead of running the action.
+// The wrapper sits above the DropdownMenu (not inside its children), so the
+// panel div keeps handling ArrowUp/ArrowDown/Home/End/Escape before the
+// event is stopped here.
 function TaskRowActionsMenu({
   task,
   handlers,
@@ -179,33 +193,37 @@ function TaskRowActionsMenu({
   const blockedHint = status === "open" ? demoteBlockedHint(task) : null;
 
   return (
-    <>
-      <div className="tasks-row-actions">
-        <button
-          ref={menuBtnRef}
-          type="button"
-          className="tasks-row-actions-btn"
-          disabled={triggerDisabled}
-          aria-expanded={menuOpen}
-          aria-label={`Actions for ${task.title}`}
-          onClick={(e: MouseEvent<HTMLButtonElement>) => {
-            e.stopPropagation();
-            setMenuOpen((v) => !v);
-          }}
-          // Keep keyboard activation from bubbling to the Table row's
-          // onKeyDown, which would navigate the row instead of opening the
-          // menu (the button still activates natively on Enter/Space).
-          onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => {
-            if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <circle cx="12" cy="5" r="1.8" />
-            <circle cx="12" cy="12" r="1.8" />
-            <circle cx="12" cy="19" r="1.8" />
-          </svg>
-        </button>
-      </div>
+    <div
+      className="tasks-row-actions"
+      // Only while open: closed, the trigger's own Enter/Space guards below
+      // are enough, and global key shortcuts keep working from the trigger.
+      onClick={menuOpen ? (e: MouseEvent<HTMLDivElement>) => e.stopPropagation() : undefined}
+      onKeyDown={menuOpen ? (e: KeyboardEvent<HTMLDivElement>) => e.stopPropagation() : undefined}
+    >
+      <button
+        ref={menuBtnRef}
+        type="button"
+        className="tasks-row-actions-btn"
+        disabled={triggerDisabled}
+        aria-expanded={menuOpen}
+        aria-label={`Actions for ${task.title}`}
+        onClick={(e: MouseEvent<HTMLButtonElement>) => {
+          e.stopPropagation();
+          setMenuOpen((v) => !v);
+        }}
+        // Keep keyboard activation from bubbling to the Table row's
+        // onKeyDown, which would navigate the row instead of opening the
+        // menu (the button still activates natively on Enter/Space).
+        onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => {
+          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="12" cy="5" r="1.8" />
+          <circle cx="12" cy="12" r="1.8" />
+          <circle cx="12" cy="19" r="1.8" />
+        </svg>
+      </button>
       <DropdownMenu
         anchorRef={menuBtnRef}
         open={menuOpen}
@@ -232,7 +250,17 @@ function TaskRowActionsMenu({
             </button>
           </>
         ) : blockedHint !== null ? (
-          <p className="app-dropdown-item app-dropdown-item-disabled" title={blockedHint}>
+          // The hint is this menu's only content, so it is a disabled menu
+          // item the keyboard can reach (role + aria-disabled keep it in the
+          // panel's arrow-key cycle, see DropdownMenu.getFocusableItems;
+          // tabIndex -1 makes it focusable while open; it has no action).
+          <p
+            className="app-dropdown-item app-dropdown-item-disabled"
+            role="menuitem"
+            aria-disabled="true"
+            tabIndex={-1}
+            title={blockedHint}
+          >
             {DEMOTE_LABEL}: {blockedHint}
           </p>
         ) : (
@@ -246,6 +274,6 @@ function TaskRowActionsMenu({
           </button>
         )}
       </DropdownMenu>
-    </>
+    </div>
   );
 }

@@ -5,7 +5,9 @@
  * The view is a custom filter when the effective status/priority chips or
  * the mine flag differ from the active scope tab's preset (SCOPE_PRESETS).
  * Then: no scope tab is selected, the H1 reads "Tasks · custom filter", and
- * the tab row offers "Reset", which goes back to the ACTIVE tab's preset.
+ * the tab row offers "Reset to <tab label>" (the tab label keeps it apart
+ * from the filter band's "Clear filters"), which goes back to the ACTIVE
+ * tab's preset.
  * The state is derived from the URL, so it round-trips (a reload or a shared
  * link shows the same state); an explicit chip set equal to the preset is
  * NOT custom (that is the tab itself, written shortly after a chip toggle).
@@ -102,7 +104,7 @@ describe("/tasks custom-filter detection", () => {
   ])("%s is the tab itself, not a custom filter", async (_label, search, heading) => {
     await renderAt(search);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(heading);
-    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reset to / })).not.toBeInTheDocument();
     const selected = screen
       .getAllByRole("tab")
       .filter((t) => t.getAttribute("aria-selected") === "true");
@@ -124,13 +126,15 @@ describe("/tasks custom-filter detection", () => {
     expect(
       screen.getAllByRole("tab").every((t) => t.getAttribute("aria-selected") === "false"),
     ).toBe(true);
-    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument();
+    // The action names the tab it returns to (e.g. "Reset to Active"), so it
+    // cannot be confused with the filter band's "Clear filters".
+    expect(screen.getByRole("button", { name: /^Reset to / })).toBeInTheDocument();
   });
 
   it("a project filter or a search alone is not a custom filter", async () => {
     await renderAt("projectId=proj-1&q=hello");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("All Tasks");
-    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reset to / })).not.toBeInTheDocument();
   });
 
   it("the custom state survives a reload of the same URL (round-trip)", async () => {
@@ -139,7 +143,7 @@ describe("/tasks custom-filter detection", () => {
     cleanup();
     await renderAt("scope=open&status=open");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tasks · custom filter");
-    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset to Active" })).toBeInTheDocument();
   });
 
   it("the tablist stays keyboard-reachable while no tab is selected", async () => {
@@ -153,7 +157,7 @@ describe("/tasks custom-filter detection", () => {
 describe("/tasks custom-filter Reset", () => {
   it("keeps the active scope tab and drops only the custom overrides", async () => {
     await renderAt("scope=mine&status=backlog&priority=LOW&mine=1&projectId=proj-1");
-    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reset to My Tasks" }));
     const q = lastReplace();
     // Target: the active tab's preset (scope=mine stays; mine=1 is the
     // preset value again, so it is dropped from the URL too).
@@ -167,7 +171,7 @@ describe("/tasks custom-filter Reset", () => {
 
   it("keeps the scope and teamId parameters", async () => {
     await renderAt("scope=open&status=open&teamId=team-1&page=2");
-    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reset to Active" }));
     const q = lastReplace();
     expect(q.get("scope")).toBe("open");
     expect(q.get("teamId")).toBe("team-1");
@@ -176,9 +180,9 @@ describe("/tasks custom-filter Reset", () => {
     expect(q.has("page")).toBe(false);
   });
 
-  it("Reset on the All tab (no scope parameter) stays on the All tab", async () => {
+  it("Reset to All on the All tab (no scope parameter) stays on the All tab", async () => {
     await renderAt("status=backlog");
-    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reset to All" }));
     const q = lastReplace();
     expect(q.has("scope")).toBe(false);
     expect(q.has("status")).toBe(false);
