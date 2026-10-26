@@ -163,7 +163,7 @@ Copy the client ID and client secret. You'll paste them into the
 
 ## API reference
 
-All SSO admin endpoints require `Authorization: Bearer <agent-token>` with
+All SSO admin endpoints require `Authorization: Bearer <api-token>` with
 the `sso:admin` scope, **not** a session cookie.
 
 | Method | Path | Description |
