@@ -29,16 +29,18 @@ import { render, screen, waitFor, cleanup, within, act } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import type { User, Team, AgentToken } from "../../src/lib/api";
 
-// A stable object: TeamSettingsPage's bootstrap effect depends on `[router]`,
-// and useRouter() is called on every render — returning a fresh object
-// literal per call would make that dependency "change" on every render,
-// re-running the whole fetch-and-setTokens bootstrap effect (with its
-// still-stale mocked list) after every user interaction and clobbering
-// any local state update, e.g. a just-completed rename.
-const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
-vi.mock("next/navigation", () => ({
-  useRouter: () => routerMocks,
-}));
+// The in-memory navigation stand-in keeps one stable router object:
+// TeamSettingsPage's bootstrap effect depends on `[router]`, so a fresh
+// object per useRouter() call would re-run it after every interaction. Its
+// URL drives the page's current team (?teamId) like the real router.
+vi.mock("next/navigation", async () => {
+  const m = await import("../setup/fakeNavigation");
+  return {
+    usePathname: m.usePathname,
+    useRouter: m.useRouter,
+    useSearchParams: m.useSearchParams,
+  };
+});
 
 vi.mock("../../src/lib/api", () => ({
   getCurrentUser: vi.fn(),
@@ -53,7 +55,7 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import TeamSettingsPage from "../../src/app/settings/team/page";
-import { announceTeamChange } from "../../src/lib/teamSwitch";
+import { nav, router as routerMocks } from "../setup/fakeNavigation";
 import {
   getCurrentUser,
   getTeams,
@@ -122,16 +124,24 @@ function makeToken(over: Partial<AgentToken> = {}): AgentToken {
   };
 }
 
+/** The API Tokens section with its tokens loaded (not the loading placeholder). */
+async function tokensReady() {
+  // Specifically the section heading, not the side-nav link of the same text.
+  await screen.findByRole("heading", { name: "API Tokens" });
+  await waitFor(() => expect(screen.queryByText("Loading tokens…")).not.toBeInTheDocument());
+}
+
 async function renderTeamSettingsPage(role: string, tokens: AgentToken[]) {
   mockGetTeams.mockResolvedValue([makeTeam(role)]);
   mockGetAgentTokens.mockResolvedValue(tokens);
   render(<TeamSettingsPage />);
-  // Specifically the section heading, not the side-nav link of the same text.
-  await screen.findByRole("heading", { name: "API Tokens" });
+  await tokensReady();
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
+  nav.reset("/settings/team");
   mockGetCurrentUser.mockResolvedValue(makeUser());
   mockGetAvailableScopes.mockResolvedValue([]);
 });
@@ -237,7 +247,7 @@ describe("TeamSettingsPage — agent token rename", () => {
     mockGetTeams.mockResolvedValue([teamA, teamB]);
     mockGetAgentTokens.mockResolvedValue([makeToken({ name: "ci-bot" })]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
 
     await user.click(screen.getByRole("button", { name: "Rename" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -246,7 +256,7 @@ describe("TeamSettingsPage — agent token rename", () => {
     // team's token list. The header switcher announces the switch; the page
     // remounts the token section for the new team.
     mockGetAgentTokens.mockResolvedValue([makeToken({ id: "tok-b", name: "other-bot" })]);
-    act(() => announceTeamChange("team-2"));
+    act(() => nav.push("/settings/team?teamId=team-2"));
     expect(await screen.findByText("other-bot")).toBeInTheDocument();
     expect(mockGetAgentTokens).toHaveBeenLastCalledWith("team-2");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -259,7 +269,7 @@ describe("TeamSettingsPage — agent token rename", () => {
     mockGetTeams.mockResolvedValue([teamA, teamB]);
     mockGetAgentTokens.mockResolvedValue([makeToken({ name: "ci-bot" })]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
 
     await user.click(screen.getByRole("button", { name: "Revoke" }));
     expect(await screen.findByText("Revoke API token?")).toBeInTheDocument();
@@ -267,7 +277,7 @@ describe("TeamSettingsPage — agent token rename", () => {
     // A stale revoke target must not survive into the newly selected team's
     // token list (the section is keyed by the team).
     mockGetAgentTokens.mockResolvedValue([makeToken({ id: "tok-b", name: "other-bot" })]);
-    act(() => announceTeamChange("team-2"));
+    act(() => nav.push("/settings/team?teamId=team-2"));
     expect(await screen.findByText("other-bot")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Revoke API token?")).not.toBeInTheDocument());
   });
@@ -307,14 +317,14 @@ describe("TeamSettingsPage — page shell", () => {
   });
 
   it("remembers a team chosen via ?teamId", async () => {
-    window.history.replaceState(null, "", "/settings/team?teamId=team-2");
+    nav.reset("/settings/team?teamId=team-2");
     mockGetTeams.mockResolvedValue([
       makeTeam("ADMIN"),
       makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" }),
     ]);
     mockGetAgentTokens.mockResolvedValue([]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
 
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
   });
@@ -347,37 +357,53 @@ describe("TeamSettingsPage — page shell", () => {
     mockGetTeams.mockResolvedValue([teamA, teamB]);
     mockGetAgentTokens.mockResolvedValue([]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
 
     expect(mockGetAgentTokens).toHaveBeenCalledWith("team-2");
     // The team select moved to the header switcher.
     expect(screen.queryByRole("combobox", { name: "Team" })).not.toBeInTheDocument();
   });
 
-  it("ignores an announced switch to the current or an unknown team", async () => {
+  it("a URL change to the team already shown, or to an unknown team, loads nothing", async () => {
     const teamA = makeTeam("ADMIN");
     const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
     mockGetTeams.mockResolvedValue([teamA, teamB]);
     mockGetAgentTokens.mockResolvedValue([]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
     expect(mockGetAgentTokens).toHaveBeenCalledTimes(1);
 
-    act(() => announceTeamChange("team-1"));
-    act(() => announceTeamChange("ghost"));
+    act(() => nav.push("/settings/team?teamId=team-1"));
+    act(() => nav.push("/settings/team?teamId=ghost"));
 
     expect(mockGetAgentTokens).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Pandora")).toBeInTheDocument();
+  });
+
+  it("names the team its API tokens belong to", async () => {
+    nav.reset("/settings/team?teamId=team-2");
+    mockGetTeams.mockResolvedValue([
+      makeTeam("ADMIN"),
+      makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" }),
+    ]);
+    mockGetAgentTokens.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await tokensReady();
+
+    const section = document.getElementById("api-tokens") as HTMLElement;
+    expect(within(section).getByText("Second").tagName).toBe("STRONG");
+    expect(section.textContent).toContain("API tokens for Second");
   });
 
   it("?teamId in the URL wins over the remembered team", async () => {
     const teamA = makeTeam("ADMIN");
     const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
     window.localStorage.setItem("agent-tasks:lastTeamId", "team-2");
-    window.history.replaceState(null, "", "/settings/team?teamId=team-1");
+    nav.reset("/settings/team?teamId=team-1");
     mockGetTeams.mockResolvedValue([teamA, teamB]);
     mockGetAgentTokens.mockResolvedValue([]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
 
     expect(mockGetAgentTokens).toHaveBeenCalledWith("team-1");
   });
@@ -385,7 +411,7 @@ describe("TeamSettingsPage — page shell", () => {
   it("shows the no-team empty state without loading tokens when the user has no teams", async () => {
     mockGetTeams.mockResolvedValue([]);
     render(<TeamSettingsPage />);
-    await screen.findByRole("heading", { name: "API Tokens" });
+    await tokensReady();
 
     expect(screen.getByText("No team found yet")).toBeInTheDocument();
     expect(mockGetAgentTokens).not.toHaveBeenCalled();

@@ -8,15 +8,21 @@
  * Mock/render pattern mirrors TasksPageDemote.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 import type { Project, Team, User } from "../../src/lib/api";
 
-const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
-const navState = vi.hoisted(() => ({ search: "" }));
-vi.mock("next/navigation", () => ({
-  useRouter: () => routerMocks,
-  useSearchParams: () => new URLSearchParams(navState.search),
-}));
+// The page's URL is the in-memory history of tests/setup/fakeNavigation.ts, so
+// the header pick, back and forward change what the page reads, like the
+// real router. `navState.search` is kept as a thin alias for the tests that
+// only set the initial query.
+vi.mock("next/navigation", async () => {
+  const m = await import("../setup/fakeNavigation");
+  return {
+    usePathname: m.usePathname,
+    useRouter: m.useRouter,
+    useSearchParams: m.useSearchParams,
+  };
+});
 
 vi.mock("../../src/lib/api", () => ({
   getCurrentUser: vi.fn(),
@@ -26,10 +32,12 @@ vi.mock("../../src/lib/api", () => ({
   createProject: vi.fn(),
   deleteProject: vi.fn(),
   syncTeamFromGitHub: vi.fn(),
+  logout: vi.fn(),
 }));
 
 import ProjectsPage from "../../src/app/projects/page";
-import { announceTeamChange } from "../../src/lib/teamSwitch";
+import AppHeader from "../../src/components/AppHeader";
+import { nav } from "../setup/fakeNavigation";
 import { getCurrentUser, getTeams, getProjects, getTasks } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);
@@ -80,7 +88,7 @@ const PROJECT: Project = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  navState.search = "";
+  nav.reset("/projects");
   window.localStorage.clear();
   mockGetCurrentUser.mockResolvedValue(USER);
   mockGetTeams.mockResolvedValue([makeTeam(), makeTeam({ id: "t2", name: "Team Two", slug: "team-two" })]);
@@ -103,7 +111,7 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
   });
 
   it("a valid ?teamId wins over the remembered team and is remembered", async () => {
-    navState.search = "teamId=t2";
+    nav.reset("/projects?teamId=t2");
     window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
 
     render(<ProjectsPage />);
@@ -114,7 +122,7 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
   });
 
   it("an invalid ?teamId falls through to the remembered team", async () => {
-    navState.search = "teamId=ghost";
+    nav.reset("/projects?teamId=ghost");
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
 
     render(<ProjectsPage />);
@@ -129,34 +137,239 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
   });
 });
 
-describe("/projects page — header team switch", () => {
+const TEAMS = [makeTeam(), makeTeam({ id: "t2", name: "Team Two", slug: "team-two" })];
+
+function renderBoth() {
+  return render(
+    <>
+      <AppHeader user={{ login: "lan", avatarUrl: null }} teams={TEAMS} />
+      <ProjectsPage />
+    </>,
+  );
+}
+
+/** Pick a team in the header switcher, the way a user would. */
+function pick(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: /Switch team/ }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name }));
+}
+
+function headerTeam(): string {
+  const label = screen.getByRole("button", { name: /Switch team/ }).getAttribute("aria-label");
+  return /current team (.+)$/.exec(label ?? "")?.[1] ?? "";
+}
+
+/** A promise the test settles by hand, to control response order. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("/projects page: current team follows the URL", () => {
   const T2_PROJECT: Project = { ...PROJECT, id: "proj-2", teamId: "t2", name: "Second Team Project", slug: "second" };
 
-  it("re-resolves the team and reloads its projects when the switch is announced", async () => {
+  beforeEach(() => {
     mockGetProjects.mockImplementation(async (teamId?: string) =>
       teamId === "t2" ? [T2_PROJECT] : [PROJECT],
     );
-    render(<ProjectsPage />);
+  });
+
+  it("re-resolves the team and reloads its projects when the header switches", async () => {
+    renderBoth();
     expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t1"));
 
-    act(() => announceTeamChange("t2"));
+    pick("Team Two");
 
     expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
     expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Agent Tasks")).not.toBeInTheDocument();
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
+    expect(headerTeam()).toBe("Team Two");
   });
 
-  it("ignores an announced switch to the team already shown or to an unknown team", async () => {
-    render(<ProjectsPage />);
+  it("a URL naming the team already shown, or an unknown team, reloads nothing", async () => {
+    renderBoth();
     expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledTimes(1));
 
-    act(() => announceTeamChange("t1"));
-    act(() => announceTeamChange("ghost"));
+    act(() => nav.push("/projects?teamId=t1"));
+    act(() => nav.push("/projects?teamId=ghost"));
 
     expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
     expect(mockGetProjects).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fast B then A switch ends on A, and B's late response is ignored", async () => {
+    renderBoth();
+    expect((await screen.findAllByText("Agent Tasks")).length).toBeGreaterThan(0);
+    const lateB = deferred<Project[]>();
+    mockGetProjects.mockImplementation((teamId?: string) =>
+      teamId === "t2" ? lateB.promise : Promise.resolve([PROJECT]),
+    );
+
+    pick("Team Two");
+    await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
+    pick("Team One");
+    expect((await screen.findAllByText("Agent Tasks")).length).toBeGreaterThan(0);
+    await act(async () => {
+      lateB.resolve([T2_PROJECT]);
+    });
+
+    expect(screen.queryByText("Second Team Project")).not.toBeInTheDocument();
+    // A's list must survive B's late answer, not just hide B's.
+    expect(screen.getAllByText("Agent Tasks").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(headerTeam()).toBe("Team One");
+  });
+
+  it("a late failure of the team that was left shows no error and keeps the current list", async () => {
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+    const failingB = deferred<Project[]>();
+    mockGetProjects.mockImplementation((teamId?: string) =>
+      teamId === "t2" ? failingB.promise : Promise.resolve([PROJECT]),
+    );
+
+    pick("Team Two");
+    await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
+    pick("Team One");
+    await screen.findAllByText("Agent Tasks");
+    await act(async () => {
+      failingB.reject(new Error("late failure"));
+    });
+
+    expect(screen.queryByText("late failure")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Agent Tasks").length).toBeGreaterThan(0);
+  });
+
+  it("while the new team's list loads, the old team's projects are not shown under its name", async () => {
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+    const slowB = deferred<Project[]>();
+    mockGetProjects.mockImplementation((teamId?: string) =>
+      teamId === "t2" ? slowB.promise : Promise.resolve([PROJECT]),
+    );
+
+    pick("Team Two");
+
+    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(screen.queryByText("Agent Tasks")).not.toBeInTheDocument();
+    expect(screen.queryByText("No projects yet.")).not.toBeInTheDocument();
+    // Nor is the old team's count (one project) carried over.
+    expect(screen.getByText("0 projects")).toBeInTheDocument();
+    await act(async () => {
+      slowB.resolve([T2_PROJECT]);
+    });
+    expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
+  });
+
+  it("browser back and forward move the page and the header together", async () => {
+    nav.reset("/projects?teamId=t1");
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+    pick("Team Two");
+    expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
+
+    act(() => nav.back());
+    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect((await screen.findAllByText("Agent Tasks")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Second Team Project")).not.toBeInTheDocument();
+    expect(headerTeam()).toBe("Team One");
+
+    act(() => nav.forward());
+    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
+    expect(headerTeam()).toBe("Team Two");
+  });
+
+  it("a switch before the first list arrived still lands on the picked team", async () => {
+    const slowFirst = deferred<Project[]>();
+    mockGetProjects.mockImplementation((teamId?: string) =>
+      teamId === "t1" ? slowFirst.promise : Promise.resolve([T2_PROJECT]),
+    );
+    renderBoth();
+    await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t1"));
+
+    pick("Team Two");
+    expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
+    await act(async () => {
+      slowFirst.resolve([PROJECT]);
+    });
+
+    expect(screen.queryByText("Agent Tasks")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(headerTeam()).toBe("Team Two");
+  });
+
+  it("a new project goes to the team the page shows after a switch", async () => {
+    const { createProject } = await import("../../src/lib/api");
+    vi.mocked(createProject).mockResolvedValue({ ...T2_PROJECT, id: "proj-new", name: "Fresh", slug: "fresh" });
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+    pick("Team Two");
+    await screen.findAllByText("Second Team Project");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /New Project/ })[0]!);
+    fireEvent.change(screen.getByPlaceholderText("My Project"), { target: { value: "Fresh" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(createProject).toHaveBeenCalledWith(expect.objectContaining({ teamId: "t2" })),
+    );
+  });
+
+  it("a team change closes an open New Project dialog, so nothing is created in the wrong team", async () => {
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+    fireEvent.click(screen.getAllByRole("button", { name: /New Project/ })[0]!);
+    expect(screen.getByPlaceholderText("My Project")).toBeInTheDocument();
+
+    act(() => nav.push("/projects?teamId=t2"));
+
+    await screen.findAllByText("Second Team Project");
+    expect(screen.queryByPlaceholderText("My Project")).not.toBeInTheDocument();
+  });
+
+  it("a GitHub sync that finishes after a switch does not reload the old team's list", async () => {
+    const { syncTeamFromGitHub } = await import("../../src/lib/api");
+    const sync = deferred<Awaited<ReturnType<typeof syncTeamFromGitHub>>>();
+    vi.mocked(syncTeamFromGitHub).mockReturnValue(sync.promise);
+    mockGetCurrentUser.mockResolvedValue({ ...USER, githubConnected: true });
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync GitHub" }));
+    await waitFor(() => expect(syncTeamFromGitHub).toHaveBeenCalledWith("t1"));
+    pick("Team Two");
+    await screen.findAllByText("Second Team Project");
+    const loadsBefore = mockGetProjects.mock.calls.length;
+    await act(async () => {
+      sync.resolve({ created: 0, updated: 0, pruned: 0, message: "ok" } as never);
+    });
+
+    expect(mockGetProjects.mock.calls).toHaveLength(loadsBefore);
+    expect(screen.getAllByText("Second Team Project").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Loading projects")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    // Nor does the old team's sync outcome show up under the new team.
+    expect(screen.queryByText("Already up to date")).not.toBeInTheDocument();
+  });
+
+  it("a failing project list shows an error for the current team instead of spinning forever", async () => {
+    mockGetProjects.mockRejectedValue(new Error("projects down"));
+    renderBoth();
+
+    expect(await screen.findByText("projects down")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    // The list counts as loaded (empty), so the page shows its empty state
+    // instead of the loading skeleton.
+    expect(await screen.findByText("No projects yet.")).toBeInTheDocument();
   });
 });

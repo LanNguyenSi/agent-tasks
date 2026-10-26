@@ -45,14 +45,35 @@ export default function AppChrome({ children }: { children: ReactNode }) {
   const [teams, setTeams] = useState<Team[] | null>(null);
 
   useEffect(() => {
-    if (!showHeader) return;
+    if (!showHeader) {
+      // Shell suppressed (for example after logout to /): drop the previous
+      // account's identity and teams so a later login on this mounted shell
+      // never shows them while its own lookups are in flight.
+      setUser(null);
+      setTeams(null);
+      return;
+    }
+    // A response that arrives after the shell was suppressed again (or the
+    // component unmounted) must not write state.
+    let cancelled = false;
     getCurrentUser()
-      .then((u) => setUser(u ? { login: u.login, avatarUrl: u.avatarUrl } : null))
-      .catch(() => setUser(null));
+      .then((u) => {
+        if (!cancelled) setUser(u ? { login: u.login, avatarUrl: u.avatarUrl } : null);
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      });
     // One team lookup per shell mount (the chrome outlives route changes).
     getTeams()
-      .then(setTeams)
-      .catch(() => setTeams(null));
+      .then((t) => {
+        if (!cancelled) setTeams(t);
+      })
+      .catch(() => {
+        if (!cancelled) setTeams(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [showHeader]);
 
   return (

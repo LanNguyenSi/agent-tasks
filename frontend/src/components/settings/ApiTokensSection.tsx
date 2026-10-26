@@ -213,6 +213,11 @@ export default function ApiTokensSection({
             <div>
               <h2 className="settings-section-heading">API Tokens</h2>
               <p className="settings-section-desc">
+                {selectedTeam && (
+                  <>
+                    API tokens for <strong>{selectedTeam.name}</strong>.{" "}
+                  </>
+                )}
                 Tokens are team-scoped. Create and manage them here in team settings.
               </p>
             </div>

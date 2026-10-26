@@ -12,7 +12,7 @@ import {
   type User,
 } from "../../lib/api";
 import { projectsHref, taskHref } from "../../lib/routes";
-import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
+import { useCurrentTeam } from "../../lib/teamSwitch";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
@@ -169,7 +169,9 @@ function TasksPageInner() {
 
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  // Derived from the URL like the header's team (?teamId, remembered, first):
+  // no team state of its own, so a switch and back/forward always agree.
+  const selectedTeam = useCurrentTeam(teams);
   const [projects, setProjects] = useState<TeamTasksProject[]>([]);
   const [serverTasks, setServerTasks] = useState<EnrichedTask[]>([]);
   const [filteredTotal, setFilteredTotal] = useState(0);
@@ -210,7 +212,6 @@ function TasksPageInner() {
   const statusFilter = statusState.values;
   const priorityFilter = priorityState.values;
   const projectIdFilter = searchParams.get("projectId") ?? "";
-  const teamIdParam = searchParams.get("teamId");
   const searchQuery = searchParams.get("q") ?? "";
   // Tri-state: `mine=1` forces on, `mine=0` forces off, absent = preset.
   const mineParam = searchParams.get("mine");
@@ -257,29 +258,13 @@ function TasksPageInner() {
           return;
         }
         setTeams(fetchedTeams);
-        // Single current-team rule: ?teamId -> remembered team -> first team.
-        const urlTeamId = searchParams.get("teamId");
-        const team = resolveCurrentTeam(fetchedTeams, { urlTeamId })!; // non-empty list
-        if (team.id === urlTeamId) rememberTeam(team.id);
-        setSelectedTeam(team);
         setLoading(false);
       } catch (err) {
         setBootError(err instanceof Error ? err.message : "Failed to load. Please retry.");
         setLoading(false);
       }
     })();
-    // searchParams.get is stable within the render; we only bootstrap once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
-
-  // Keep selectedTeam in sync when the teamId param changes after bootstrap
-  // (same current-team rule as the bootstrap above).
-  useEffect(() => {
-    if (teams.length === 0) return;
-    const team = resolveCurrentTeam(teams, { urlTeamId: teamIdParam })!; // non-empty list
-    if (team.id === teamIdParam) rememberTeam(team.id);
-    setSelectedTeam(team);
-  }, [teams, teamIdParam]);
 
   // Re-sync the search box when the URL query changes from outside.
   useEffect(() => {

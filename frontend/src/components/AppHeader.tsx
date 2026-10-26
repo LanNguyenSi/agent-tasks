@@ -6,11 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout, type Team } from "../lib/api";
 import { rememberTeam, resolveCurrentTeam } from "../lib/currentTeam";
 import { projectsHref, settingsHref, teamSettingsHref } from "../lib/routes";
-import {
-  announceTeamChange,
-  teamSwitchHref,
-  useTeamChange,
-} from "../lib/teamSwitch";
+import { teamSwitchHref } from "../lib/teamSwitch";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
 
@@ -33,6 +29,7 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const teamTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const checkedTeamItemRef = useRef<HTMLButtonElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
 
@@ -43,18 +40,24 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
 
   // The current team follows the single current-team rule (?teamId, then the
-  // remembered team, then the first team). A switch made here is held in
-  // `switchedTeamId` until the URL catches up, so the label never lags behind
-  // the click; the pages that listen for the change update at the same time.
+  // remembered team, then the first team), the same input every team-scoped
+  // page resolves (useCurrentTeam). A switch made here is held in
+  // `switchedTeamId` until the URL changes (the navigation it triggered, or
+  // the browser's back/forward), so the label never lags behind the click.
   const urlTeamId = searchParams?.get("teamId") ?? null;
   const [switchedTeamId, setSwitchedTeamId] = useState<string | null>(null);
   useEffect(() => {
     setSwitchedTeamId(null);
   }, [pathname, urlTeamId]);
-  // Another component (or tab-local code) announcing a switch re-renders the
-  // label too; the remembered id is read during render.
-  const [, setAnnounced] = useState(0);
-  useTeamChange(() => setAnnounced((n) => n + 1));
+
+  // Opening the team menu puts focus on the checked (current) team. The
+  // DropdownMenu focuses its first item in a zero-delay timeout from its own
+  // effect; this later timeout wins.
+  useEffect(() => {
+    if (!teamMenuOpen) return;
+    const id = window.setTimeout(() => checkedTeamItemRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [teamMenuOpen]);
 
   const teamCount = teams?.length ?? 0;
   const currentTeam =
@@ -67,9 +70,11 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
     if (teamId === currentTeam?.id) return;
     setSwitchedTeamId(teamId);
     rememberTeam(teamId);
-    announceTeamChange(teamId);
     const href = teamSwitchHref(pathname, teamId);
     if (href) router.push(href);
+    // The picked item unmounts with the menu; keep keyboard focus on the
+    // switcher instead of dropping it to the document body.
+    teamTriggerRef.current?.focus();
   }
 
   return (
@@ -112,6 +117,7 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
                 {teams.map((team) => (
                   <button
                     key={team.id}
+                    ref={team.id === currentTeam.id ? checkedTeamItemRef : undefined}
                     type="button"
                     role="menuitemradio"
                     aria-checked={team.id === currentTeam.id}

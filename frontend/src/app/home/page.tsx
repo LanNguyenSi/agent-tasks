@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
   getTeamTasks,
@@ -14,9 +14,8 @@ import {
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
-import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
-import { useTeamChange } from "../../lib/teamSwitch";
+import { useCurrentTeam } from "../../lib/teamSwitch";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
@@ -184,9 +183,11 @@ function StatTile({
 
 export default function HomeDashboardPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  // Derived from the URL like the header's team (?teamId, remembered, first):
+  // no team state of its own, so back/forward and a switch always agree.
+  const selectedTeam = useCurrentTeam(teams);
   // Zero-team user with shared projects: the project list replaces the task
   // widgets (the team task aggregation needs a team).
   const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
@@ -204,9 +205,7 @@ export default function HomeDashboardPage() {
   const [staleWarning, setStaleWarning] = useState(false);
   const [refetchKey, setRefetchKey] = useState(0);
   const hasDataRef = useRef(false);
-  // Teams of the bootstrap and the team whose tasks are on screen, for the
-  // header switcher's team change below.
-  const teamsRef = useRef<Team[]>([]);
+  // The team whose tasks are on screen.
   const loadedTeamIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -218,30 +217,16 @@ export default function HomeDashboardPage() {
       const ctx = await getAccessContext();
       if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
       const teams = ctx.teams;
-      teamsRef.current = teams;
       if (teams.length === 0) {
         setSharedProjects(ctx.sharedProjects);
         setLoading(false);
         return;
       }
 
-      // Single current-team rule: ?teamId -> remembered team -> first team.
-      const urlTeamId = searchParams.get("teamId");
-      const team = resolveCurrentTeam(teams, { urlTeamId })!; // non-empty list
-      if (team.id === urlTeamId) rememberTeam(team.id);
-      setSelectedTeam(team);
+      setTeams(teams);
       setLoading(false);
     })();
-    // searchParams.get is stable within the render; we only bootstrap once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
-
-  // The header switcher owns team switching: re-resolve the team from the
-  // announced change (the bootstrap above runs once).
-  useTeamChange((teamId) => {
-    const team = teamsRef.current.find((t) => t.id === teamId);
-    if (team) setSelectedTeam(team);
-  });
 
   useEffect(() => {
     if (!selectedTeam) return;

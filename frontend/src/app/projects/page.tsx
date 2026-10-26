@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
   getProjects,
@@ -21,9 +21,8 @@ import {
   resolveInitialView,
   type TeamsViewMode,
 } from "../../lib/teamsPrefs";
-import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
-import { useTeamChange } from "../../lib/teamSwitch";
+import { useCurrentTeam } from "../../lib/teamSwitch";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import { boardHref, settingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -172,17 +171,38 @@ function ProjectRowActions({
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
+const NO_PROJECTS: Project[] = [];
+
 export default function ProjectsPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  // Derived from the URL like the header's team (?teamId, remembered, first):
+  // no team state of its own, so a switch and back/forward always agree.
+  const selectedTeam = useCurrentTeam(teams);
+  // The loaded project list is tagged with its team, so a list of another
+  // team is never shown (or acted on) under the current team's name.
+  const [projectsState, setProjectsState] = useState<{
+    teamId: string | null;
+    list: Project[];
+  }>({ teamId: null, list: NO_PROJECTS });
+  const projects =
+    selectedTeam && projectsState.teamId === selectedTeam.id
+      ? projectsState.list
+      : NO_PROJECTS;
   // Projects shared with a user who has no team (zero-team state only).
   const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [fetchingProjects, setFetchingProjects] = useState(false);
+  // Loading until the current team's list has arrived (also the frame after a
+  // team change, before the load effect has started).
+  const projectsLoading =
+    fetchingProjects || (selectedTeam !== null && projectsState.teamId !== selectedTeam.id);
+  // Bumped by every load: only the newest load may write its result.
+  const loadSeq = useRef(0);
+  // The team the load effect is currently serving; a load for any other team
+  // (a GitHub sync that finished after a switch) is dropped.
+  const activeTeamRef = useRef<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [feedback, setFeedback] = useState<{
     message: string;
@@ -242,26 +262,8 @@ export default function ProjectsPage() {
         return;
       }
       setTeams(userTeams);
-
-      // Single current-team rule: ?teamId -> remembered team -> first team.
-      const urlTeamId = searchParams.get("teamId");
-      const initialTeam = resolveCurrentTeam(userTeams, { urlTeamId })!; // non-empty list
-      if (initialTeam.id === urlTeamId) rememberTeam(initialTeam.id);
-      setSelectedTeam(initialTeam);
       setLoading(false);
-
-      setProjectsLoading(true);
-      try {
-        const initialProjects = await getProjects(initialTeam.id);
-        setProjects(initialProjects);
-      } finally {
-        // Always clear the flag so the view-resolution effect (which gates on
-        // !projectsLoading) is never permanently blocked by a failed load.
-        setProjectsLoading(false);
-      }
     })();
-    // searchParams.get is stable within the render; we only bootstrap once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // Read the persisted explicit choice once on the client (SSR-safe). Applying
@@ -289,15 +291,48 @@ export default function ProjectsPage() {
     setViewMode(resolveInitialView({ storedView: explicitView, projectCount: projects.length }));
   }, [viewHydrated, selectedTeam, projectsLoading, explicitView, projects.length]);
 
+  // Load a team's projects. Only the newest load writes: a response that
+  // arrives after a later load started is dropped, and so is a load for a
+  // team the page no longer shows.
   async function loadProjects(teamId: string) {
-    setProjectsLoading(true);
+    if (activeTeamRef.current !== teamId) return;
+    const seq = ++loadSeq.current;
+    setFetchingProjects(true);
     try {
-      const teamProjects = await getProjects(teamId);
-      setProjects(teamProjects);
+      const list = await getProjects(teamId);
+      if (seq !== loadSeq.current) return;
+      setProjectsState({ teamId, list });
+    } catch (err) {
+      if (seq !== loadSeq.current) return;
+      // Mark the team as loaded (empty) so the page does not spin forever,
+      // and say why the list is empty.
+      setProjectsState({ teamId, list: NO_PROJECTS });
+      setFeedback({
+        tone: "danger",
+        title: "Could not load projects",
+        message: err instanceof Error ? err.message : "Failed to load projects.",
+      });
     } finally {
-      setProjectsLoading(false);
+      if (seq === loadSeq.current) setFetchingProjects(false);
     }
   }
+
+  // Follow the resolved team: load its projects and drop what belongs to the
+  // team that was left (open dialogs, feedback). Keyed on the team id, so the
+  // last resolution always wins.
+  const selectedTeamId = selectedTeam?.id ?? null;
+  useEffect(() => {
+    if (!selectedTeamId) return;
+    closeNewProjectModal();
+    setDeleteTarget(null);
+    setFeedback(null);
+    activeTeamRef.current = selectedTeamId;
+    void loadProjects(selectedTeamId);
+    const active = activeTeamRef;
+    return () => {
+      active.current = null;
+    };
+  }, [selectedTeamId]);
 
   function handleProjectNameChange(name: string) {
     setProjectName(name);
@@ -311,17 +346,6 @@ export default function ProjectsPage() {
       );
     }
   }
-
-  // The header switcher owns team switching (it also remembers the team and
-  // moves the URL); this page re-resolves the team on the announced change.
-  function handleTeamSwitch(teamId: string) {
-    const team = teams.find((t) => t.id === teamId);
-    if (!team || team.id === selectedTeam?.id) return;
-    setSelectedTeam(team);
-    rememberTeam(teamId);
-    void loadProjects(teamId);
-  }
-  useTeamChange(handleTeamSwitch);
 
   function closeNewProjectModal() {
     setShowNewProject(false);
@@ -344,7 +368,9 @@ export default function ProjectsPage() {
         slug: projectSlug.trim(),
         githubRepo: githubRepo.trim() || undefined,
       });
-      setProjects((prev) => [...prev, project]);
+      setProjectsState((prev) =>
+        prev.teamId === selectedTeam.id ? { ...prev, list: [...prev.list, project] } : prev,
+      );
       closeNewProjectModal();
     } catch (err) {
       setError((err as Error).message);
@@ -359,7 +385,10 @@ export default function ProjectsPage() {
     setError(null);
     try {
       await deleteProject(deleteTarget.id);
-      setProjects((prev) => prev.filter((project) => project.id !== deleteTarget.id));
+      setProjectsState((prev) => ({
+        ...prev,
+        list: prev.list.filter((project) => project.id !== deleteTarget.id),
+      }));
       setFeedback({
         tone: "success",
         title: "Project deleted",
@@ -614,8 +643,12 @@ export default function ProjectsPage() {
                       setFeedback(null);
                       setSyncing(true);
                       try {
-                        const result = await syncTeamFromGitHub(selectedTeam.id);
-                        await loadProjects(selectedTeam.id);
+                        const syncedTeamId = selectedTeam.id;
+                        const result = await syncTeamFromGitHub(syncedTeamId);
+                        await loadProjects(syncedTeamId);
+                        // The user switched teams meanwhile: the outcome
+                        // belongs to the team that was left.
+                        if (activeTeamRef.current !== syncedTeamId) return;
                         if (result.skippedPrune) {
                           setFeedback({
                             tone: "warning",

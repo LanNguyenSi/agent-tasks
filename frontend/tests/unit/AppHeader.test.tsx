@@ -2,7 +2,7 @@
 /**
  * AppHeader: nav items and active states, the team switcher (hidden / static
  * label / dropdown per team count), the avatar menu entries, and what a team
- * switch does (remember, announce, navigate to the section root).
+ * switch does (remember, navigate to the section root, keep focus).
  * Mock pattern mirrors the other header-adjacent tests.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -22,7 +22,6 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import AppHeader from "../../src/components/AppHeader";
-import { TEAM_CHANGE_EVENT } from "../../src/lib/teamSwitch";
 
 const USER = { login: "lan", avatarUrl: null };
 
@@ -163,21 +162,12 @@ describe("AppHeader team switch", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name }));
   }
 
-  it("remembers the team, announces it on window, and updates the label", () => {
-    const heard: string[] = [];
-    const onChange = (e: Event) =>
-      heard.push((e as CustomEvent<{ teamId: string }>).detail.teamId);
-    window.addEventListener(TEAM_CHANGE_EVENT, onChange);
-    try {
-      render(<AppHeader user={USER} teams={[T1, T2]} />);
-      pick("Team Two");
-      expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
-      expect(heard).toEqual(["t2"]);
-      expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
-      expect(screen.queryByRole("menu", { name: "Teams" })).not.toBeInTheDocument();
-    } finally {
-      window.removeEventListener(TEAM_CHANGE_EVENT, onChange);
-    }
+  it("remembers the team and updates the label", () => {
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    pick("Team Two");
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
+    expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menu", { name: "Teams" })).not.toBeInTheDocument();
   });
 
   it("shows the picked team at once even while ?teamId still names the old one", () => {
@@ -206,26 +196,66 @@ describe("AppHeader team switch", () => {
     expect(routerMocks.push).toHaveBeenCalledWith(target);
   });
 
-  it("on personal settings it remembers and announces but stays put", () => {
+  it("on personal settings it remembers the team but stays put", () => {
     navState.pathname = "/settings";
     render(<AppHeader user={USER} teams={[T1, T2]} />);
     pick("Team Two");
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
     expect(routerMocks.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
   });
 
   it("picking the current team does nothing", () => {
-    const heard = vi.fn();
-    window.addEventListener(TEAM_CHANGE_EVENT, heard);
-    try {
-      render(<AppHeader user={USER} teams={[T1, T2]} />);
-      pick("Team One");
-      expect(heard).not.toHaveBeenCalled();
-      expect(routerMocks.push).not.toHaveBeenCalled();
-      expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBeNull();
-    } finally {
-      window.removeEventListener(TEAM_CHANGE_EVENT, heard);
-    }
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    pick("Team One");
+    expect(routerMocks.push).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBeNull();
+  });
+
+  it("returns focus to the switcher after a pick that stays on the page", () => {
+    navState.pathname = "/settings";
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    pick("Team Two");
+    expect(routerMocks.push).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /Switch team, current team Team Two/ }),
+    );
+  });
+
+  it("returns focus to the switcher after a pick that navigates", () => {
+    navState.pathname = "/home";
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    pick("Team Two");
+    expect(routerMocks.push).toHaveBeenCalledWith("/home?teamId=t2");
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /Switch team/ }),
+    );
+  });
+
+  it("opens with focus on the checked team, not the first item", async () => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    fireEvent.click(screen.getByRole("button", { name: /Switch team/ }));
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("menuitemradio", { name: "Team Two" })),
+    );
+  });
+});
+
+describe("AppHeader team follows the URL", () => {
+  it("a changed ?teamId (browser back/forward) replaces a switch held from an earlier pick", () => {
+    navState.search = "teamId=t1";
+    const { rerender } = render(<AppHeader user={USER} teams={[T1, T2]} />);
+    fireEvent.click(screen.getByRole("button", { name: /Switch team/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Team Two" }));
+    expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
+
+    // The URL moves back to t1 (the mocked router never moved it to t2).
+    navState.search = "teamId=t2";
+    rerender(<AppHeader user={USER} teams={[T1, T2]} />);
+    navState.search = "teamId=t1";
+    rerender(<AppHeader user={USER} teams={[T1, T2]} />);
+    expect(screen.getByRole("button", { name: /current team Team One/ })).toBeInTheDocument();
   });
 });
 

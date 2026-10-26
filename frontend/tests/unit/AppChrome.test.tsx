@@ -6,7 +6,7 @@
  * routes without fetching anything.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import type { Team } from "../../src/lib/api";
 
 const navState = vi.hoisted(() => ({ pathname: "/home" }));
@@ -63,6 +63,103 @@ describe("AppChrome", () => {
     fireEvent.click(trigger);
     const items = screen.getAllByRole("menuitem").map((e) => e.textContent);
     expect(items).toEqual(["Settings", "Logout"]);
+  });
+
+  it("drops the user and teams when the shell is suppressed, and shows the next login's own", async () => {
+    const { rerender } = render(<AppChrome><p>page</p></AppChrome>);
+    expect(await screen.findByRole("button", { name: /Switch team/ })).toBeInTheDocument();
+
+    // Logout lands on / (shell suppressed).
+    navState.pathname = "/";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+
+    // The next login is a different account with one team; its lookups are
+    // still in flight when the shell comes back.
+    let releaseUser: (u: never) => void = () => {};
+    let releaseTeams: (t: Team[]) => void = () => {};
+    vi.mocked(getCurrentUser).mockReturnValue(new Promise((r) => { releaseUser = r; }));
+    vi.mocked(getTeams).mockReturnValue(new Promise((r) => { releaseTeams = r; }));
+    navState.pathname = "/home";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+
+    // Nothing of the previous account is on screen meanwhile.
+    expect(screen.queryByRole("button", { name: /Account menu for lan/ })).not.toBeInTheDocument();
+    expect(document.querySelector(".app-team-label, .app-team-trigger")).toBeNull();
+
+    await act(async () => {
+      releaseUser({ id: "u2", login: "kim", avatarUrl: null } as never);
+      releaseTeams([TEAMS[1]!]);
+    });
+    expect(await screen.findByRole("button", { name: "Account menu for kim" })).toBeInTheDocument();
+    expect(document.querySelector(".app-team-label")?.textContent).toContain("Team Two");
+    expect(document.querySelector(".app-team-trigger")).toBeNull();
+  });
+
+  it("ignores a team lookup that answers after the shell was suppressed again", async () => {
+    let releaseTeams: (t: Team[]) => void = () => {};
+    vi.mocked(getTeams).mockReturnValue(new Promise((r) => { releaseTeams = r; }));
+    const { rerender } = render(<AppChrome><p>page</p></AppChrome>);
+    await screen.findByRole("button", { name: "Account menu for lan" });
+
+    navState.pathname = "/";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+    // The late answer of the first shell must not leak into the next one: its
+    // own lookup never answers here, so the header must show no switcher.
+    vi.mocked(getTeams).mockReturnValue(new Promise(() => {}));
+    await act(async () => {
+      releaseTeams(TEAMS);
+    });
+    navState.pathname = "/home";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+
+    expect(await screen.findByRole("button", { name: "Account menu for lan" })).toBeInTheDocument();
+    expect(document.querySelector(".app-team-label, .app-team-trigger")).toBeNull();
+  });
+
+  it("ignores a user lookup that answers after the shell was suppressed and shown again", async () => {
+    let releaseFirst: (u: never) => void = () => {};
+    vi.mocked(getCurrentUser).mockReturnValueOnce(new Promise((r) => { releaseFirst = r; }));
+    const { rerender } = render(<AppChrome><p>page</p></AppChrome>);
+    await waitFor(() => expect(getCurrentUser).toHaveBeenCalledTimes(1));
+
+    navState.pathname = "/";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+    vi.mocked(getCurrentUser).mockResolvedValue({ id: "u2", login: "kim", avatarUrl: null } as never);
+    navState.pathname = "/home";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+    expect(await screen.findByRole("button", { name: "Account menu for kim" })).toBeInTheDocument();
+
+    // The first shell's slow answer arrives last and must not replace kim.
+    await act(async () => {
+      releaseFirst({ id: "u1", login: "lan", avatarUrl: null } as never);
+    });
+    expect(screen.getByRole("button", { name: "Account menu for kim" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Account menu for lan" })).not.toBeInTheDocument();
+  });
+
+  it("ignores lookups of an earlier shell that fail after the next shell loaded", async () => {
+    let failUser: (e: unknown) => void = () => {};
+    let failTeams: (e: unknown) => void = () => {};
+    vi.mocked(getCurrentUser).mockReturnValueOnce(new Promise((_, rej) => { failUser = rej; }));
+    vi.mocked(getTeams).mockReturnValueOnce(new Promise((_, rej) => { failTeams = rej; }));
+    const { rerender } = render(<AppChrome><p>page</p></AppChrome>);
+    await waitFor(() => expect(getTeams).toHaveBeenCalledTimes(1));
+
+    navState.pathname = "/";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+    navState.pathname = "/home";
+    rerender(<AppChrome><p>page</p></AppChrome>);
+    expect(await screen.findByRole("button", { name: /Switch team/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Account menu for lan" })).toBeInTheDocument();
+
+    await act(async () => {
+      failUser(new Error("late user failure"));
+      failTeams(new Error("late teams failure"));
+    });
+
+    expect(screen.getByRole("button", { name: /Switch team/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Account menu for lan" })).toBeInTheDocument();
   });
 
   it.each(["/", "/auth", "/auth/error", "/onboarding", "/invite/abc", "/dev"])(
