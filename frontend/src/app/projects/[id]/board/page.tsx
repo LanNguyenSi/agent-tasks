@@ -38,7 +38,8 @@ import { useToast } from "../../../../components/ui/Toast";
 import TaskDetail from "../../../../components/TaskDetail";
 import ImportDialog from "../../../../components/ImportDialog";
 import FilterToolbar from "../../../../components/dashboard/FilterToolbar";
-import BoardView from "../../../../components/dashboard/BoardView";
+import BoardView, { BoardEmptyState } from "../../../../components/dashboard/BoardView";
+import { BOARD_REGION_ID } from "../../../../components/dashboard/boardRegion";
 import TaskListView from "../../../../components/dashboard/TaskListView";
 import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
@@ -166,6 +167,12 @@ export default function ProjectBoardPage() {
 
   const isProjectAdmin = isProjectAdminRole(selectedProjectAccessRole);
   const isProjectWrite = isProjectWriteRole(selectedProjectAccessRole);
+  // Agent tokens are created by team admins only: a per-project share or a
+  // known non-admin team role does not see the "Connect an agent" link. An
+  // unknown role (older API responses) keeps it.
+  const canConnectAgent =
+    selectedProject?.accessSource !== "project" &&
+    (selectedProjectAccessRole == null || selectedProjectAccessRole === "ADMIN");
 
   // ── Restore persisted view preferences once after mount ──────
 
@@ -490,6 +497,22 @@ export default function ProjectBoardPage() {
         </Button>
       </div>
     );
+  } else if (tasks.length === 0) {
+    // A project with no tasks at all: one first-run state in either view
+    // instead of five empty columns or an empty table. Tasks hidden by the
+    // filters (tasks.length > 0) keep the per-column placeholders.
+    content = (
+      <BoardEmptyState
+        teamId={selectedProject?.teamId}
+        canConnectAgent={canConnectAgent}
+        onNewTask={() => {
+          setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
+          setBootError(null);
+          setShowNewTask(true);
+        }}
+        onImport={() => setShowImport(true)}
+      />
+    );
   } else if (viewMode === "board") {
     content = (
       <>
@@ -541,7 +564,11 @@ export default function ProjectBoardPage() {
       {filterBar}
       {accessBanner}
 
-      {content}
+      {/* The one target of the hub layout's "Skip to board" link, present in
+          every state (loading, error, first run, board, list). */}
+      <div id={BOARD_REGION_ID} className="db-board-region" tabIndex={-1}>
+        {content}
+      </div>
 
       {/* NewTaskModal — extracted to components/dashboard/NewTaskModal.tsx in D2 */}
       <NewTaskModal

@@ -117,6 +117,35 @@ describe("project hub layout", () => {
     expect(slot).not.toHaveClass("pshell-content--default");
   });
 
+  it("offers Skip to board first on the board tab, before the hub band, aimed at the page's board region", async () => {
+    renderLayout("board");
+    expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    const skip = screen.getByRole("link", { name: "Skip to board" });
+    expect(skip).toHaveAttribute("href", "#board-region");
+    const main = skip.closest("main") as HTMLElement;
+    expect(main.querySelector("a, button, input")).toBe(skip);
+    expect(skip.compareDocumentPosition(screen.getByRole("navigation", { name: "Breadcrumb" }))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("offers the skip link while the project loads and after a failed load", async () => {
+    mockGetProject.mockReturnValue(new Promise(() => {}));
+    renderLayout("board");
+    expect(screen.getByRole("link", { name: "Skip to board" })).toBeInTheDocument();
+    cleanup();
+    mockGetProject.mockRejectedValue(new ApiRequestError("internal", "Server exploded", 500));
+    renderLayout("board");
+    await waitFor(() => expect(mockGetProject).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("link", { name: "Skip to board" })).toBeInTheDocument();
+  });
+
+  it.each(["members", "workflow", "settings", null])("has no skip link on the %s tab", async (segment) => {
+    renderLayout(segment);
+    expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Skip to board" })).not.toBeInTheDocument();
+  });
+
   it("keeps the other tabs in the 1200px content slot", async () => {
     renderLayout("members");
     expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();

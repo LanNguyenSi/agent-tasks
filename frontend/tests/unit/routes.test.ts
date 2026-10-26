@@ -122,8 +122,15 @@ describe("settings routes", () => {
     expect(teamSettingsHref("sso")).toBe("/settings/team#sso");
   });
 
+  it("teamSettingsHref opens a given team, with or without a section", () => {
+    expect(teamSettingsHref(undefined, "t-1")).toBe("/settings/team?teamId=t-1");
+    expect(teamSettingsHref("sso", "t-1")).toBe("/settings/team?teamId=t-1#sso");
+    expect(teamSettingsHref("api-tokens", "a b")).toBe("/settings/team?teamId=a%20b#api-tokens");
+  });
+
   it("apiTokensSettingsHref deep-links the API Tokens section of team settings", () => {
     expect(apiTokensSettingsHref()).toBe("/settings/team#api-tokens");
+    expect(apiTokensSettingsHref("t-1")).toBe("/settings/team?teamId=t-1#api-tokens");
   });
 
   it("ssoSettingsHref is the SSO sub-page of team settings", () => {
