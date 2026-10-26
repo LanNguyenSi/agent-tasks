@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
   getTask,
@@ -22,7 +22,7 @@ import {
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
 import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../../lib/confidence";
-import { boardHref } from "../../../lib/routes";
+import { boardHref, safeBackHref } from "../../../lib/routes";
 import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
 
 /**
@@ -41,6 +41,13 @@ export default function TaskDetailPage() {
   const params = useParams<{ id: string }>();
   const taskId = params.id;
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Where the user came from: the `from` the /tasks list puts on its links.
+  // A repeated `from` is ambiguous, so it is handed over as an array and
+  // rejected; anything that is not `/tasks` or `/tasks?...` is dropped.
+  const fromParams = searchParams.getAll("from");
+  const backHref = safeBackHref(fromParams.length > 1 ? fromParams : (fromParams[0] ?? null));
 
   const [user, setUser] = useState<User | null>(null);
   const [task, setTask] = useState<Task | null>(null);
@@ -134,8 +141,10 @@ export default function TaskDetailPage() {
   const isProjectAdmin = isProjectAdminRole(project?.accessRole);
   const isProjectWrite = isProjectWriteRole(project?.accessRole);
 
+  // Close and delete return to the originating list when there is one,
+  // otherwise to the board (direct visits, the modal's "open as full page").
   function goToBoard() {
-    router.push(boardUrl);
+    router.push(backHref ?? boardUrl);
   }
 
   return (
@@ -180,6 +189,7 @@ export default function TaskDetailPage() {
           teamId={project.teamId}
           projectName={project.name}
           projectId={project.id}
+          backHref={backHref}
         />
       )}
     </main>

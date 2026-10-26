@@ -12,7 +12,7 @@ import {
   type TeamTasksProject,
   type User,
 } from "../../lib/api";
-import { boardHref } from "../../lib/routes";
+import { boardHref, taskHref } from "../../lib/routes";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
@@ -161,6 +161,11 @@ function TasksPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // The list URL as it stands now (filters, sort, page). Task links carry it
+  // as `from`, so /tasks/[id] can return to exactly this view.
+  const listQuery = searchParams.toString();
+  const listHref = listQuery ? `/tasks?${listQuery}` : "/tasks";
 
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -770,7 +775,7 @@ function TasksPageInner() {
                 )}
                 rows={pagedTasks}
                 rowKey={(t) => t.id}
-                rowHref={(t) => `/tasks/${t.id}?${searchParams.toString()}`}
+                rowHref={(t) => taskHref(t.id, { from: listHref })}
                 sortKey={sort.column}
                 sortDirection={sort.direction === "asc" ? "ascending" : "descending"}
                 onSortChange={handleSortChange}
@@ -817,7 +822,7 @@ function TasksPageInner() {
         onClose={() => setNewTaskOpen(false)}
         projects={projects}
         onTaskCreated={() => setRetryToken((t) => t + 1)}
-        onEditTask={(id) => router.push(`/tasks/${id}`)}
+        onEditTask={(id) => router.push(taskHref(id, { from: listHref }))}
       />
 
       {/* Discard confirm — mirrors TaskDetail's delete-task confirm dialog */}
