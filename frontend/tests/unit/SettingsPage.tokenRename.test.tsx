@@ -1,17 +1,19 @@
 /** @vitest-environment jsdom */
 /**
- * Settings page — agent-token rename affordance.
+ * Team settings page (/settings/team) — API tokens, agent-token rename
+ * affordance, and the page shell.
  *
  * Full-page render (src/lib/api mocked wholesale via vi.mock, matching the
- * pattern in TaskDetail.variant.test.tsx / NewTaskFlow.test.tsx) rather than
- * a mechanical component extraction: the rename button/modal live inline in
- * SettingsPage and read `selectedTeam`/`tokens` state that already exists
- * there, so pulling them into a separate component would be a structural
- * change to page.tsx beyond this task's scope. `next/navigation`'s
- * `useRouter` and jsdom's missing `IntersectionObserver` (used by the
- * page's scroll-spy effect) are stubbed so the page can mount at all.
+ * pattern in TaskDetail.variant.test.tsx / NewTaskFlow.test.tsx): the token
+ * section reads the page's `selectedTeam` and the loaded token list, so the
+ * page is rendered whole. `next/navigation`'s `useRouter` and jsdom's
+ * missing `IntersectionObserver` (used by the page's scroll-spy effect) are
+ * stubbed so the page can mount at all.
  *
  * Covers:
+ *   - The page shell: Team settings title, API Tokens and Enterprise SSO
+ *     sections (the SSO card links to /settings/sso), and the current-team
+ *     rule (?teamId, then the remembered team, then the first team).
  *   - Rename AND Revoke are disabled (with admin-only titles) for a
  *     non-admin `selectedTeam.role`; Rename is enabled for ADMIN.
  *   - A successful save replaces the row's displayed name and closes the
@@ -27,7 +29,7 @@ import { render, screen, waitFor, cleanup, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import type { User, Team, AgentToken } from "../../src/lib/api";
 
-// A stable object: SettingsPage's bootstrap effect depends on `[router]`,
+// A stable object: TeamSettingsPage's bootstrap effect depends on `[router]`,
 // and useRouter() is called on every render — returning a fresh object
 // literal per call would make that dependency "change" on every render,
 // re-running the whole fetch-and-setTokens bootstrap effect (with its
@@ -50,7 +52,7 @@ vi.mock("../../src/lib/api", () => ({
   getAvailableScopes: vi.fn(),
 }));
 
-import SettingsPage from "../../src/app/settings/page";
+import TeamSettingsPage from "../../src/app/settings/team/page";
 import {
   getCurrentUser,
   getTeams,
@@ -80,20 +82,6 @@ class IntersectionObserverStub {
 }
 (global as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
   IntersectionObserverStub;
-
-// jsdom does not implement matchMedia either; the page renders
-// <ThemePreferenceField>, whose "system" preference effect calls it on
-// mount (see tests/unit/ThemePreferenceField.test.tsx for the same stub).
-window.matchMedia = vi.fn().mockReturnValue({
-  matches: false,
-  media: "(prefers-color-scheme: dark)",
-  onchange: null,
-  addEventListener: () => {},
-  removeEventListener: () => {},
-  addListener: () => {},
-  removeListener: () => {},
-  dispatchEvent: () => true,
-}) as unknown as typeof window.matchMedia;
 
 function makeUser(over: Partial<User> = {}): User {
   return {
@@ -133,10 +121,10 @@ function makeToken(over: Partial<AgentToken> = {}): AgentToken {
   };
 }
 
-async function renderSettingsPage(role: string, tokens: AgentToken[]) {
+async function renderTeamSettingsPage(role: string, tokens: AgentToken[]) {
   mockGetTeams.mockResolvedValue([makeTeam(role)]);
   mockGetAgentTokens.mockResolvedValue(tokens);
-  render(<SettingsPage />);
+  render(<TeamSettingsPage />);
   // Specifically the section heading, not the side-nav link of the same text.
   await screen.findByRole("heading", { name: "API Tokens" });
 }
@@ -151,9 +139,9 @@ afterEach(() => {
   cleanup();
 });
 
-describe("SettingsPage — agent token rename", () => {
+describe("TeamSettingsPage — agent token rename", () => {
   it("disables Rename with an admin-only title when selectedTeam.role is not ADMIN", async () => {
-    await renderSettingsPage("HUMAN_MEMBER", [makeToken({ name: "ci-bot" })]);
+    await renderTeamSettingsPage("HUMAN_MEMBER", [makeToken({ name: "ci-bot" })]);
 
     const renameBtn = screen.getByRole("button", { name: "Rename" });
     expect(renameBtn).toBeDisabled();
@@ -167,7 +155,7 @@ describe("SettingsPage — agent token rename", () => {
   });
 
   it("enables Rename with no title when selectedTeam.role is ADMIN", async () => {
-    await renderSettingsPage("ADMIN", [makeToken({ name: "ci-bot" })]);
+    await renderTeamSettingsPage("ADMIN", [makeToken({ name: "ci-bot" })]);
 
     const renameBtn = screen.getByRole("button", { name: "Rename" });
     expect(renameBtn).not.toBeDisabled();
@@ -176,7 +164,7 @@ describe("SettingsPage — agent token rename", () => {
 
   it("opens the create-token modal titled Create API Token", async () => {
     const user = userEvent.setup();
-    await renderSettingsPage("ADMIN", []);
+    await renderTeamSettingsPage("ADMIN", []);
 
     await user.click(screen.getByRole("button", { name: "Create custom token" }));
     expect(await screen.findByRole("heading", { name: "Create API Token" })).toBeInTheDocument();
@@ -184,7 +172,7 @@ describe("SettingsPage — agent token rename", () => {
 
   it("a successful save replaces the row's displayed name and closes the modal", async () => {
     const user = userEvent.setup();
-    await renderSettingsPage("ADMIN", [makeToken({ id: "tok-1", name: "old-name" })]);
+    await renderTeamSettingsPage("ADMIN", [makeToken({ id: "tok-1", name: "old-name" })]);
     mockRenameAgentToken.mockResolvedValue(makeToken({ id: "tok-1", name: "new-name" }));
 
     expect(screen.getByText("old-name")).toBeInTheDocument();
@@ -200,8 +188,7 @@ describe("SettingsPage — agent token rename", () => {
     await user.clear(input);
     await user.type(input, "new-name");
 
-    // "Save" also exists as the (unrelated) delegation-settings save
-    // button, so scope the query to the open dialog.
+    // Scope the query to the open dialog.
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(mockRenameAgentToken).toHaveBeenCalledWith("tok-1", "new-name"));
@@ -214,7 +201,7 @@ describe("SettingsPage — agent token rename", () => {
 
   it("a failed save keeps the modal open and shows the error inside it, not on the page", async () => {
     const user = userEvent.setup();
-    await renderSettingsPage("ADMIN", [makeToken({ id: "tok-1", name: "old-name" })]);
+    await renderTeamSettingsPage("ADMIN", [makeToken({ id: "tok-1", name: "old-name" })]);
     mockRenameAgentToken.mockRejectedValue(new Error("Only team admins can rename agent tokens"));
 
     await user.click(screen.getByRole("button", { name: "Rename" }));
@@ -248,7 +235,7 @@ describe("SettingsPage — agent token rename", () => {
     const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
     mockGetTeams.mockResolvedValue([teamA, teamB]);
     mockGetAgentTokens.mockResolvedValue([makeToken({ name: "ci-bot" })]);
-    render(<SettingsPage />);
+    render(<TeamSettingsPage />);
     await screen.findByRole("heading", { name: "API Tokens" });
 
     await user.click(screen.getByRole("button", { name: "Rename" }));
@@ -261,5 +248,135 @@ describe("SettingsPage — agent token rename", () => {
     await user.click(screen.getByRole("combobox", { name: "Team" }));
     await user.click(await screen.findByRole("option", { name: "Second" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("switching teams dismisses an open revoke confirmation", async () => {
+    const user = userEvent.setup();
+    const teamA = makeTeam("ADMIN");
+    const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
+    mockGetTeams.mockResolvedValue([teamA, teamB]);
+    mockGetAgentTokens.mockResolvedValue([makeToken({ name: "ci-bot" })]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(await screen.findByText("Revoke API token?")).toBeInTheDocument();
+
+    // A stale revoke target must not survive into the newly selected team's
+    // token list (mutation probe: removing the setRevokeTarget(null) in the
+    // team-select onChange turns this red).
+    await user.click(screen.getByRole("combobox", { name: "Team" }));
+    await user.click(await screen.findByRole("option", { name: "Second" }));
+    await waitFor(() => expect(screen.queryByText("Revoke API token?")).not.toBeInTheDocument());
+  });
+});
+
+describe("TeamSettingsPage — page shell", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("renders the Team settings title with API Tokens and Enterprise SSO sections", async () => {
+    await renderTeamSettingsPage("ADMIN", []);
+
+    expect(screen.getByRole("heading", { level: 1, name: "Team settings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enterprise SSO" })).toBeInTheDocument();
+    // The side-nav lists exactly the team sections.
+    const nav = screen.getByRole("complementary", { name: "Team settings sections" });
+    expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "API Tokens",
+      "Enterprise SSO",
+    ]);
+    // The SSO card keeps linking to the SSO page.
+    expect(screen.getByRole("link", { name: "Manage SSO connection" })).toHaveAttribute(
+      "href",
+      "/settings/sso",
+    );
+    // Personal sections are not on this page.
+    expect(screen.queryByRole("heading", { name: "Account" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Agent Permissions" })).not.toBeInTheDocument();
+  });
+
+  it("links back to personal Settings with a breadcrumb", async () => {
+    await renderTeamSettingsPage("ADMIN", []);
+
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("remembers a team chosen via ?teamId", async () => {
+    window.history.replaceState(null, "", "/settings/team?teamId=team-2");
+    mockGetTeams.mockResolvedValue([
+      makeTeam("ADMIN"),
+      makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" }),
+    ]);
+    mockGetAgentTokens.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
+  });
+
+  it("does not remember the first-team fallback when the URL names no team", async () => {
+    await renderTeamSettingsPage("ADMIN", []);
+
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBeNull();
+  });
+
+  it("scrolls to the hash target once the sections have rendered", async () => {
+    window.location.hash = "#sso";
+    await renderTeamSettingsPage("ADMIN", []);
+
+    const scroll = vi.mocked(Element.prototype.scrollIntoView);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(document.getElementById("sso"));
+  });
+
+  it("does not scroll when the URL has no hash", async () => {
+    await renderTeamSettingsPage("ADMIN", []);
+
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("uses the remembered team over the first team", async () => {
+    const teamA = makeTeam("ADMIN");
+    const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
+    window.localStorage.setItem("agent-tasks:lastTeamId", "team-2");
+    mockGetTeams.mockResolvedValue([teamA, teamB]);
+    mockGetAgentTokens.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    expect(mockGetAgentTokens).toHaveBeenCalledWith("team-2");
+    expect(screen.getByRole("combobox", { name: "Team" })).toHaveTextContent("Second");
+  });
+
+  it("?teamId in the URL wins over the remembered team", async () => {
+    const teamA = makeTeam("ADMIN");
+    const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
+    window.localStorage.setItem("agent-tasks:lastTeamId", "team-2");
+    window.history.replaceState(null, "", "/settings/team?teamId=team-1");
+    mockGetTeams.mockResolvedValue([teamA, teamB]);
+    mockGetAgentTokens.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    expect(mockGetAgentTokens).toHaveBeenCalledWith("team-1");
+  });
+
+  it("shows the no-team empty state without loading tokens when the user has no teams", async () => {
+    mockGetTeams.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    expect(screen.getByText("No team found yet")).toBeInTheDocument();
+    expect(mockGetAgentTokens).not.toHaveBeenCalled();
+  });
+
+  it("redirects to /auth when there is no session", async () => {
+    mockGetCurrentUser.mockResolvedValue(null);
+    render(<TeamSettingsPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
+    expect(mockGetTeams).not.toHaveBeenCalled();
   });
 });

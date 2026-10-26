@@ -212,16 +212,17 @@ describe("board bootstrap from the route's project", () => {
     expect(mockGetProject).toHaveBeenCalledWith("p-1");
     expect(mockGetTasks).toHaveBeenCalledWith("p-1");
     expect(routerMocks.replace).not.toHaveBeenCalled();
-    // No team to name, so no team crumb; the title is the project name.
+    // No team to name, so no team crumb; the project name is the hub band's.
     expect(screen.queryByText("Team Alpha")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("heading", { level: 1 })).toHaveLength(0);
   });
 
-  it("names the project's team in the breadcrumb and renders a plain-text title", async () => {
+  it("renders no title, team crumb or project switch of its own: the hub band owns them", async () => {
     await renderDashboardReady();
 
-    expect(screen.getByText("Team Alpha")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    expect(screen.queryByText("Team Alpha")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("heading", { level: 1 })).toHaveLength(0);
+    expect(screen.queryByText("Project One")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /switch project/i })).not.toBeInTheDocument();
   });
 
@@ -233,11 +234,11 @@ describe("board bootstrap from the route's project", () => {
     expect(mockGetProject).not.toHaveBeenCalled();
   });
 
-  it("renders the board without a team crumb when the team lookup fails", async () => {
+  it("does not look up teams (the crumb is the hub band's), so a failing lookup cannot matter", async () => {
     mockGetTeams.mockRejectedValue(new Error("teams down"));
     await renderDashboardReady();
 
-    expect(screen.getByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    expect(mockGetTeams).not.toHaveBeenCalled();
     expect(screen.queryByText("Team Alpha")).not.toBeInTheDocument();
     expect(routerMocks.replace).not.toHaveBeenCalled();
     expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();

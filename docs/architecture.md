@@ -146,9 +146,10 @@ agent-tasks/
 | `/projects/[id]/settings` | Project settings |
 | `/projects/[id]/members` | Project members |
 | `/projects/[id]/workflow` | Workflow editor (states, transitions, agent instructions) |
-| `/settings` | Account, GitHub connection, API tokens |
+| `/settings` | Personal settings: account, appearance, GitHub connection, agent permissions |
+| `/settings/team` | Team settings: API tokens (Connect an agent, create, rename, revoke) and the Enterprise SSO entry |
 | `/settings/sso` | Team OIDC SSO connection |
 | `/invite/[token]` | Accept a project share |
 | `/docs` | Interactive Swagger UI (served by backend) |
 
-Legacy redirects: `/teams?teamId=<id>` goes to `/projects?teamId=<id>` (a `next.config.mjs` redirect, query string preserved), `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, and `/teams/tokens` goes to `/settings`. `/dev/ui` is a developer component gallery.
+Legacy redirects: `/teams?teamId=<id>` goes to `/projects?teamId=<id>` (a `next.config.mjs` redirect, query string preserved), `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, `/teams/tokens` goes to `/settings/team`, and the old `/settings#api-tokens` and `/settings#sso` anchors are forwarded client-side to `/settings/team#api-tokens` and `/settings/team#sso`. `/dev/ui` is a developer component gallery.

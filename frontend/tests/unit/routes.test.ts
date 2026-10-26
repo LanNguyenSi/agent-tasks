@@ -16,6 +16,7 @@ import {
   projectsHref,
   projectHubHref,
   settingsHref,
+  teamSettingsHref,
   apiTokensSettingsHref,
   ssoSettingsHref,
   taskHref,
@@ -115,8 +116,14 @@ describe("settings routes", () => {
     expect(settingsHref()).toBe("/settings");
   });
 
-  it("apiTokensSettingsHref deep-links the API Tokens section", () => {
-    expect(apiTokensSettingsHref()).toBe("/settings#api-tokens");
+  it("teamSettingsHref is the team settings root, optionally deep-linked", () => {
+    expect(teamSettingsHref()).toBe("/settings/team");
+    expect(teamSettingsHref("api-tokens")).toBe("/settings/team#api-tokens");
+    expect(teamSettingsHref("sso")).toBe("/settings/team#sso");
+  });
+
+  it("apiTokensSettingsHref deep-links the API Tokens section of team settings", () => {
+    expect(apiTokensSettingsHref()).toBe("/settings/team#api-tokens");
   });
 
   it("ssoSettingsHref is the SSO sub-page", () => {
