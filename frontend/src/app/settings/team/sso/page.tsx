@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import AlertBanner from "../../../components/ui/AlertBanner";
-import { Button } from "../../../components/ui/Button";
-import Card from "../../../components/ui/Card";
-import ConfirmDialog from "../../../components/ui/ConfirmDialog";
-import FormField from "../../../components/ui/FormField";
-import { PageHeader } from "../../../components/ui/PageHeader";
-import { settingsHref } from "../../../lib/routes";
+import AlertBanner from "../../../../components/ui/AlertBanner";
+import { Button } from "../../../../components/ui/Button";
+import Card from "../../../../components/ui/Card";
+import ConfirmDialog from "../../../../components/ui/ConfirmDialog";
+import FormField from "../../../../components/ui/FormField";
+import { PageHeader } from "../../../../components/ui/PageHeader";
+import { apiTokensSettingsHref, teamSettingsHref } from "../../../../lib/routes";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -185,8 +185,8 @@ export default function SsoSettingsPage() {
     <main className="page-shell page-shell--narrow">
       <PageHeader
         breadcrumb={
-          <a href={settingsHref()} className="settings-breadcrumb">
-            Settings
+          <a href={teamSettingsHref()} className="settings-breadcrumb">
+            Team settings
           </a>
         }
         title="Enterprise SSO (OIDC)"
@@ -196,8 +196,11 @@ export default function SsoSettingsPage() {
         Configure your team&apos;s identity provider. This page is gated by a dedicated
         API token with the <code>sso:admin</code> scope -- not by your normal session --
         so that accidental or stolen browser sessions cannot touch SSO configuration.
-        Generate a token under Settings &rarr; API Tokens, hand it out-of-band to whoever
-        owns your IdP setup, and revoke it when done.
+        Generate a token under{" "}
+        <a href={apiTokensSettingsHref()} className="settings-inline-link">
+          Team settings &rarr; API Tokens
+        </a>
+        , hand it out-of-band to whoever owns your IdP setup, and revoke it when done.
       </p>
 
       {!authorized && (

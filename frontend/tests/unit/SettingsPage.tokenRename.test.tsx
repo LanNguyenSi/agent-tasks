@@ -12,7 +12,7 @@
  *
  * Covers:
  *   - The page shell: Team settings title, API Tokens and Enterprise SSO
- *     sections (the SSO card links to /settings/sso), and the current-team
+ *     sections (the SSO card links to /settings/team/sso), and the current-team
  *     rule (?teamId, then the remembered team, then the first team).
  *   - Rename AND Revoke are disabled (with admin-only titles) for a
  *     non-admin `selectedTeam.role`; Rename is enabled for ADMIN.
@@ -291,7 +291,7 @@ describe("TeamSettingsPage — page shell", () => {
     // The SSO card keeps linking to the SSO page.
     expect(screen.getByRole("link", { name: "Manage SSO connection" })).toHaveAttribute(
       "href",
-      "/settings/sso",
+      "/settings/team/sso",
     );
     // Personal sections are not on this page.
     expect(screen.queryByRole("heading", { name: "Account" })).not.toBeInTheDocument();
