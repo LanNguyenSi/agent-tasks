@@ -14,6 +14,7 @@ import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import { SkeletonList } from "../../../components/ui/Skeleton";
 import { roleLabel } from "../../../lib/roleLabel";
+import { boardHref } from "../../../lib/routes";
 import { AuthShell } from "../../../components/AuthShell";
 
 type ErrorCode = "invalid_token" | "consumed" | "expired" | "already_member" | "unknown";
@@ -90,7 +91,7 @@ export default function InviteLandingPage() {
       });
       // Soft auto-redirect after a short pause so the user sees the confirmation.
       setTimeout(() => {
-        router.push(`/projects/${result.projectId}/members`);
+        router.push(boardHref({ projectId: result.projectId }));
       }, 1500);
     } catch (err) {
       // Pass the ownerLogin through to the error phase so the error body can
@@ -140,7 +141,7 @@ export default function InviteLandingPage() {
             )}
             <p className="auth-muted-line">
               Redirecting to the project, or{" "}
-              <Link href={`/projects/${phase.projectId}/members`}>go now</Link>.
+              <Link href={boardHref({ projectId: phase.projectId })}>go now</Link>.
             </p>
           </div>
         )}
