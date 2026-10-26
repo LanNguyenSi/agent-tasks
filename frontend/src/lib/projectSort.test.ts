@@ -1,5 +1,5 @@
 /**
- * Sorting logic for the /teams projects table: per-column comparators, the
+ * Sorting logic for the /projects projects table: per-column comparators, the
  * header-click direction rule, and the nullable/async-count edge cases.
  */
 import { describe, it, expect } from "vitest";

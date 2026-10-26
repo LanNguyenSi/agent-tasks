@@ -149,6 +149,17 @@ describe("ConnectAgentModal", () => {
     expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="at_live_test123"`);
   });
 
+  it("links the saved-token note to Team settings, API Tokens section", async () => {
+    renderModal(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    expect(
+      screen.getByRole("link", { name: /team settings.*api tokens/i }),
+    ).toHaveAttribute("href", "/settings/team#api-tokens");
+  });
+
   it("swaps the snippet when switching tabs but keeps the same token and does not re-mint", async () => {
     renderModal(true);
     const user = userEvent.setup();

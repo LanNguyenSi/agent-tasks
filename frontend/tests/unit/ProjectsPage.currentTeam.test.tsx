@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * /teams page-level tests for the single current-team rule (T02):
+ * /projects page-level tests for the single current-team rule (T02):
  * the initial team resolves through lib/currentTeam (?teamId -> remembered
  * team -> teams[0]), a valid `?teamId` is remembered, and the header
  * switcher keeps writing the same `agent-tasks:lastTeamId` key via
@@ -27,7 +27,7 @@ vi.mock("../../src/lib/api", () => ({
   syncTeamFromGitHub: vi.fn(),
 }));
 
-import TeamsPage from "../../src/app/teams/page";
+import ProjectsPage from "../../src/app/projects/page";
 import { getCurrentUser, getTeams, getProjects, getTasks } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);
@@ -94,11 +94,11 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("/teams page — current-team resolution (lib/currentTeam)", () => {
+describe("/projects page — current-team resolution (lib/currentTeam)", () => {
   it("a remembered team beats teams[0] when the URL carries no teamId", async () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
 
-    render(<TeamsPage />);
+    render(<ProjectsPage />);
     await screen.findByRole("combobox", { name: "Switch team" });
 
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
@@ -109,7 +109,7 @@ describe("/teams page — current-team resolution (lib/currentTeam)", () => {
     navState.search = "teamId=t2";
     window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
 
-    render(<TeamsPage />);
+    render(<ProjectsPage />);
     await screen.findByRole("combobox", { name: "Switch team" });
 
     expect(mockGetProjects).toHaveBeenCalledWith("t2");
@@ -122,14 +122,14 @@ describe("/teams page — current-team resolution (lib/currentTeam)", () => {
     navState.search = "teamId=ghost";
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
 
-    render(<TeamsPage />);
+    render(<ProjectsPage />);
     await screen.findByRole("combobox", { name: "Switch team" });
 
     expect(mockGetProjects).toHaveBeenCalledWith("t2");
   });
 
   it("the header switcher remembers the picked team", async () => {
-    render(<TeamsPage />);
+    render(<ProjectsPage />);
     const trigger = await screen.findByRole("combobox", { name: "Switch team" });
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t1"));
 

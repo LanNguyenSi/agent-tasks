@@ -253,7 +253,7 @@ describe("board bootstrap from the route's project", () => {
     mockGetProject.mockRejectedValue(new ApiRequestError("not_found", "Not found", 404));
     renderBoard();
 
-    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/teams"));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/projects"));
     expect(routerMocks.replace).toHaveBeenCalledTimes(1);
     expect(mockGetTasks).not.toHaveBeenCalled();
     expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
@@ -268,7 +268,7 @@ describe("board bootstrap from the route's project", () => {
     mockGetProject.mockRejectedValue(new ApiRequestError("forbidden", "Access denied", 403));
     renderBoard();
 
-    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/teams"));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/projects"));
     expect(mockGetTasks).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("dashboard:lastProject:t-1")).toBeNull();
   });

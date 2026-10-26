@@ -27,9 +27,10 @@ export function boardHref(params: {
   return params.teamId ? projectsHref({ teamId: params.teamId }) : "/dashboard";
 }
 
-/** Projects page: `/teams`, optionally pre-selecting a team. */
+/** Projects page: `/projects`, optionally pre-selecting a team. The legacy
+ * `/teams` URL redirects here (next.config.mjs redirects), query included. */
 export function projectsHref(params: { teamId?: string } = {}): string {
-  return params.teamId ? `/teams?teamId=${params.teamId}` : "/teams";
+  return params.teamId ? `/projects?teamId=${params.teamId}` : "/projects";
 }
 
 /** Project hub under `/projects/<id>`: a tab, or the hub root when no tab is
@@ -42,9 +43,15 @@ export function settingsHref(): string {
   return "/settings";
 }
 
-/** Settings deep-linked to the API Tokens section. */
+/** Team settings (API tokens, Enterprise SSO entry), optionally deep-linked
+ * to one of its sections. Personal settings stay at `settingsHref()`. */
+export function teamSettingsHref(section?: "api-tokens" | "sso"): string {
+  return section ? `/settings/team#${section}` : "/settings/team";
+}
+
+/** Team settings deep-linked to the API Tokens section. */
 export function apiTokensSettingsHref(): string {
-  return "/settings#api-tokens";
+  return teamSettingsHref("api-tokens");
 }
 
 export function ssoSettingsHref(): string {

@@ -171,7 +171,7 @@ function ProjectRowActions({
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
-export default function TeamsPage() {
+export default function ProjectsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);

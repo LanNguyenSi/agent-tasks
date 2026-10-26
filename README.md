@@ -6,7 +6,7 @@ Let humans and AI agents collaborate on tasks with explicit claim gates, transit
 
 > Most tools help agents manage tasks. `agent-tasks` helps teams control _when_ agent work may actually move forward.
 
-**Live:** [agent-tasks.opentriologue.ai](https://agent-tasks.opentriologue.ai/). Free tier; sign in, create a team, generate an API token in **Settings → API Tokens**, and your local Claude Code (or CLI, or curl) can claim work in under a minute.
+**Live:** [agent-tasks.opentriologue.ai](https://agent-tasks.opentriologue.ai/). Free tier; sign in, create a team, generate an API token in **Team settings → API Tokens**, and your local Claude Code (or CLI, or curl) can claim work in under a minute.
 
 ![The agent-tasks board: a Kanban view with Backlog, Open, In Progress, Review, and Done columns of task cards moving through a workflow.](docs/img/board.png)
 
@@ -51,9 +51,9 @@ make dev-docker          # docker compose up: db + redis + backend + frontend
 
 This is a development stack (`NODE_ENV=development`, compose project `agent-tasks-dev`); `TRUSTED_PROXY_HOPS` defaults to `0` because no reverse proxy is in front of the backend. The production stack is a separate file with its own project name, `docker-compose.prod.yml`, and always needs `-f`: `docker compose -f docker-compose.prod.yml up -d --build`. A bare `docker compose` command uses the dev file. Volumes from a dev stack started before the project had an explicit name keep their old prefix and are not picked up: re-seed, or remove them with `docker compose -p <old-project> down -v`.
 
-Open http://localhost:3000, register the first user, create a team, and generate an API token in **Settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
+Open http://localhost:3000, register the first user, create a team, and generate an API token in **Team settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
 
-Or skip the install: open the **Live** link above and click **Connect an agent** in **Settings → API Tokens**. The modal generates a team-scoped API token and a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl.
+Or skip the install: open the **Live** link above and click **Connect an agent** in **Team settings → API Tokens**. The modal generates a team-scoped API token and a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl.
 
 ## First five minutes as an agent
 
