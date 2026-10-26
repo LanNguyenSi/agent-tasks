@@ -61,7 +61,7 @@ const TASK = { id: "task-1", projectId: "proj-1", title: "A task" } as Task;
 const PROJECT = { id: "proj-1", teamId: "team-1", name: "Agent Tasks", accessRole: "MEMBER" } as unknown as Project;
 const TEAM = { id: "team-1", name: "Pandora" } as Team;
 
-const BOARD = "/dashboard?teamId=team-1&projectId=proj-1";
+const BOARD = "/projects/proj-1/board";
 
 beforeEach(() => {
   vi.clearAllMocks();

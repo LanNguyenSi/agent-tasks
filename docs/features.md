@@ -38,7 +38,7 @@ imported tasks afterwards
 The task board and list views support status/priority/label filters, a text
 search box, pagination, and priority-aware sorting
 (`frontend/src/app/tasks/page.tsx`, `frontend/src/components/dashboard/TaskListView.tsx`;
-the label filter lives on the dashboard board, `frontend/src/app/dashboard/page.tsx`
+the label filter lives on the project board, `frontend/src/app/projects/[id]/board/page.tsx`
 with `frontend/src/components/dashboard/FilterToolbar.tsx`).
 
 ## Cross-team share visibility

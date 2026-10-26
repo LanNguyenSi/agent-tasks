@@ -408,9 +408,9 @@ describe("backlog Promote/Discard", () => {
 });
 
 describe("TaskHeader breadcrumb board links", () => {
-  // Pins the boardHref truth table at the breadcrumb call site: team +
-  // project crumbs link to /dashboard carrying the team context, the
-  // project crumb adds projectId, and no crumbs render without a teamId.
+  // Pins the boardHref truth table at the breadcrumb call site: the team
+  // crumb links to that team's Projects page, the project crumb to the
+  // project's board, and no crumbs render without a teamId.
   function renderWithCrumb(overrides: { teamId?: string; projectId?: string; backHref?: string | null }) {
     render(
       <TaskHeader
@@ -439,23 +439,23 @@ describe("TaskHeader breadcrumb board links", () => {
     );
   }
 
-  it("links the team crumb with teamId and the project crumb with teamId + projectId", () => {
+  it("links the team crumb to the team's projects and the project crumb to its board", () => {
     renderWithCrumb({ teamId: "t-9", projectId: "p-9" });
     expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
       "href",
-      "/dashboard?teamId=t-9",
+      "/teams?teamId=t-9",
     );
     expect(screen.getByRole("link", { name: "Backend" })).toHaveAttribute(
       "href",
-      "/dashboard?teamId=t-9&projectId=p-9",
+      "/projects/p-9/board",
     );
   });
 
-  it("links the team crumb with teamId alone when there is no project", () => {
+  it("links the team crumb to the team's projects when there is no project", () => {
     renderWithCrumb({ teamId: "t-9" });
     expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
       "href",
-      "/dashboard?teamId=t-9",
+      "/teams?teamId=t-9",
     );
     expect(screen.queryByRole("link", { name: "Backend" })).not.toBeInTheDocument();
   });
@@ -474,7 +474,7 @@ describe("TaskHeader breadcrumb board links", () => {
     // The team and project crumbs keep pointing at the board.
     expect(screen.getByRole("link", { name: "Backend" })).toHaveAttribute(
       "href",
-      "/dashboard?teamId=t-9&projectId=p-9",
+      "/projects/p-9/board",
     );
   });
 

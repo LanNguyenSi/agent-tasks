@@ -3,8 +3,8 @@
 // Hub layout for /projects/[id]/* routes.
 // Fetches the project once (name, slug, githubRepo, governanceMode) and renders:
 //   1. A compact project identity header (name H1, slug chip, repo chip, gov badge).
-//   2. ProjectSubnav tab row (Overview | Settings | Members | Workflow).
-//   3. {children} wrapped in a content container.
+//   2. ProjectSubnav tab row (Board | Overview | Members | Workflow | Settings).
+//   3. {children} wrapped in a content container (the board excepted, see below).
 //
 // Child pages no longer render their own project heading; this layout owns it.
 // Geometry in .proj-hub-* / .proj-subnav-* in globals.css.
@@ -12,11 +12,13 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { getProject, type Project } from "../../../lib/api";
-import { boardHref } from "../../../lib/routes";
+import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
+import { ApiRequestError, getProject, type Project } from "../../../lib/api";
+import { boardHref, projectsHref } from "../../../lib/routes";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../components/projects/ProjectSubnav";
+import AlertBanner from "../../../components/ui/AlertBanner";
+import { Button } from "../../../components/ui/Button";
 
 const GOV_LABELS: Record<string, string> = {
   REQUIRES_DISTINCT_REVIEWER: "Dual-control",
@@ -28,19 +30,32 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const router = useRouter();
+  const segment = useSelectedLayoutSegment();
 
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
     void (async () => {
       try {
         const proj = await getProject(projectId);
         if (!cancelled) setProject(proj);
-      } catch {
-        // Redirect to dashboard if the project is inaccessible
-        if (!cancelled) router.replace(boardHref());
+      } catch (err) {
+        if (cancelled) return;
+        // Missing or not accessible (404/403): back to the Projects page.
+        // Not boardHref(): its bare /dashboard resumes the last board, which
+        // may be this one. Any other failure (500, network, 401) is not
+        // proof the project is gone, so stay and show the error instead.
+        if (err instanceof ApiRequestError && (err.status === 403 || err.status === 404)) {
+          router.replace(projectsHref());
+        } else {
+          setLoadError((err as Error).message || "Could not load the project");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -48,15 +63,14 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [projectId, router]);
+  }, [projectId, router, reloadKey]);
 
   const govLabel = project?.governanceMode
     ? GOV_LABELS[project.governanceMode]
     : null;
 
-  // Back to the dashboard with the same team + project selected; the
-  // dashboard restores both from these URL params. Until the project is
-  // loaded, a plain /dashboard link keeps the row height stable.
+  // This project's board. Until the project is loaded, the bare /dashboard
+  // link (resumes the last board) keeps the row height stable.
   const dashboardHref = project
     ? boardHref({ teamId: project.teamId, projectId: project.id })
     : boardHref();
@@ -111,7 +125,30 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
 
       <ProjectSubnav projectId={projectId} />
 
-      <div className="proj-hub-content">{children}</div>
+      {/* The board keeps the full-width canvas its column breakpoints
+          (.db-board, viewport media queries) are written for; the
+          1200px content container would squeeze its five columns. */}
+      {segment === "board" ? (
+        // The board runs its own project load and shows its own error banner
+        // with Retry, so a failed hub load never replaces it.
+        children
+      ) : loadError ? (
+        <div className="proj-hub-content">
+          <AlertBanner tone="danger" title="Could not load project">
+            {loadError}
+          </AlertBanner>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="db-retry-btn"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : (
+        <div className="proj-hub-content">{children}</div>
+      )}
     </>
   );
 }

@@ -2,8 +2,8 @@
  * Coverage for the id-aware task search predicate: `looksLikeIdFragment`
  * gates the id-prefix branch onto hex/UUID-shaped queries only, and
  * `matchesTaskSearch` OR's that branch onto the existing title/description/
- * externalRef/labels text search used by the dashboard's client-side filter
- * (frontend/src/app/dashboard/page.tsx).
+ * externalRef/labels text search used by the board's client-side filter
+ * (frontend/src/app/projects/[id]/board/page.tsx).
  */
 import { describe, it, expect } from "vitest";
 

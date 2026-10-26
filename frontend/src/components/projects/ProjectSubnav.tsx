@@ -6,6 +6,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { projectHubHref, type ProjectHubTab } from "../../lib/routes";
 
 interface ProjectSubnavProps {
   projectId: string;
@@ -13,29 +14,30 @@ interface ProjectSubnavProps {
 
 interface Tab {
   label: string;
-  /** Path segment after /projects/[id]. Empty string = overview. */
-  segment: string;
+  /** Path segment after /projects/[id]. null = overview (the hub root). */
+  segment: ProjectHubTab | null;
 }
 
 const TABS: Tab[] = [
-  { label: "Overview", segment: "" },
-  { label: "Settings", segment: "settings" },
+  { label: "Board", segment: "board" },
+  { label: "Overview", segment: null },
   { label: "Members", segment: "members" },
   { label: "Workflow", segment: "workflow" },
+  { label: "Settings", segment: "settings" },
 ];
 
 export default function ProjectSubnav({ projectId }: ProjectSubnavProps) {
   const pathname = usePathname();
-  const base = `/projects/${projectId}`;
+  const base = projectHubHref(projectId);
 
   return (
     <nav className="proj-subnav" aria-label="Project sections">
       {TABS.map((tab) => {
-        const href = tab.segment ? `${base}/${tab.segment}` : base;
-        // Overview is an exact match; other tabs use prefix match so
-        // nested routes (e.g. /settings/something) stay highlighted.
+        const href = projectHubHref(projectId, tab.segment ?? undefined);
+        // Overview is an exact match; other tabs (Board included) use prefix
+        // match so nested routes (e.g. /settings/something) stay highlighted.
         const isActive =
-          tab.segment === ""
+          tab.segment === null
             ? pathname === base || pathname === `${base}/`
             : pathname === href || pathname.startsWith(`${href}/`);
         return (
