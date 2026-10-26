@@ -5835,6 +5835,7 @@ html[data-theme="light"] {
   min-width: 0;
   max-width: 100%;
   margin-left: 0;
+  min-height: 24px;
   padding: 2px var(--space-2);
   font-size: var(--text-xs);
   font-weight: 500;
@@ -5881,6 +5882,15 @@ html[data-theme="light"] {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.5;
+}
+
+/* text-overflow does not reach the anonymous flex item of an inline-flex
+   chip, so the label carries the ellipsis itself. */
+.proj-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 a.proj-chip:hover {

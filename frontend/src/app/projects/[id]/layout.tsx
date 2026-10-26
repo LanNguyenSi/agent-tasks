@@ -168,7 +168,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
         ) : project ? (
           <div className="proj-hub-title-row">
             <h1 className="proj-hub-name">{project.name}</h1>
-            <span className="proj-chip">{project.slug}</span>
+            <span className="proj-chip"><span className="proj-chip-text">{project.slug}</span></span>
             {project.githubRepo && (
               <a
                 href={`https://github.com/${project.githubRepo}`}
@@ -176,7 +176,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
                 rel="noopener noreferrer"
                 className="proj-chip"
               >
-                {project.githubRepo}
+                <span className="proj-chip-text">{project.githubRepo}</span>
               </a>
             )}
             {govLabel && (
