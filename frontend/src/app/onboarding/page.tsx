@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, createTeam, logout, type User } from "../../lib/api";
 import { getAccessContext } from "../../lib/access";
+import { rememberTeam } from "../../lib/currentTeam";
+import { sectionHref } from "../../lib/teamSwitch";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
@@ -18,6 +20,9 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<"loading" | "create-team" | "redirect">("loading");
   // A team-less user who already has shared projects may skip team creation.
   const [canSkip, setCanSkip] = useState(false);
+  // `?create=team`: a user who already has a team opens the form on purpose
+  // (the "New team" entries in the header), so the has-a-team redirect is off.
+  const [createMode, setCreateMode] = useState(false);
 
   // Create team form
   const [teamName, setTeamName] = useState("");
@@ -37,7 +42,11 @@ export default function OnboardingPage() {
       const ctx = await getAccessContext();
       setLoading(false);
 
-      if (ctx.teams.length > 0) {
+      const wantsCreate =
+        new URLSearchParams(window.location.search).get("create") === "team";
+      setCreateMode(wantsCreate);
+
+      if (ctx.teams.length > 0 && !wantsCreate) {
         // Already has teams, send them straight to home. Only this branch
         // redirects: a user without teams stays here (the form, plus a skip
         // link when they have shared projects), so /home <-> /onboarding
@@ -72,8 +81,10 @@ export default function OnboardingPage() {
     setCreating(true);
     setError(null);
     try {
-      await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
-      router.replace("/home");
+      const team = await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
+      // Switch to the new team: remember it and open its Home.
+      rememberTeam(team.id);
+      router.replace(sectionHref("home", team.id));
     } catch (err) {
       setError((err as Error).message);
       setCreating(false);
@@ -86,8 +97,12 @@ export default function OnboardingPage() {
 
   return (
     <AuthShell
-      heading="Create your first team"
-      subtitle="You will be up and running in under a minute."
+      heading={createMode ? "Create a new team" : "Create your first team"}
+      subtitle={
+        createMode
+          ? "Your other teams stay as they are."
+          : "You will be up and running in under a minute."
+      }
     >
       {/* Sign-out link: ghost Button aligned to the right, above the card */}
       <div className="auth-signout-row">
@@ -104,7 +119,7 @@ export default function OnboardingPage() {
       </div>
 
       <div className="auth-form-grid">
-        {user && (
+        {user && !createMode && (
           <div className="auth-welcome-header">
             {user.avatarUrl && (
               // eslint-disable-next-line @next/next/no-img-element -- external avatar URL, not a static asset
@@ -173,7 +188,13 @@ export default function OnboardingPage() {
           </Button>
         </form>
 
-        {canSkip && (
+        {createMode && (
+          <p className="auth-muted-line">
+            <Link href="/home">Cancel</Link>
+          </p>
+        )}
+
+        {canSkip && !createMode && (
           <p className="auth-muted-line">
             <Link href="/home">Skip for now</Link>
             {" "}(you can create a team later from Home).

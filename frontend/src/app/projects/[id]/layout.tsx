@@ -38,12 +38,7 @@ import ProjectPicker, { type ProjectOption } from "../../../components/dashboard
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import { PageShell } from "../../../components/ui/PageShell";
-
-const GOV_LABELS: Record<string, string> = {
-  REQUIRES_DISTINCT_REVIEWER: "Dual-control",
-  AWAITS_CONFIRMATION: "Awaits confirm",
-  AUTONOMOUS: "Autonomous",
-};
+import { GOVERNANCE_LABELS } from "../../../lib/governance";
 
 export default function ProjectLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ id: string }>();
@@ -130,7 +125,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   }
 
   const govLabel = project?.governanceMode
-    ? GOV_LABELS[project.governanceMode]
+    ? GOVERNANCE_LABELS[project.governanceMode]
     : null;
 
   // The Projects page of this project's team. Until the project is loaded the
