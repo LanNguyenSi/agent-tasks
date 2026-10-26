@@ -315,7 +315,8 @@ describe("TaskMetaSidebar labels editor", () => {
 describe("TaskMetaSidebar confidence tier", () => {
   // The sidebar bar/number must carry the SAME tier colour class the badge
   // uses, driven by the confidenceTier prop TaskDetail computes with the
-  // badge's own getConfidenceTier against the effective threshold.
+  // badge's own getConfidenceTier against the effective threshold. The row
+  // is labeled "Spec" (the badge's name) and the number carries no "/100".
   function renderWithScore(score: number | null, tier?: "complete" | "partial" | "thin") {
     return render(
       <TaskMetaSidebar
@@ -343,6 +344,15 @@ describe("TaskMetaSidebar confidence tier", () => {
     expect(container.querySelector(".td-conf-bar-fill")).toBeInTheDocument();
   });
 
+  it("labels the row Spec and shows the bare number, no Confidence label and no /100", () => {
+    const { container } = renderWithScore(68, "partial");
+    expect(screen.getByText("Spec")).toBeInTheDocument();
+    expect(screen.queryByText("Confidence")).not.toBeInTheDocument();
+    const num = container.querySelector(".td-conf-num");
+    expect(num).toHaveTextContent("68");
+    expect(num?.textContent).toBe("68");
+  });
+
   it("a score without a tier prop keeps the bar neutral (no modifier)", () => {
     const { container } = renderWithScore(82);
     const conf = container.querySelector(".td-conf");
@@ -353,7 +363,7 @@ describe("TaskMetaSidebar confidence tier", () => {
   it("a null score renders no confidence row at all, tier or not", () => {
     const { container } = renderWithScore(null, "complete");
     expect(container.querySelector(".td-conf")).toBeNull();
-    expect(screen.queryByText("Confidence")).toBeNull();
+    expect(screen.queryByText("Spec")).toBeNull();
   });
 });
 

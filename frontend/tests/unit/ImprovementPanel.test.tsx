@@ -171,15 +171,33 @@ describe("ImprovementPanel", () => {
       ],
     });
 
-    it("reads as below-threshold and expands by default even though the raw score clears it", () => {
+    it("names the required-field block (not a below-threshold miss) and expands by default even though the raw score clears it", () => {
       render(<ImprovementPanel confidence={confidence} />);
       expect(screen.getByText("Template check")).toBeInTheDocument();
       expect(screen.queryByText(/85\/100/)).not.toBeInTheDocument();
-      expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
+      // The score clears the threshold, so the fail is the keystone block,
+      // not a threshold miss; the verdict must not claim "Below the 60
+      // threshold" next to an 85.
+      expect(screen.getByText("Blocked by a required field")).toBeInTheDocument();
+      expect(screen.queryByText(/Below the 60 threshold/)).not.toBeInTheDocument();
       expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: /Improvement panel/ }),
       ).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("keeps the below-threshold verdict when blocking AND the score is below the threshold", () => {
+      const belowAndBlocked = makeConfidence({
+        score: 40,
+        threshold: 60,
+        blocking: true,
+        findings: [],
+      });
+      render(<ImprovementPanel confidence={belowAndBlocked} />);
+      // Score below threshold: the threshold miss is the honest verdict;
+      // "Blocked by a required field" is reserved for at-or-above scores.
+      expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
+      expect(screen.queryByText("Blocked by a required field")).not.toBeInTheDocument();
     });
 
     it("uses the danger tone", () => {

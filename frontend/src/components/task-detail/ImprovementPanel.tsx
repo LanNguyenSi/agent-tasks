@@ -205,7 +205,9 @@ export default function ImprovementPanel({
         <span className="ip-verdict">
           {passes
             ? `At or above the ${threshold} threshold`
-            : `Below the ${threshold} threshold`}
+            : blocking && score >= threshold
+              ? "Blocked by a required field"
+              : `Below the ${threshold} threshold`}
         </span>
       </button>
 

@@ -498,6 +498,8 @@ export default function ProjectBoardPage() {
           tasks={filteredTasks}
           activeTaskId={activeTaskId}
           templateFields={templateFields}
+          confidenceThreshold={selectedProject?.confidenceThreshold ?? null}
+          taskTypeThresholds={selectedProject?.taskTypeThresholds ?? null}
           onSelectTask={selectTask}
           onAddTask={(status) => {
             // BoardView only renders the + on Backlog/Open columns, so
@@ -549,6 +551,8 @@ export default function ProjectBoardPage() {
         templateFields={templateFields}
         templatePresets={selectedProject?.taskTemplate?.presets ?? []}
         enforcementMode={selectedProject?.enforcementMode ?? null}
+        confidenceThreshold={selectedProject?.confidenceThreshold ?? null}
+        taskTypeThresholds={selectedProject?.taskTypeThresholds ?? null}
         initialStatus={newTaskInitialStatus}
         onTaskCreated={(task) => {
           setTasks((prev) => [task, ...prev]);

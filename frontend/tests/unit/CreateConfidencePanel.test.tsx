@@ -79,6 +79,38 @@ describe("CreateConfidencePanel", () => {
     expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
   });
 
+  // The badge and the verdict sentence sit side by side, so the badge must
+  // tier against the SAME server threshold the sentence compares against.
+  it("tiers the badge against the server threshold and names it in the tooltip", () => {
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, score: 70, threshold: 80 }}
+        enforcementMode={null} status="open"
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
+    // 70 vs the project threshold 80 (not the global default 60): partial.
+    const badge = screen.getByText(/^Spec 70, partial$/);
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute("title", "How complete the task spec is (0-100). Project threshold: 80.");
+    expect(screen.getByText(/At or above the 80 threshold|Below the 80 threshold/)).toBeInTheDocument();
+  });
+
+  it("reads the badge complete when the score clears the server threshold even below the global default", () => {
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, score: 40, threshold: 30 }}
+        enforcementMode={null} status="open"
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
+    // 40 vs 30: complete, though the global-default tier would say partial.
+    expect(screen.getByText(/^Spec 40, complete$/)).toBeInTheDocument();
+    expect(screen.getByText(/At or above the 30 threshold/)).toBeInTheDocument();
+  });
+
   it("shows a self-assignment failure alongside the confidence", () => {
     render(
       <CreateConfidencePanel

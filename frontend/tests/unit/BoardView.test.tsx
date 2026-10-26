@@ -133,3 +133,90 @@ describe("BoardView -- backlog column", () => {
     expect(within(backlogColumn).getByText("0")).toBeInTheDocument();
   });
 });
+
+// Card badge tiers against the project's EFFECTIVE threshold (same resolver
+// as the task page), so card and task page never disagree on the tier.
+describe("BoardView -- card badge tier vs project threshold", () => {
+  // Fixture computed by the client scorer mirror to exactly 70.
+  const SCORE70_DESCRIPTION = [
+    "Context: endpoint https://example.internal/reports/export reads `src/reports/export.ts`; during a 30-second refresh window viewers receive fifteen-minute-old rows plus duplicated 12-row batches.",
+    "",
+    "Goal: return rows stamped at request time, cached per session, headers unchanged except freshness markers.",
+    "",
+    "- verify via integration spec tests/reports-export.test.ts asserting timestamps increase",
+    "- run npm test locally until the suite reports green",
+    "- check response header `X-Report-Stale` disappears",
+    "1. rollback plan: revert the single commit, no migration needed",
+    "",
+    "Only export.ts and its own tests change; database schema remains untouched.",
+  ].join("\n");
+
+  const tasks: Task[] = [
+    task({
+      id: "o-70",
+      title: "Refresh report export rows",
+      status: "open",
+      description: SCORE70_DESCRIPTION,
+    }),
+  ];
+
+  it("shows Spec 70, partial when the project threshold is 80 (below it, above half)", () => {
+    render(
+      <BoardView
+        tasks={tasks}
+        activeTaskId={null}
+        templateFields={null}
+        confidenceThreshold={80}
+        onSelectTask={() => {}}
+      />,
+    );
+    const badge = within(screen.getByLabelText("Open, 1 task")).getByText(/^Spec 70, partial$/);
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 80.",
+    );
+  });
+
+  it("shows Spec 70, complete with no threshold threaded (global default 60 fallback, unnamed tooltip)", () => {
+    render(
+      <BoardView
+        tasks={tasks}
+        activeTaskId={null}
+        templateFields={null}
+        onSelectTask={() => {}}
+      />,
+    );
+    const badge = within(screen.getByLabelText("Open, 1 task")).getByText(/^Spec 70, complete$/);
+    // Threshold unknown to the caller: the global default tiers the badge,
+    // but the tooltip does not name a project threshold it does not have.
+    expect(badge).toHaveAttribute("title", "How complete the task spec is (0-100).");
+  });
+
+  it("prefers the taskType override over the project threshold for a typed card", () => {
+    const typed = [
+      task({
+        id: "o-70-t",
+        title: "Refresh report export rows",
+        status: "open",
+        description: SCORE70_DESCRIPTION,
+        templateData: { taskType: "feature" },
+      }),
+    ];
+    render(
+      <BoardView
+        tasks={typed}
+        activeTaskId={null}
+        templateFields={null}
+        confidenceThreshold={50}
+        taskTypeThresholds={{ feature: 80 }}
+        onSelectTask={() => {}}
+      />,
+    );
+    const badge = within(screen.getByLabelText("Open, 1 task")).getByText(/^Spec 70, partial$/);
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 80.",
+    );
+  });
+});

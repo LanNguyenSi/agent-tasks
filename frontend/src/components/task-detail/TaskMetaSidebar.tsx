@@ -457,10 +457,10 @@ export default function TaskMetaSidebar({
           })}
         </span>
 
-        {/* Confidence */}
+        {/* Spec score (label matches the badge's name; no "/100"). */}
         {confidenceScore !== null && (
           <>
-            <span className="td-prop-label">Confidence</span>
+            <span className="td-prop-label">Spec</span>
             <span className="td-prop-value">
               <span
                 className={[
@@ -477,7 +477,7 @@ export default function TaskMetaSidebar({
                     style={{ width: `${confidenceScore}%` }} /* dynamic: confidence percentage width */
                   />
                 </span>
-                <span className="td-conf-num num">{confidenceScore}/100</span>
+                <span className="td-conf-num num">{confidenceScore}</span>
               </span>
             </span>
           </>

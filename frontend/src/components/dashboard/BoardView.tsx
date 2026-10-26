@@ -11,7 +11,7 @@ import ConfidenceBadge from "../ConfidenceBadge";
 import { Badge, type BadgeTone } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { PriorityLabel } from "../ui/PriorityLabel";
-import { calculateConfidence } from "../../lib/confidence";
+import { calculateConfidence, resolveEffectiveThreshold, type TaskTypeThresholds } from "../../lib/confidence";
 import { STATUS_LABELS } from "../../lib/status";
 import {
   normalizeStatus,
@@ -65,16 +65,44 @@ interface TaskCardProps {
   active: boolean;
   /** Project task template, for the client-side confidence score. */
   templateFields: TaskTemplate["fields"] | null;
+  /** Project thresholds for the badge tier, same resolver TaskDetail uses,
+   *  so a card and its task page show the same tier. */
+  confidenceThreshold: number | null;
+  taskTypeThresholds: TaskTypeThresholds | null;
   onSelect: (taskId: string) => void;
 }
 
-const TaskCard = memo(function TaskCard({ task, active, templateFields, onSelect }: TaskCardProps) {
+const TaskCard = memo(function TaskCard({
+  task,
+  active,
+  templateFields,
+  confidenceThreshold,
+  taskTypeThresholds,
+  onSelect,
+}: TaskCardProps) {
   const overdue = isOverdue(task);
   const isDone = task.status === "done";
   const hasAssignee = !!(task.claimedByUser || task.claimedByAgent);
   const labels = task.labels ?? [];
   const firstLabel = labels[0];
   const extraLabelCount = labels.length - 1;
+  const confidence = calculateConfidence({
+    title: task.title,
+    description: task.description,
+    templateData: task.templateData,
+    templateFields,
+  });
+  // Tier against the project's effective threshold (same resolver TaskDetail
+  // uses). With no thresholds threaded from the page the badge keeps its own
+  // global-default fallback and omits the threshold sentence from the tooltip.
+  const effectiveThreshold =
+    confidenceThreshold === null && taskTypeThresholds === null
+      ? null
+      : resolveEffectiveThreshold(
+          confidence.inferredTaskType,
+          taskTypeThresholds,
+          confidenceThreshold,
+        ).effectiveThreshold;
 
   return (
     <button
@@ -95,14 +123,8 @@ const TaskCard = memo(function TaskCard({ task, active, templateFields, onSelect
         <PriorityLabel priority={task.priority} />
         {!isDone && (
           <ConfidenceBadge
-            score={
-              calculateConfidence({
-                title: task.title,
-                description: task.description,
-                templateData: task.templateData,
-                templateFields,
-              }).score
-            }
+            score={confidence.score}
+            threshold={effectiveThreshold}
             tabIndex={-1}
           />
         )}
@@ -160,6 +182,10 @@ interface BoardViewProps {
   activeTaskId: string | null;
   /** Project task template, threaded to each card's confidence score. */
   templateFields: TaskTemplate["fields"] | null;
+  /** Project thresholds threaded to each card's badge tier; omitted (or
+   *  null) falls back to the global default, like every other caller. */
+  confidenceThreshold?: number | null;
+  taskTypeThresholds?: TaskTypeThresholds | null;
   onSelectTask: (taskId: string) => void;
   onAddTask?: (status: Status) => void;
 }
@@ -168,6 +194,8 @@ export default function BoardView({
   tasks,
   activeTaskId,
   templateFields,
+  confidenceThreshold = null,
+  taskTypeThresholds = null,
   onSelectTask,
   onAddTask,
 }: BoardViewProps) {
@@ -221,6 +249,8 @@ export default function BoardView({
                       task={task}
                       active={task.id === activeTaskId}
                       templateFields={templateFields}
+                      confidenceThreshold={confidenceThreshold}
+                      taskTypeThresholds={taskTypeThresholds}
                       onSelect={onSelectTask}
                     />
                   ))}
