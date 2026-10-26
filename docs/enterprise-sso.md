@@ -57,14 +57,14 @@ scope**:
 - Tokens are team-scoped — a token for team A cannot configure team B, even
   with the scope present. The backend enforces `token.teamId === urlTeamId`.
 - Tokens carry their own revocation and rotation through the existing
-  `/settings → API Tokens` UI.
+  `/settings/team` (API Tokens) UI.
 - The session-based `authMiddleware` explicitly does **not** run for
   `/api/teams/:teamId/sso`, so only the scope-aware guard applies.
 
 A typical rollout:
 
 1. Team admin generates an API token with scope `sso:admin` under
-   Settings → API Tokens.
+   Team settings → API Tokens.
 2. Token is handed **out-of-band** (password manager, secure channel) to
    whoever owns IdP configuration — this is usually not the same person.
 3. That person opens `/settings/sso`, pastes the token, configures the IdP,
@@ -141,7 +141,7 @@ Copy the client ID and client secret. You'll paste them into the
 
 ### In agent-tasks
 
-1. **Generate an SSO admin token.** Settings → API Tokens → Create custom token →
+1. **Generate an SSO admin token.** Team settings → API Tokens → Create custom token →
    select the `sso:admin` scope. Copy the token.
 2. **Open `/settings/sso`**, paste the token, click "Unlock SSO settings".
 3. Fill in the form:
