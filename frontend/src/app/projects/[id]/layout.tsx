@@ -8,8 +8,11 @@
 //      team); choosing one opens the same tab of that project.
 //   2. A compact project identity row (name H1, slug chip, repo chip, gov badge).
 //   3. ProjectSubnav tab row (Board | Members | Workflow | Settings).
-//   4. {children} wrapped in a content container (the board excepted, see
-//      below); the board adds its toolbar directly below the band.
+//   4. {children} in the PageShell content slot (1200px, left-aligned; the
+//      board is wide and flush, see below); the board adds its toolbar
+//      directly below the band.
+// The band is the PageShell header slot, full width with the page gutter, so
+// it keeps its place on every tab. The shell renders the page's only <main>.
 //
 // Child pages render no project heading of their own; this layout owns the
 // page's only H1.
@@ -34,6 +37,7 @@ import ProjectSubnav from "../../../components/projects/ProjectSubnav";
 import ProjectPicker, { type ProjectOption } from "../../../components/dashboard/ProjectPicker";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
+import { PageShell } from "../../../components/ui/PageShell";
 
 const GOV_LABELS: Record<string, string> = {
   REQUIRES_DISTINCT_REVIEWER: "Dual-control",
@@ -133,7 +137,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   // plain Projects link keeps the row height stable.
   const crumbHref = project ? projectsHref({ teamId: project.teamId }) : projectsHref();
 
-  return (
+  const hubBand = (
     <>
       <div className="proj-hub-header">
         <nav className="proj-hub-breadcrumb" aria-label="Breadcrumb">
@@ -189,16 +193,28 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
       </div>
 
       <ProjectSubnav projectId={projectId} />
+    </>
+  );
 
-      {/* The board keeps the full-width canvas its column breakpoints
-          (.db-board, viewport media queries) are written for; the
-          1200px content container would squeeze its five columns. */}
-      {segment === "board" ? (
-        // The board runs its own project load and shows its own error banner
-        // with Retry, so a failed hub load never replaces it.
-        children
-      ) : loadError ? (
-        <div className="proj-hub-content">
+  // One <main> for every tab. The hub band (identity header and tab row) is
+  // the shell's full-width header slot, so it does not move between tabs. The
+  // board keeps the full-width canvas its column breakpoints (.db-board,
+  // viewport media queries) are written for and owns its side gutter (flush);
+  // the other tabs sit in the 1200px content column, left-aligned.
+  if (segment === "board") {
+    // The board runs its own project load and shows its own error banner
+    // with Retry, so a failed hub load never replaces it.
+    return (
+      <PageShell variant="wide" flush header={hubBand}>
+        {children}
+      </PageShell>
+    );
+  }
+
+  return (
+    <PageShell header={hubBand}>
+      {loadError ? (
+        <>
           <AlertBanner tone="danger" title="Could not load project">
             {loadError}
           </AlertBanner>
@@ -210,10 +226,10 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
           >
             Retry
           </Button>
-        </div>
+        </>
       ) : (
-        <div className="proj-hub-content">{children}</div>
+        children
       )}
-    </>
+    </PageShell>
   );
 }

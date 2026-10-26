@@ -8,11 +8,17 @@ html[data-theme="light"] {
 }
 
 :root {
+  /* Side gutter shared by the app header, page headers, project hub band and
+     content slots (see PageShell); tightens on narrow screens. */
+  --page-gutter: 24px;
+
   /* Surfaces (3 elevation steps + page) */
   --bg: #08090c;
   --surface: #0e1014;
   --surface-raised: #14171c;
   --surface-hover: #191d24;
+  /* Selected/current item on a bare surface (header nav): stronger than hover */
+  --surface-active: #1e222a;
 
   /* Hairlines */
   --border: #ffffff0f;
@@ -96,6 +102,12 @@ html[data-theme="light"] {
   /* Typography */
   --font: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", monospace;
+}
+
+@media (max-width: 600px) {
+  :root {
+    --page-gutter: 12px;
+  }
 }
 
 /* ── Reset ────────────────────────────────────────────────────── */
@@ -347,6 +359,42 @@ input[type="checkbox"] {
   margin: 0 auto;
   min-height: 100vh;
   padding: var(--space-5);
+}
+
+/* PageShell (components/ui/PageShell.tsx): one <main>, full-width header
+   bands, a content slot whose left edge is the page gutter. The header bands
+   (app header, PageHeader, project hub band) take the same token for their own
+   side padding. */
+.pshell {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.pshell-content {
+  width: 100%;
+  padding: var(--space-5) var(--page-gutter);
+}
+
+.pshell-content--default {
+  max-width: calc(1200px + 2 * var(--page-gutter));
+}
+
+.pshell-content--narrow {
+  max-width: calc(760px + 2 * var(--page-gutter));
+}
+
+.pshell-content--wide {
+  max-width: none;
+}
+
+.pshell-content--centered {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* The children own their side padding (board, tasks list, task detail). */
+.pshell-content--flush {
+  padding: 0;
 }
 
 /* Full-viewport column shell for the landing page */
@@ -743,7 +791,7 @@ input[type="checkbox"] {
 
 .app-header-inner {
   height: 100%;
-  padding: 0 var(--space-5);
+  padding: 0 var(--page-gutter);
   display: flex;
   align-items: center;
   gap: var(--space-5);
@@ -786,12 +834,12 @@ input[type="checkbox"] {
 
 .app-nav-link:hover {
   color: var(--text);
-  background: color-mix(in srgb, white 3%, transparent);
+  background: var(--surface-hover);
 }
 
 .app-nav-link[aria-current="page"] {
   color: var(--text);
-  background: color-mix(in srgb, white 5%, transparent);
+  background: var(--surface-active);
 }
 
 .app-nav-spacer {
@@ -2595,7 +2643,7 @@ input[type="checkbox"] {
   justify-content: space-between;
   gap: var(--space-4);
   min-height: 52px;
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--page-gutter);
   background: color-mix(in srgb, var(--bg) 85%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
@@ -3066,6 +3114,7 @@ html[data-theme="light"] {
   --surface: #ffffff;
   --surface-raised: #ffffff;
   --surface-hover: #f1f3f6;
+  --surface-active: #e4e7ec;
 
   /* Hairlines: black alphas mirror the white-alpha dark values */
   --border: #0000000f;
@@ -3271,14 +3320,6 @@ html[data-theme="light"] {
   }
 }
 
-/* Same side gutter as the hub band above it. */
-@media (max-width: 600px) {
-  .db-toolbar {
-    padding-left: var(--space-3);
-    padding-right: var(--space-3);
-  }
-}
-
 /* Search input in the toolbar */
 .db-search {
   display: flex;
@@ -3361,7 +3402,7 @@ html[data-theme="light"] {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-5) var(--space-6);
+  padding: var(--space-4) var(--page-gutter) var(--space-6);
   align-items: start;
 }
 
@@ -4014,15 +4055,9 @@ html[data-theme="light"] {
  * All geometry lives here; no inline style blocks in tasks/page.tsx.
  */
 
-.tasks-shell {
-  min-height: 100vh;
-}
-
 /* Scrollable content area below the sticky PageHeader */
 .tasks-content {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--space-5);
+  padding: var(--space-5) var(--page-gutter);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -4173,7 +4208,7 @@ html[data-theme="light"] {
   justify-content: space-between;
   gap: var(--space-4);
   min-height: 52px;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--page-gutter);
   background: color-mix(in srgb, var(--bg) 85%, transparent);
   border-bottom: 1px solid var(--border);
 }
@@ -4191,9 +4226,7 @@ html[data-theme="light"] {
 }
 
 .tasks-skeleton-tabs {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--page-gutter);
   display: flex;
   gap: var(--space-2);
 }
@@ -4219,9 +4252,9 @@ html[data-theme="light"] {
 
 /* Page context frame */
 .td-page {
-  max-width: 1168px;
-  margin: 0 auto;
-  padding: var(--space-5) var(--space-5) 0;
+  max-width: calc(1200px + 2 * var(--page-gutter));
+  margin: 0;
+  padding: var(--space-5) var(--page-gutter) 0;
 }
 
 /* Breadcrumb */
@@ -5942,9 +5975,7 @@ html[data-theme="light"] {
 
 /* Compact identity header rendered by the /projects/[id] layout */
 .proj-hub-header {
-  padding: var(--space-4) var(--space-5) 0;
-  max-width: 1200px;
-  margin: 0 auto;
+  padding: var(--space-4) var(--page-gutter) 0;
 }
 
 /* Crumb `Projects / <project picker>`; mirrors .page-header-breadcrumb. The
@@ -6067,9 +6098,10 @@ a.proj-chip:hover {
   display: flex;
   align-items: flex-end;
   gap: 0;
-  padding: 0 var(--space-5);
-  max-width: 1200px;
-  margin: var(--space-3) auto 0;
+  /* The first tab's own side padding is taken out of the gutter so its text
+     (not its hit area) sits on the page's left edge. */
+  padding: 0 calc(var(--page-gutter) - var(--space-3));
+  margin: var(--space-3) 0 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -6077,7 +6109,7 @@ a.proj-chip:hover {
    The 1px bottom padding keeps the active underline inside the scroll box. */
 @media (max-width: 600px) {
   .proj-subnav {
-    padding: 0 var(--space-3) 1px;
+    padding: 0 0 1px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
@@ -6089,11 +6121,6 @@ a.proj-chip:hover {
 
   .proj-subnav-link {
     flex-shrink: 0;
-  }
-
-  .proj-hub-header {
-    padding-left: var(--space-3);
-    padding-right: var(--space-3);
   }
 }
 
@@ -6121,13 +6148,6 @@ a.proj-chip:hover {
 .proj-subnav-link[aria-current="page"] {
   color: var(--text);
   border-bottom-color: var(--primary);
-}
-
-/* Page content wrapper below the subnav */
-.proj-hub-content {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--space-5);
 }
 
 /* Section heading + description inside settings cards */
@@ -6895,11 +6915,6 @@ a.proj-chip:hover {
 }
 
 /* ── Settings v2 ──────────────────────────────────────────────────────────── */
-
-/* Narrow page shell variant (SSO settings page). */
-.page-shell--narrow {
-  max-width: 760px;
-}
 
 /* Two-column layout: 240px sticky side nav + content. */
 .settings-layout {

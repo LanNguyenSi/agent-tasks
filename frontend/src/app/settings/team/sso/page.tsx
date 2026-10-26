@@ -7,6 +7,7 @@ import Card from "../../../../components/ui/Card";
 import ConfirmDialog from "../../../../components/ui/ConfirmDialog";
 import FormField from "../../../../components/ui/FormField";
 import { PageHeader } from "../../../../components/ui/PageHeader";
+import { PageShell } from "../../../../components/ui/PageShell";
 import { apiTokensSettingsHref, teamSettingsHref } from "../../../../lib/routes";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
@@ -182,16 +183,19 @@ export default function SsoSettingsPage() {
   }
 
   return (
-    <main className="page-shell page-shell--narrow">
-      <PageHeader
-        breadcrumb={
-          <a href={teamSettingsHref()} className="settings-breadcrumb">
-            Team settings
-          </a>
-        }
-        title="Enterprise SSO (OIDC)"
-      />
-
+    <PageShell
+      variant="narrow"
+      header={
+        <PageHeader
+          breadcrumb={
+            <a href={teamSettingsHref()} className="settings-breadcrumb">
+              Team settings
+            </a>
+          }
+          title="Enterprise SSO (OIDC)"
+        />
+      }
+    >
       <p className="settings-section-desc">
         Configure your team&apos;s identity provider. This page is gated by a dedicated
         API token with the <code>sso:admin</code> scope -- not by your normal session --
@@ -364,6 +368,6 @@ export default function SsoSettingsPage() {
         onConfirm={() => void handleDelete()}
         onCancel={() => setDeleteConfirmOpen(false)}
       />
-    </main>
+    </PageShell>
   );
 }
