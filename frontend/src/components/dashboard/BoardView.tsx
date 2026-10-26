@@ -88,20 +88,24 @@ const TaskCard = memo(function TaskCard({ task, active, templateFields, onSelect
         .join(" ")}
       onClick={() => onSelect(task.id)}
     >
-      {/* Top row: priority + confidence + (optional) PR chip */}
+      {/* Top row: priority + confidence + (optional) PR chip.
+          Done-column cards show no spec badge; the score
+          only steers work that is still live. */}
       <div className="db-card-top">
         <PriorityLabel priority={task.priority} />
-        <ConfidenceBadge
-          score={
-            calculateConfidence({
-              title: task.title,
-              description: task.description,
-              templateData: task.templateData,
-              templateFields,
-            }).score
-          }
-          tabIndex={-1}
-        />
+        {!isDone && (
+          <ConfidenceBadge
+            score={
+              calculateConfidence({
+                title: task.title,
+                description: task.description,
+                templateData: task.templateData,
+                templateFields,
+              }).score
+            }
+            tabIndex={-1}
+          />
+        )}
         {task.prNumber != null && (
           <span className="db-card-pr-chip">
             <Icon name="pr" size={11} />

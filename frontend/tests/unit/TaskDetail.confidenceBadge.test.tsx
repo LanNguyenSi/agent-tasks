@@ -130,6 +130,45 @@ describe("TaskDetail — Agent Template badge uses the EFFECTIVE (per-task-type)
     expect(screen.queryByText(/Below threshold/)).toBeNull();
   });
 
+  it("badge tooltip names the EFFECTIVE threshold and the sidebar carries the same tier class", () => {
+    const { container } = render(
+      <TaskDetail
+        task={makeTask()}
+        {...baseProps}
+        confidenceThreshold={60}
+        taskTypeThresholds={{ security: 90 }}
+      />,
+    );
+    // 75 clears the flat 60 but not the security override 90: the tier (and
+    // with it the sidebar colour) follows the EFFECTIVE threshold; partial
+    // (75 >= 45, < 90), not complete.
+    const badge = screen.getByText(/^Spec \d+, (complete|partial|thin)$/);
+    expect(badge.className).toContain("confidence-badge--partial");
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 90.",
+    );
+    expect(container.querySelector(".td-conf.td-conf--partial")).toBeInTheDocument();
+  });
+
+  it("same task without an override: badge tier complete against the flat 60 and sidebar matches", () => {
+    const { container } = render(
+      <TaskDetail
+        task={makeTask()}
+        {...baseProps}
+        confidenceThreshold={60}
+        taskTypeThresholds={null}
+      />,
+    );
+    const badge = screen.getByText(/^Spec \d+, (complete|partial|thin)$/);
+    expect(badge.className).toContain("confidence-badge--complete");
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 60.",
+    );
+    expect(container.querySelector(".td-conf.td-conf--complete")).toBeInTheDocument();
+  });
+
   it("untyped task (no templateData.taskType): a security override never applies, badge uses the flat threshold", () => {
     render(
       <TaskDetail

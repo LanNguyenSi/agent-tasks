@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import type { ClaimHolder, Task, User } from "@/lib/api";
+import type { ConfidenceTier } from "@/components/ConfidenceBadge";
 import { normalizeStatus } from "@/lib/status";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { PriorityLabel } from "@/components/ui/PriorityLabel";
@@ -25,6 +26,11 @@ interface TaskMetaSidebarProps {
   task: Task;
   user: User | null;
   confidenceScore: number | null;
+  /** Tier of `confidenceScore` against the EFFECTIVE threshold, computed by
+   *  TaskDetail with the badge's own getConfidenceTier so the sidebar bar and
+   *  number carry the SAME tier colour as the badge. Omitted =
+   *  no tier modifier, legacy neutral look. */
+  confidenceTier?: ConfidenceTier;
   onRelease: () => void;
   claimBusy: boolean;
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN.
@@ -105,6 +111,7 @@ export default function TaskMetaSidebar({
   task,
   user,
   confidenceScore,
+  confidenceTier,
   onRelease,
   claimBusy,
   isProjectAdmin,
@@ -455,7 +462,14 @@ export default function TaskMetaSidebar({
           <>
             <span className="td-prop-label">Confidence</span>
             <span className="td-prop-value">
-              <span className="td-conf">
+              <span
+                className={[
+                  "td-conf",
+                  confidenceTier ? `td-conf--${confidenceTier}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
                 <span className="td-conf-bar" aria-hidden="true">
                   <span
                     className="td-conf-bar-fill"

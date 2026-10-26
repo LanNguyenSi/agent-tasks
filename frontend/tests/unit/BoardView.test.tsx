@@ -99,6 +99,26 @@ describe("BoardView -- backlog column", () => {
     expect(within(doneColumn).queryByLabelText("Add task to Done")).not.toBeInTheDocument();
   });
 
+  it("shows no confidence badge on Done-column cards but keeps it on live columns", () => {
+    const allColumnTasks: Task[] = [
+      task({ id: "o-1", title: "An open task", status: "open" }),
+      task({ id: "d-1", title: "A done task", status: "done" }),
+    ];
+    render(
+      <BoardView
+        tasks={allColumnTasks}
+        activeTaskId={null}
+        templateFields={null}
+        onSelectTask={() => {}}
+      />,
+    );
+    const openColumn = screen.getByLabelText("Open, 1 task");
+    expect(within(openColumn).getByText(/^Spec \d+/)).toBeInTheDocument();
+    const doneColumn = screen.getByLabelText("Done, 1 task");
+    expect(within(doneColumn).queryByText(/^Spec \d+/)).not.toBeInTheDocument();
+    expect(within(doneColumn).getByText("A done task")).toBeInTheDocument();
+  });
+
   it("shows an empty Backlog column with a 0 count when there are no backlog tasks", () => {
     render(
       <BoardView

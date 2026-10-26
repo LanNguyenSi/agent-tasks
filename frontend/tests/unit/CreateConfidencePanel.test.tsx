@@ -31,7 +31,8 @@ describe("CreateConfidencePanel", () => {
   it("renders the server score, humanized missing fields, and the nextActions", () => {
     render(<CreateConfidencePanel confidence={base} enforcementMode={null} status="open" onEdit={noop} onClose={noop} />);
 
-    expect(screen.getByText(/62\/100/)).toBeInTheDocument();
+    // the badge reads "Spec 62, complete" (named, no "/100").
+    expect(screen.getByText(/^Spec 62, complete$/)).toBeInTheDocument();
     expect(screen.getByText(/At or above the 60 threshold/)).toBeInTheDocument();
     // camelCase keys are humanized and comma-joined.
     expect(screen.getByText(/Goal, Acceptance Criteria, Out Of Scope/)).toBeInTheDocument();
@@ -90,7 +91,7 @@ describe("CreateConfidencePanel", () => {
     );
     expect(screen.getByRole("alert")).toHaveTextContent("Self-assignment failed: forbidden");
     // The confidence verdict still renders.
-    expect(screen.getByText(/62\/100/)).toBeInTheDocument();
+    expect(screen.getByText(/^Spec 62, complete$/)).toBeInTheDocument();
   });
 
   it("wires the Edit task and Close buttons", async () => {
