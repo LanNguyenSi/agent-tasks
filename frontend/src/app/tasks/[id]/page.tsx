@@ -24,6 +24,7 @@ import TaskDetail from "../../../components/TaskDetail";
 import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../../lib/confidence";
 import { boardHref, safeBackHref } from "../../../lib/routes";
 import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
+import { PageShell } from "../../../components/ui/PageShell";
 
 /**
  * Full-page ("maximized") task detail at /tasks/[id].
@@ -148,7 +149,7 @@ export default function TaskDetailPage() {
   }
 
   return (
-    <main className="page-shell">
+    <PageShell variant="wide" flush>
       {/* Visually hidden H1 for the document outline when the task hasn't
           loaded yet; once loaded, TaskDetail renders the real task-title H1. */}
       {loading && <h1 className="sr-only">Task Details</h1>}
@@ -192,6 +193,6 @@ export default function TaskDetailPage() {
           backHref={backHref}
         />
       )}
-    </main>
+    </PageShell>
   );
 }

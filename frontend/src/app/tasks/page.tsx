@@ -15,6 +15,7 @@ import { projectsHref, taskHref } from "../../lib/routes";
 import { useCurrentTeam } from "../../lib/teamSwitch";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { PageShell } from "../../components/ui/PageShell";
 import { Button } from "../../components/ui/Button";
 import { KeyHint } from "../../components/ui/KeyHint";
 import { Tabs } from "../../components/ui/Tabs";
@@ -66,7 +67,7 @@ const STATUS_CHIP_LABELS: Record<Status, string> = {
 // Full scope labels used as H1.
 const SCOPE_LABELS: Record<Scope, string> = {
   all: "All Tasks",
-  open: "Open Tasks",
+  open: "Active Tasks",
   mine: "My Tasks",
   priority: "Priority (High / Critical)",
   review: "In Review",
@@ -76,7 +77,7 @@ const SCOPE_LABELS: Record<Scope, string> = {
 // Shorter labels for the segmented control tabs.
 const SCOPE_TAB_LABELS: Record<Scope, string> = {
   all: "All",
-  open: "Open",
+  open: "Active",
   mine: "My Tasks",
   priority: "Priority",
   review: "In Review",
@@ -144,7 +145,7 @@ function parseSort(value: string | null): { column: SortColumn; direction: SortD
 // Used by both paths so the transition from Suspense -> inner -> loaded is smooth.
 function TasksPageSkeleton() {
   return (
-    <main className="tasks-shell" aria-busy="true">
+    <PageShell variant="wide" flush busy>
       <div className="tasks-skeleton-header">
         <div className="tasks-skeleton-header-left">
           <Skeleton width="160px" height="20px" />
@@ -164,7 +165,7 @@ function TasksPageSkeleton() {
         <span className="sr-only">Loading tasks</span>
         <SkeletonList rows={8} rowHeight="3rem" label="Loading tasks" />
       </div>
-    </main>
+    </PageShell>
   );
 }
 
@@ -572,7 +573,7 @@ function TasksPageInner() {
 
   if (bootError) {
     return (
-      <main className="tasks-shell">
+      <PageShell variant="wide" flush>
         <PageHeader title="All Tasks">
           <Button href={projectsHref()} variant="ghost" size="sm">
             Projects
@@ -591,13 +592,13 @@ function TasksPageInner() {
             Retry
           </Button>
         </div>
-      </main>
+      </PageShell>
     );
   }
 
   if (noTeam) {
     return (
-      <main className="tasks-shell">
+      <PageShell variant="wide" flush>
         <PageHeader title="All Tasks" />
         <div className="tasks-content">
           <EmptyState
@@ -612,14 +613,14 @@ function TasksPageInner() {
             }
           />
         </div>
-      </main>
+      </PageShell>
     );
   }
 
   // ── Main render ───────────────────────────────────────────────
 
   return (
-    <main className="tasks-shell">
+    <PageShell variant="wide" flush>
       {/* ── Sticky PageHeader: title + search + mine toggle + new task ── */}
       <PageHeader
         title={SCOPE_LABELS[scope]}
@@ -938,7 +939,7 @@ function TasksPageInner() {
           setDiscardTarget(null);
         }}
       />
-    </main>
+    </PageShell>
   );
 }
 
