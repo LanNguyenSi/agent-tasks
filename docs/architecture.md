@@ -141,14 +141,14 @@ agent-tasks/
 | `/dashboard` | Legacy: redirects to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/projects` |
 | `/tasks` | Task list |
 | `/tasks/[id]` | Task detail |
-| `/projects/[id]` | Project overview |
+| `/projects/[id]` | Legacy hub root: redirects to `/projects/<id>/board`, query kept |
 | `/projects/[id]/board` | Board + list view, task CRUD |
 | `/projects/[id]/settings` | Project settings |
 | `/projects/[id]/members` | Project members |
 | `/projects/[id]/workflow` | Workflow editor (states, transitions, agent instructions) |
 | `/settings` | Personal settings: account, appearance, GitHub connection, agent permissions |
 | `/settings/team` | Team settings: API tokens (Connect an agent, create, rename, revoke) and the Enterprise SSO entry |
-| `/settings/sso` | Team OIDC SSO connection |
+| `/settings/team/sso` | Team OIDC SSO connection; the old `/settings/sso` redirects here |
 | `/invite/[token]` | Accept a project share |
 | `/docs` | Interactive Swagger UI (served by backend) |
 

@@ -126,8 +126,8 @@ describe("settings routes", () => {
     expect(apiTokensSettingsHref()).toBe("/settings/team#api-tokens");
   });
 
-  it("ssoSettingsHref is the SSO sub-page", () => {
-    expect(ssoSettingsHref()).toBe("/settings/sso");
+  it("ssoSettingsHref is the SSO sub-page of team settings", () => {
+    expect(ssoSettingsHref()).toBe("/settings/team/sso");
   });
 });
 

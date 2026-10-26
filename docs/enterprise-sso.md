@@ -67,7 +67,7 @@ A typical rollout:
    Team settings → API Tokens.
 2. Token is handed **out-of-band** (password manager, secure channel) to
    whoever owns IdP configuration — this is usually not the same person.
-3. That person opens `/settings/sso`, pastes the token, configures the IdP,
+3. That person opens `/settings/team/sso`, pastes the token, configures the IdP,
    verifies login.
 4. Token is revoked once setup is done. A new token can be minted when the
    config next needs to change.
@@ -137,13 +137,13 @@ In your IdP (Okta, Azure AD, etc.), create an OIDC app with:
 - **Sign-in initiated by**: user (the frontend always starts the flow)
 
 Copy the client ID and client secret. You'll paste them into the
-`/settings/sso` page.
+`/settings/team/sso` page.
 
 ### In agent-tasks
 
 1. **Generate an SSO admin token.** Team settings → API Tokens → Create custom token →
    select the `sso:admin` scope. Copy the token.
-2. **Open `/settings/sso`**, paste the token, click "Unlock SSO settings".
+2. **Open `/settings/team/sso`**, paste the token, click "Unlock SSO settings".
 3. Fill in the form:
    - **Display name** — shown on the login page (e.g. "Acme Okta").
    - **Issuer URL** — the OIDC issuer, without `/.well-known/...`. agent-tasks
@@ -168,7 +168,7 @@ the `sso:admin` scope, **not** a session cookie.
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `GET`  | `/api/sso/whoami` | Returns the team the token belongs to and the current connection (or `null`). Used by the `/settings/sso` page to resolve the team without an out-of-band team ID. |
+| `GET`  | `/api/sso/whoami` | Returns the team the token belongs to and the current connection (or `null`). Used by the `/settings/team/sso` page to resolve the team without an out-of-band team ID. |
 | `GET`  | `/api/teams/:teamId/sso` | Current SSO connection for the team. `clientSecretEnc` is never returned. |
 | `PUT`  | `/api/teams/:teamId/sso` | Create or update. Fails with `400` if OIDC discovery fails or the domain is a blocked public-mail provider, and with `409` if a claimed domain is already owned by another team. |
 | `DELETE` | `/api/teams/:teamId/sso` | Remove the connection. Existing sessions for SSO-provisioned users are not invalidated. |

@@ -7,7 +7,7 @@
 //      current team's projects (the shared projects for a user without a
 //      team); choosing one opens the same tab of that project.
 //   2. A compact project identity row (name H1, slug chip, repo chip, gov badge).
-//   3. ProjectSubnav tab row (Board | Overview | Members | Workflow | Settings).
+//   3. ProjectSubnav tab row (Board | Members | Workflow | Settings).
 //   4. {children} wrapped in a content container (the board excepted, see
 //      below); the board adds its toolbar directly below the band.
 //
@@ -120,7 +120,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
     : [];
 
   // Choosing a project keeps the tab (board, members, ...); the hub root
-  // (Overview) has no segment.
+  // has no segment and redirects to the board.
   function switchProject(nextId: string) {
     router.push(projectHubHref(nextId, (segment as ProjectHubTab | null) ?? undefined));
   }

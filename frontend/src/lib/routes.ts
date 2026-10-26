@@ -33,8 +33,8 @@ export function projectsHref(params: { teamId?: string } = {}): string {
   return params.teamId ? `/projects?teamId=${params.teamId}` : "/projects";
 }
 
-/** Project hub under `/projects/<id>`: a tab, or the hub root (Overview)
- * when no tab is given. */
+/** Project hub under `/projects/<id>`: a tab, or the hub root when no tab is
+ * given (the hub root renders a redirect to the board). */
 export function projectHubHref(projectId: string, tab?: ProjectHubTab): string {
   return tab ? `/projects/${projectId}/${tab}` : `/projects/${projectId}`;
 }
@@ -54,8 +54,10 @@ export function apiTokensSettingsHref(): string {
   return teamSettingsHref("api-tokens");
 }
 
+/** SSO sub-page under team settings. The old `/settings/sso` URL redirects
+ * here (next.config.mjs redirects), query included. */
 export function ssoSettingsHref(): string {
-  return "/settings/sso";
+  return "/settings/team/sso";
 }
 
 /** Full-page task detail: `/tasks/<id>`. With `from` (an in-app list URL such
