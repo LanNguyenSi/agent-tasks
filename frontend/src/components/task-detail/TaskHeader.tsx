@@ -59,6 +59,10 @@ interface TaskHeaderProps {
   projectName?: string;
   /** Project id — used to build breadcrumb link */
   projectId?: string;
+  /** Validated list URL the page was opened from (see `safeBackHref`).
+   * When set, the page breadcrumb starts with a "Tasks" crumb linking to it;
+   * when absent that crumb is not rendered. Page context only. */
+  backHref?: string | null;
   isEditing: boolean;
   advanceBusy: boolean;
   onStartEditing: () => void;
@@ -109,6 +113,7 @@ export default function TaskHeader({
   teamId,
   projectName,
   projectId,
+  backHref,
   isEditing,
   advanceBusy,
   onStartEditing,
@@ -235,6 +240,14 @@ export default function TaskHeader({
       {/* Breadcrumb: page context only, rendered when project data is supplied */}
       {variant === "page" && teamId && (
         <nav className="td-breadcrumb" aria-label="Breadcrumb">
+          {backHref && (
+            <>
+              <Link href={backHref}>Tasks</Link>
+              <span className="td-breadcrumb-sep" aria-hidden="true">
+                /
+              </span>
+            </>
+          )}
           {teamName && (
             <>
               <Link href={boardHref({ teamId })}>{teamName}</Link>

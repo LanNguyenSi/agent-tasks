@@ -18,8 +18,10 @@ import { render, cleanup } from "@testing-library/react";
 import type { User, Team, Task, TeamTasksProject, TeamTasksCounts } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+const navState = vi.hoisted(() => ({ search: "" }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
+  useSearchParams: () => new URLSearchParams(navState.search),
 }));
 
 vi.mock("../../src/lib/api", () => ({
@@ -132,6 +134,7 @@ async function renderHomePage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  navState.search = "";
 });
 
 afterEach(() => {
@@ -161,6 +164,51 @@ describe("home page — shared scope order (stat strip + widget grid)", () => {
     );
 
     expect(titles).toEqual(EXPECTED_WIDGET_TITLES);
+  });
+});
+
+describe("home page — current-team resolution (lib/currentTeam)", () => {
+  it("a remembered team beats teams[0] when the URL carries no teamId", async () => {
+    mockGetCurrentUser.mockResolvedValue(makeUser());
+    mockGetTeams.mockResolvedValue([
+      makeTeam({ id: "team-1" }),
+      makeTeam({ id: "team-2", name: "Second" }),
+    ]);
+    mockGetTeamTasks.mockResolvedValue({
+      tasks: [],
+      projects: [makeProject()],
+      counts: makeCounts(),
+    });
+    // Same key lib/currentTeam rememberTeam writes (agent-tasks:lastTeamId).
+    window.localStorage.setItem("agent-tasks:lastTeamId", "team-2");
+
+    render(<HomeDashboardPage />);
+    await vi.waitFor(() => {
+      expect(mockGetTeamTasks).toHaveBeenCalledWith("team-2");
+    });
+    window.localStorage.clear();
+  });
+
+  it("a valid ?teamId wins and is remembered", async () => {
+    navState.search = "teamId=team-2";
+    mockGetCurrentUser.mockResolvedValue(makeUser());
+    mockGetTeams.mockResolvedValue([
+      makeTeam({ id: "team-1" }),
+      makeTeam({ id: "team-2", name: "Second" }),
+    ]);
+    mockGetTeamTasks.mockResolvedValue({
+      tasks: [],
+      projects: [makeProject()],
+      counts: makeCounts(),
+    });
+    window.localStorage.clear();
+
+    render(<HomeDashboardPage />);
+    await vi.waitFor(() => {
+      expect(mockGetTeamTasks).toHaveBeenCalledWith("team-2");
+    });
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
+    window.localStorage.clear();
   });
 });
 

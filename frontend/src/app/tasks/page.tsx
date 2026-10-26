@@ -12,7 +12,8 @@ import {
   type TeamTasksProject,
   type User,
 } from "../../lib/api";
-import { projectsHref } from "../../lib/routes";
+import { projectsHref, taskHref } from "../../lib/routes";
+import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { KeyHint } from "../../components/ui/KeyHint";
@@ -161,6 +162,11 @@ function TasksPageInner() {
   const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
+  // The list URL as it stands now (filters, sort, page). Task links carry it
+  // as `from`, so /tasks/[id] can return to exactly this view.
+  const listQuery = searchParams.toString();
+  const listHref = listQuery ? `/tasks?${listQuery}` : "/tasks";
+
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -242,8 +248,10 @@ function TasksPageInner() {
         const fetchedTeams = await getTeams();
         if (fetchedTeams.length === 0) { router.replace("/onboarding"); return; }
         setTeams(fetchedTeams);
-        const team =
-          fetchedTeams.find((t) => t.id === searchParams.get("teamId")) ?? fetchedTeams[0]!;
+        // Single current-team rule: ?teamId -> remembered team -> first team.
+        const urlTeamId = searchParams.get("teamId");
+        const team = resolveCurrentTeam(fetchedTeams, { urlTeamId })!; // non-empty list
+        if (team.id === urlTeamId) rememberTeam(team.id);
         setSelectedTeam(team);
         setLoading(false);
       } catch (err) {
@@ -255,10 +263,13 @@ function TasksPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // Keep selectedTeam in sync when the teamId param changes after bootstrap.
+  // Keep selectedTeam in sync when the teamId param changes after bootstrap
+  // (same current-team rule as the bootstrap above).
   useEffect(() => {
     if (teams.length === 0) return;
-    setSelectedTeam(teams.find((t) => t.id === teamIdParam) ?? teams[0]!);
+    const team = resolveCurrentTeam(teams, { urlTeamId: teamIdParam })!; // non-empty list
+    if (team.id === teamIdParam) rememberTeam(team.id);
+    setSelectedTeam(team);
   }, [teams, teamIdParam]);
 
   // Re-sync the search box when the URL query changes from outside.
@@ -764,7 +775,7 @@ function TasksPageInner() {
                 )}
                 rows={pagedTasks}
                 rowKey={(t) => t.id}
-                rowHref={(t) => `/tasks/${t.id}?${searchParams.toString()}`}
+                rowHref={(t) => taskHref(t.id, { from: listHref })}
                 sortKey={sort.column}
                 sortDirection={sort.direction === "asc" ? "ascending" : "descending"}
                 onSortChange={handleSortChange}
@@ -811,7 +822,7 @@ function TasksPageInner() {
         onClose={() => setNewTaskOpen(false)}
         projects={projects}
         onTaskCreated={() => setRetryToken((t) => t + 1)}
-        onEditTask={(id) => router.push(`/tasks/${id}`)}
+        onEditTask={(id) => router.push(taskHref(id, { from: listHref }))}
       />
 
       {/* Discard confirm — mirrors TaskDetail's delete-task confirm dialog */}

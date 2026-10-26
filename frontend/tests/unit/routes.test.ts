@@ -17,6 +17,8 @@ import {
   settingsHref,
   apiTokensSettingsHref,
   ssoSettingsHref,
+  taskHref,
+  safeBackHref,
 } from "../../src/lib/routes";
 
 describe("boardHref", () => {
@@ -113,5 +115,77 @@ describe("settings routes", () => {
 
   it("ssoSettingsHref is the SSO sub-page", () => {
     expect(ssoSettingsHref()).toBe("/settings/sso");
+  });
+});
+
+describe("taskHref", () => {
+  it("is the bare /tasks/<id> without a from (the pre-from template)", () => {
+    expect(taskHref("t-1")).toBe("/tasks/t-1");
+    expect(taskHref("t-1", {})).toBe("/tasks/t-1");
+  });
+
+  it("treats an empty from as absent", () => {
+    expect(taskHref("t-1", { from: "" })).toBe("/tasks/t-1");
+  });
+
+  it("encodes the whole list URL into one from parameter", () => {
+    expect(taskHref("t-1", { from: "/tasks?scope=open&q=a%20b" })).toBe(
+      "/tasks/t-1?from=%2Ftasks%3Fscope%3Dopen%26q%3Da%2520b",
+    );
+  });
+
+  it("round-trips through URLSearchParams and safeBackHref", () => {
+    const from = "/tasks?scope=open&status=open%2Creview&q=a%20b";
+    const query = taskHref("t-1", { from }).split("?")[1]!;
+    expect(safeBackHref(new URLSearchParams(query).get("from"))).toBe(from);
+  });
+});
+
+describe("safeBackHref", () => {
+  it("accepts the bare list", () => {
+    expect(safeBackHref("/tasks")).toBe("/tasks");
+  });
+
+  it("accepts the list with a query and returns it unchanged (no second decode)", () => {
+    expect(safeBackHref("/tasks?scope=open&q=a%20b")).toBe("/tasks?scope=open&q=a%20b");
+    expect(safeBackHref("/tasks?")).toBe("/tasks?");
+  });
+
+  // One row per rejected class. Each guard has an input only that guard
+  // rejects, so removing a single guard fails exactly its row.
+  it.each([
+    ["regex: path traversal", "/tasks/../x"],
+    ["regex: sub-path of /tasks", "/tasks/t-1"],
+    ["regex: longer first segment", "/tasksfoo"],
+    ["regex: another in-app path", "/dashboard"],
+    ["regex: absolute https URL", "https://evil.com"],
+    ["regex: javascript scheme", "javascript:alert(1)"],
+    ["regex: protocol-relative", "//evil.com"],
+    ["regex: slash-backslash", "/\\evil"],
+    ["regex: fragment", "/tasks#x"],
+    ["regex: fragment after query", "/tasks?a=b#x"],
+    ["regex: encoded leading slash is not decoded into a match", "%2Ftasks"],
+    ["regex: empty", ""],
+    ["regex: leading space", " /tasks"],
+    ["double slash in the query", "/tasks?next=//evil.com"],
+    ["double slash only after decoding", "/tasks?next=%2F%2Fevil.com"],
+    ["backslash in the query", "/tasks?next=\\evil"],
+    ["backslash only after decoding", "/tasks?next=%5Cevil"],
+    ["control character after decoding (CRLF)", "/tasks?q=%0D%0Ax"],
+    ["control character after decoding (NUL)", "/tasks?q=%00"],
+    ["control character after decoding (DEL)", "/tasks?q=%7F"],
+    ["literal control character (tab)", "/tasks?q=a\tb"],
+    ["literal control character (newline)", "/tasks?q=a\nb"],
+    ["malformed percent-escape", "/tasks?q=%E0%A4%A"],
+  ])("rejects %s", (_label, raw) => {
+    expect(safeBackHref(raw)).toBeNull();
+  });
+
+  it("rejects non-string values: array-valued, null, undefined, number", () => {
+    expect(safeBackHref(["/tasks"])).toBeNull();
+    expect(safeBackHref(["/tasks", "//evil.com"])).toBeNull();
+    expect(safeBackHref(null)).toBeNull();
+    expect(safeBackHref(undefined)).toBeNull();
+    expect(safeBackHref(42)).toBeNull();
   });
 });

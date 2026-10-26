@@ -13,9 +13,10 @@ import userEvent from "@testing-library/user-event";
 import type { Task, User, Team, TeamTasksProject } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+const navState = vi.hoisted(() => ({ search: "" }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(navState.search),
 }));
 
 vi.mock("../../src/lib/api", () => ({
@@ -139,5 +140,52 @@ describe("/tasks page -- Move to backlog row action", () => {
     expect(button).toBeDisabled();
     await userEvent.click(button);
     expect(mockUpdateTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("/tasks page — current-team resolution (lib/currentTeam)", () => {
+  beforeEach(() => {
+    navState.search = "";
+    window.localStorage.clear();
+    mockGetTeams.mockResolvedValue([TEAM, { ...TEAM, id: "team-2", name: "Second", slug: "second" }]);
+    mockGetTeamTasks.mockResolvedValue(listResponse([]));
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("a remembered team beats teams[0]: the very first fetch is for the remembered team", async () => {
+    // Same key lib/currentTeam rememberTeam writes (agent-tasks:lastTeamId).
+    window.localStorage.setItem("agent-tasks:lastTeamId", "team-2");
+
+    render(<TasksPage />);
+    await waitFor(() => {
+      expect(mockGetTeamTasks).toHaveBeenNthCalledWith(1, "team-2", expect.anything());
+    });
+  });
+
+  it("a valid ?teamId wins and is remembered", async () => {
+    navState.search = "teamId=team-2";
+
+    render(<TasksPage />);
+    await waitFor(() => {
+      expect(mockGetTeamTasks).toHaveBeenNthCalledWith(1, "team-2", expect.anything());
+    });
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
+  });
+
+  it("changing ?teamId after load re-resolves through the helper and remembers the new team", async () => {
+    const { rerender } = render(<TasksPage />);
+    await waitFor(() => {
+      expect(mockGetTeamTasks).toHaveBeenNthCalledWith(1, "team-1", expect.anything());
+    });
+
+    navState.search = "teamId=team-2";
+    rerender(<TasksPage />);
+    await waitFor(() => {
+      expect(mockGetTeamTasks).toHaveBeenLastCalledWith("team-2", expect.anything());
+    });
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
   });
 });
