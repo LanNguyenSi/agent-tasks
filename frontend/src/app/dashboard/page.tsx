@@ -615,7 +615,7 @@ export default function DashboardPage() {
           description="Join or create a team to get started."
           action={
             <Button href={projectsHref()} size="sm">
-              Go to Teams
+              Go to Projects
             </Button>
           }
         />

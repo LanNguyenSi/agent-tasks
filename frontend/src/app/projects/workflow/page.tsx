@@ -6,7 +6,7 @@
  *
  * Reads the projectId query parameter and issues a client-side
  * router.replace to the canonical hub URL. Missing or invalid IDs
- * show an EmptyState with a "Go to dashboard" action instead of
+ * show an EmptyState with a "Go to projects" action instead of
  * a broken page.
  */
 
@@ -15,7 +15,7 @@ import { useRouter } from "next/navigation";
 import EmptyState from "../../../components/ui/EmptyState";
 import { Button } from "../../../components/ui/Button";
 import { Skeleton } from "../../../components/ui/Skeleton";
-import { boardHref } from "../../../lib/routes";
+import { projectsHref } from "../../../lib/routes";
 
 export default function WorkflowRedirectPage() {
   const router = useRouter();
@@ -43,8 +43,8 @@ export default function WorkflowRedirectPage() {
           title="Missing project ID"
           description="This URL is missing the required projectId parameter. Navigate to a project to open its workflow editor."
           action={
-            <Button href={boardHref()} variant="primary" size="sm">
-              Go to dashboard
+            <Button href={projectsHref()} variant="primary" size="sm">
+              Go to projects
             </Button>
           }
         />

@@ -194,7 +194,7 @@ export default function SsoSettingsPage() {
 
       <p className="settings-section-desc">
         Configure your team&apos;s identity provider. This page is gated by a dedicated
-        AgentToken with the <code>sso:admin</code> scope -- not by your normal session --
+        API token with the <code>sso:admin</code> scope -- not by your normal session --
         so that accidental or stolen browser sessions cannot touch SSO configuration.
         Generate a token under Settings &rarr; API Tokens, hand it out-of-band to whoever
         owns your IdP setup, and revoke it when done.
@@ -203,7 +203,7 @@ export default function SsoSettingsPage() {
       {!authorized && (
         <Card>
           <form onSubmit={(event) => void handleAuthorize(event)}>
-            <FormField label="AgentToken (sso:admin scope)">
+            <FormField label="API token (sso:admin scope)">
               <input
                 type="password"
                 value={token}

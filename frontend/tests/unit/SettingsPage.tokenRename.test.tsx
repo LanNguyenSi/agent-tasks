@@ -157,13 +157,13 @@ describe("SettingsPage — agent token rename", () => {
 
     const renameBtn = screen.getByRole("button", { name: "Rename" });
     expect(renameBtn).toBeDisabled();
-    expect(renameBtn).toHaveAttribute("title", "Only team admins can rename agent tokens");
+    expect(renameBtn).toHaveAttribute("title", "Only team admins can rename API tokens");
 
     // The sibling Revoke button carries the same admin gating (added in the
     // same change; mutation probe: removing its `disabled` turns this red).
     const revokeBtn = screen.getByRole("button", { name: "Revoke" });
     expect(revokeBtn).toBeDisabled();
-    expect(revokeBtn).toHaveAttribute("title", "Only team admins can revoke agent tokens");
+    expect(revokeBtn).toHaveAttribute("title", "Only team admins can revoke API tokens");
   });
 
   it("enables Rename with no title when selectedTeam.role is ADMIN", async () => {
@@ -172,6 +172,14 @@ describe("SettingsPage — agent token rename", () => {
     const renameBtn = screen.getByRole("button", { name: "Rename" });
     expect(renameBtn).not.toBeDisabled();
     expect(renameBtn).not.toHaveAttribute("title");
+  });
+
+  it("opens the create-token modal titled Create API Token", async () => {
+    const user = userEvent.setup();
+    await renderSettingsPage("ADMIN", []);
+
+    await user.click(screen.getByRole("button", { name: "Create custom token" }));
+    expect(await screen.findByRole("heading", { name: "Create API Token" })).toBeInTheDocument();
   });
 
   it("a successful save replaces the row's displayed name and closes the modal", async () => {
