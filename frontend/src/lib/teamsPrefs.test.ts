@@ -1,5 +1,5 @@
 /**
- * Unit tests for the /teams view-mode preference helpers.
+ * Unit tests for the /projects view-mode preference helpers.
  *
  * Pure logic only — no DOM, no localStorage. The read/store functions
  * are not tested directly here (they require a DOM); correctness of the

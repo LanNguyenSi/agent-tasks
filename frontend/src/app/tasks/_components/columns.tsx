@@ -117,7 +117,7 @@ export interface BacklogRowActionHandlers {
 // work or review claim. The table row itself is a
 // clickable link (rowHref, see page.tsx), so each button stops propagation
 // on click and on Enter/Space keydown to keep the row from navigating —
-// same pattern as ProjectRowActions in app/teams/page.tsx.
+// same pattern as ProjectRowActions in app/projects/page.tsx.
 // `rows` is the set of currently rendered table rows (the current page).
 // The backlog actions column is only appended when at least one of those
 // rows is a backlog or an open task -- otherwise a page of in-progress,

@@ -18,7 +18,7 @@ import { SkeletonList } from "../../components/ui/Skeleton";
 import { boardHref, projectsHref } from "../../lib/routes";
 
 const LAST_PROJECT_KEY_PREFIX = "dashboard:lastProject:";
-// Written by the Projects page (app/teams/page.tsx).
+// Written by the Projects page (app/projects/page.tsx).
 const LAST_TEAM_KEY = "agent-tasks:lastTeamId";
 
 // A project id is a UUID or a short slug-like id; anything else (path

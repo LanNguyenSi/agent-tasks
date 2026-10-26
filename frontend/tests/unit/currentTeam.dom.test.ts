@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * DOM-backed tests for the localStorage side of the current-team helper:
- * the key round-trip (same key the /teams switcher has always used,
+ * the key round-trip (same key the Projects page switcher has always used,
  * `agent-tasks:lastTeamId`) and the blocked-storage paths — a throwing
  * getItem must behave exactly like absent storage (fall through to the
  * first team), and a throwing setItem must not crash the caller.

@@ -27,9 +27,10 @@ export function boardHref(params: {
   return params.teamId ? projectsHref({ teamId: params.teamId }) : "/dashboard";
 }
 
-/** Projects page: `/teams`, optionally pre-selecting a team. */
+/** Projects page: `/projects`, optionally pre-selecting a team. The legacy
+ * `/teams` URL redirects here (next.config.mjs redirects), query included. */
 export function projectsHref(params: { teamId?: string } = {}): string {
-  return params.teamId ? `/teams?teamId=${params.teamId}` : "/teams";
+  return params.teamId ? `/projects?teamId=${params.teamId}` : "/projects";
 }
 
 /** Project hub under `/projects/<id>`: a tab, or the hub root (Overview)
