@@ -32,8 +32,8 @@ export function projectsHref(params: { teamId?: string } = {}): string {
   return params.teamId ? `/teams?teamId=${params.teamId}` : "/teams";
 }
 
-/** Project hub under `/projects/<id>`: a tab, or the hub root (Overview)
- * when no tab is given. */
+/** Project hub under `/projects/<id>`: a tab, or the hub root when no tab is
+ * given (the hub root renders a redirect to the board). */
 export function projectHubHref(projectId: string, tab?: ProjectHubTab): string {
   return tab ? `/projects/${projectId}/${tab}` : `/projects/${projectId}`;
 }

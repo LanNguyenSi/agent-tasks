@@ -3,7 +3,7 @@
 // Hub layout for /projects/[id]/* routes.
 // Fetches the project once (name, slug, githubRepo, governanceMode) and renders:
 //   1. A compact project identity header (name H1, slug chip, repo chip, gov badge).
-//   2. ProjectSubnav tab row (Board | Overview | Members | Workflow | Settings).
+//   2. ProjectSubnav tab row (Board | Members | Workflow | Settings).
 //   3. {children} wrapped in a content container (the board excepted, see below).
 //
 // Child pages no longer render their own project heading; this layout owns it.
