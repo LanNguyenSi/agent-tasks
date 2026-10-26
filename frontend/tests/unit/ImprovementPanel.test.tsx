@@ -57,9 +57,12 @@ describe("ImprovementPanel", () => {
   describe("passing state (score >= threshold, not blocking)", () => {
     const confidence = makeConfidence({ score: 85, threshold: 60, blocking: false, findings: [] });
 
-    it("collapses by default and shows the score + at-or-above verdict in the header", () => {
+    it("collapses by default and shows the template-check label + at-or-above verdict in the header", () => {
       render(<ImprovementPanel confidence={confidence} />);
-      expect(screen.getByText(/85\/100/)).toBeInTheDocument();
+      // the header carries no 0-100 number (the task page's
+      // single score is the Agent Template badge); it reads "Template check".
+      expect(screen.getByText("Template check")).toBeInTheDocument();
+      expect(screen.queryByText(/85\/100/)).not.toBeInTheDocument();
       expect(screen.getByText(/At or above the 60 threshold/)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Improvement panel/ })).toHaveAttribute(
         "aria-expanded",
@@ -168,14 +171,33 @@ describe("ImprovementPanel", () => {
       ],
     });
 
-    it("reads as below-threshold and expands by default even though the raw score clears it", () => {
+    it("names the required-field block (not a below-threshold miss) and expands by default even though the raw score clears it", () => {
       render(<ImprovementPanel confidence={confidence} />);
-      expect(screen.getByText(/85\/100/)).toBeInTheDocument();
-      expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
+      expect(screen.getByText("Template check")).toBeInTheDocument();
+      expect(screen.queryByText(/85\/100/)).not.toBeInTheDocument();
+      // The score clears the threshold, so the fail is the keystone block,
+      // not a threshold miss; the verdict must not claim "Below the 60
+      // threshold" next to an 85.
+      expect(screen.getByText("Blocked by a required field")).toBeInTheDocument();
+      expect(screen.queryByText(/Below the 60 threshold/)).not.toBeInTheDocument();
       expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: /Improvement panel/ }),
       ).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("keeps the below-threshold verdict when blocking AND the score is below the threshold", () => {
+      const belowAndBlocked = makeConfidence({
+        score: 40,
+        threshold: 60,
+        blocking: true,
+        findings: [],
+      });
+      render(<ImprovementPanel confidence={belowAndBlocked} />);
+      // Score below threshold: the threshold miss is the honest verdict;
+      // "Blocked by a required field" is reserved for at-or-above scores.
+      expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
+      expect(screen.queryByText("Blocked by a required field")).not.toBeInTheDocument();
     });
 
     it("uses the danger tone", () => {
@@ -445,10 +467,13 @@ describe("ImprovementPanel", () => {
         inferredTaskType: backendResult.inferredTaskType,
       };
       render(<ImprovementPanel confidence={confidence} />);
-      // Anchored at the start: unanchored, a score of 0 also substring-matches
-      // the unrelated "current ceiling 30/100" / "40/100" / etc. cap-finding
-      // text elsewhere in the panel (they all end in "0/100" too).
-      expect(screen.getByText(new RegExp(`^${backendResult.score}/100`))).toBeInTheDocument();
+      // the real-producer verdict still renders (named check +
+      // threshold sentence), and NO bare "${score}/100" number leaks into the
+      // header; the task page shows exactly one 0-100 score, the Agent
+      // Template badge. (The cap findings may mention other "N/100" texts;
+      // anchoring at the start keeps this assertion about the header.)
+      expect(screen.getByText("Template check")).toBeInTheDocument();
+      expect(screen.queryByText(new RegExp(`^${backendResult.score}/100`))).toBeNull();
       // A wholly empty task fails multiple keystones (title, evals, ...) ->
       // blocking tone, expanded by default, with a real backend-produced
       // finding visible.

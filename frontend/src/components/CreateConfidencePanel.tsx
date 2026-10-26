@@ -83,7 +83,9 @@ export default function CreateConfidencePanel({
       )}
 
       <div role="status" aria-live="polite" className="ccp-verdict-row">
-        <ConfidenceBadge score={score} size="md" />
+        {/* Same threshold the verdict text below compares against, so the
+         *  badge tier and the sentence next to it can never disagree. */}
+        <ConfidenceBadge score={score} size="md" threshold={threshold} />
         <span
           className={`ccp-verdict-text ${
             isBacklog ? "" : passes ? "ccp-verdict-text--pass" : "ccp-verdict-text--fail"
