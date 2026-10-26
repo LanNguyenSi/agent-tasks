@@ -38,7 +38,8 @@ import { useToast } from "../../../../components/ui/Toast";
 import TaskDetail from "../../../../components/TaskDetail";
 import ImportDialog from "../../../../components/ImportDialog";
 import FilterToolbar from "../../../../components/dashboard/FilterToolbar";
-import BoardView, { BOARD_DOM_ID, BoardEmptyState } from "../../../../components/dashboard/BoardView";
+import BoardView, { BoardEmptyState } from "../../../../components/dashboard/BoardView";
+import { BOARD_REGION_ID } from "../../../../components/dashboard/boardRegion";
 import TaskListView from "../../../../components/dashboard/TaskListView";
 import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
@@ -166,6 +167,12 @@ export default function ProjectBoardPage() {
 
   const isProjectAdmin = isProjectAdminRole(selectedProjectAccessRole);
   const isProjectWrite = isProjectWriteRole(selectedProjectAccessRole);
+  // Agent tokens are created by team admins only: a per-project share or a
+  // known non-admin team role does not see the "Connect an agent" link. An
+  // unknown role (older API responses) keeps it.
+  const canConnectAgent =
+    selectedProject?.accessSource !== "project" &&
+    (selectedProjectAccessRole == null || selectedProjectAccessRole === "ADMIN");
 
   // ── Restore persisted view preferences once after mount ──────
 
@@ -496,7 +503,8 @@ export default function ProjectBoardPage() {
     // filters (tasks.length > 0) keep the per-column placeholders.
     content = (
       <BoardEmptyState
-        asBoardRegion={viewMode === "board"}
+        teamId={selectedProject?.teamId}
+        canConnectAgent={canConnectAgent}
         onNewTask={() => {
           setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
           setBootError(null);
@@ -550,22 +558,17 @@ export default function ProjectBoardPage() {
     );
   }
 
-  // The board is below the toolbar's search, filter, view toggle and buttons;
-  // keyboard users skip them with this first-in-page link.
-  const showSkipLink = viewMode === "board" && !loading && !bootError && !!selectedProjectId;
-
   return (
     <div className="db-shell">
-      {showSkipLink && (
-        <a className="skip-link" href={`#${BOARD_DOM_ID}`}>
-          Skip to board
-        </a>
-      )}
       {toolbar}
       {filterBar}
       {accessBanner}
 
-      {content}
+      {/* The one target of the hub layout's "Skip to board" link, present in
+          every state (loading, error, first run, board, list). */}
+      <div id={BOARD_REGION_ID} className="db-board-region" tabIndex={-1}>
+        {content}
+      </div>
 
       {/* NewTaskModal — extracted to components/dashboard/NewTaskModal.tsx in D2 */}
       <NewTaskModal

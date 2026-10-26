@@ -119,6 +119,21 @@ describe("card title button", () => {
   });
 });
 
+describe("skip target", () => {
+  it("lands clear of the sticky bars and shows no ring for the programmatic focus", () => {
+    expect(rule(".db-board-region")).toMatch(/scroll-margin-top:\s*calc\(/);
+    expect(rule(".db-board-region:focus")).toMatch(/outline:\s*none/);
+  });
+});
+
+describe("label chip rows", () => {
+  it("keeps 8px between wrapped rows of 24px remove targets, and the 4px column gap", () => {
+    const list = rule(".td-labels-list");
+    expect(list).toMatch(/row-gap:\s*8px/);
+    expect(list).toMatch(/(^|[\s;])gap:\s*var\(--space-1\)/);
+  });
+});
+
 describe("skip link", () => {
   it("is off screen until focused, then fixed above the sticky bars", () => {
     expect(rule(".skip-link")).toMatch(/left:\s*-9999px/);

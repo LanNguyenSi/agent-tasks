@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
 /**
- * Board page first-run state and skip link: a project with no tasks at all
+ * Board page first-run state and skip target: a project with no tasks at all
  * shows one empty state (New task, Import, Connect an agent) instead of five
  * "No tasks" boxes, in the board and the list view; a project that has tasks
- * keeps its columns even when the filters hide every one of them. The "Skip
- * to board" link is the first thing on the page and points at the board.
+ * keeps its columns even when the filters hide every one of them. The page
+ * wraps its content in one focusable region in every state, the target of the
+ * hub layout's "Skip to board" link.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -97,7 +98,7 @@ describe("board of a project with no tasks", () => {
     expect(within(empty).getByRole("button", { name: "Import" })).toBeEnabled();
     expect(within(empty).getByRole("link", { name: "Connect an agent" })).toHaveAttribute(
       "href",
-      "/settings/team#api-tokens",
+      "/settings/team?teamId=t-1#api-tokens",
     );
   });
 
@@ -134,27 +135,94 @@ describe("board of a project with tasks", () => {
   });
 });
 
-describe("skip link", () => {
-  it("is the first link of the page content and points at the board", async () => {
+describe("skip link target", () => {
+  // The hub layout renders the "Skip to board" link (ProjectLayout test); the
+  // page owns its one target, a focusable wrapper present in every state.
+  function region(): HTMLElement {
+    const el = document.getElementById("board-region");
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  }
+
+  it("wraps the board in a programmatically focusable region", async () => {
     await renderPage([task("a-1", "Alpha retry", "open")]);
-    const skip = screen.getByRole("link", { name: "Skip to board" });
-    expect(skip).toHaveAttribute("href", "#db-board");
-    const shell = skip.closest(".db-shell") as HTMLElement;
-    expect(shell.querySelector("a, button, input")).toBe(skip);
-    expect(document.getElementById("db-board")).toBe(screen.getByRole("group", { name: "Board" }));
+    expect(region()).toHaveAttribute("tabindex", "-1");
+    expect(region()).toContainElement(screen.getByRole("group", { name: "Board" }));
+    expect(document.querySelectorAll("#board-region")).toHaveLength(1);
   });
 
-  it("targets the empty state when the project has no tasks", async () => {
-    await renderPage([]);
-    const skip = screen.getByRole("link", { name: "Skip to board" });
-    const target = document.getElementById(skip.getAttribute("href")!.slice(1));
-    expect(target).not.toBeNull();
-    expect(target).toContainElement(screen.getByText("No tasks yet"));
-  });
-
-  it("is not offered in the list view, which has no board to skip to", async () => {
+  it("wraps the list view", async () => {
     await renderPage([task("a-1", "Alpha retry", "open")]);
     await userEvent.click(screen.getByRole("tab", { name: /List/ }));
+    expect(region()).toHaveAttribute("tabindex", "-1");
+    expect(region()).toContainElement(screen.getByText(/tasks shown/));
+    expect(screen.queryByRole("group", { name: "Board" })).not.toBeInTheDocument();
+  });
+
+  it("wraps the first-run empty state, in the board and the list view", async () => {
+    await renderPage([]);
+    expect(region()).toHaveAttribute("tabindex", "-1");
+    expect(region()).toContainElement(screen.getByText("No tasks yet"));
+    await userEvent.click(screen.getByRole("tab", { name: /List/ }));
+    expect(region()).toHaveAttribute("tabindex", "-1");
+    expect(region()).toContainElement(screen.getByText("No tasks yet"));
+  });
+
+  it("is there while the project loads", () => {
+    vi.mocked(getProject).mockReturnValue(new Promise(() => {}));
+    render(
+      <ToastProvider>
+        <ProjectBoardPage />
+      </ToastProvider>,
+    );
+    expect(region()).toHaveAttribute("tabindex", "-1");
+    expect(region()).toContainElement(screen.getByText("Loading tasks"));
+  });
+
+  it("is there after a failed load", async () => {
+    vi.mocked(getTasks).mockRejectedValue(new Error("tasks exploded"));
+    render(
+      <ToastProvider>
+        <ProjectBoardPage />
+      </ToastProvider>,
+    );
+    expect(await screen.findByText("tasks exploded")).toBeInTheDocument();
+    expect(region()).toHaveAttribute("tabindex", "-1");
+    expect(region()).toContainElement(screen.getByText("tasks exploded"));
+  });
+
+  it("does not render a skip link of its own (the hub layout owns it)", async () => {
+    await renderPage([task("a-1", "Alpha retry", "open")]);
     expect(screen.queryByRole("link", { name: "Skip to board" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Connect an agent link", () => {
+  function connect(): HTMLElement | null {
+    const empty = screen.getByText("No tasks yet").closest(".empty-state") as HTMLElement;
+    return within(empty).queryByRole("link", { name: "Connect an agent" });
+  }
+
+  it("opens the project's team settings at the API tokens section", async () => {
+    await renderPage([]);
+    expect(connect()).toHaveAttribute("href", "/settings/team?teamId=t-1#api-tokens");
+  });
+
+  it("is shown while the role is unknown (older API responses)", async () => {
+    vi.mocked(getProject).mockResolvedValue({ ...PROJECT, accessRole: undefined } as Project);
+    await renderPage([]);
+    expect(connect()).not.toBeNull();
+  });
+
+  it.each([
+    ["a team member", { accessRole: "MEMBER", accessSource: "team" }],
+    ["a per-project admin", { accessRole: "PROJECT_ADMIN", accessSource: "project" }],
+    ["a per-project share with no role", { accessRole: null, accessSource: "project" }],
+  ])("is hidden for %s, who cannot create agent tokens", async (_label, access) => {
+    vi.mocked(getProject).mockResolvedValue({ ...PROJECT, ...access } as Project);
+    await renderPage([]);
+    expect(connect()).toBeNull();
+    const empty = screen.getByText("No tasks yet").closest(".empty-state") as HTMLElement;
+    expect(within(empty).getByRole("button", { name: "New task" })).toBeEnabled();
   });
 });

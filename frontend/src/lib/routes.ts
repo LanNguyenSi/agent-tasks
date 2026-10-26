@@ -53,13 +53,15 @@ export function settingsHref(): string {
 
 /** Team settings (API tokens, Enterprise SSO entry), optionally deep-linked
  * to one of its sections. Personal settings stay at `settingsHref()`. */
-export function teamSettingsHref(section?: "api-tokens" | "sso"): string {
-  return section ? `/settings/team#${section}` : "/settings/team";
+export function teamSettingsHref(section?: "api-tokens" | "sso", teamId?: string): string {
+  const base = teamId ? `/settings/team?teamId=${encodeURIComponent(teamId)}` : "/settings/team";
+  return section ? `${base}#${section}` : base;
 }
 
-/** Team settings deep-linked to the API Tokens section. */
-export function apiTokensSettingsHref(): string {
-  return teamSettingsHref("api-tokens");
+/** Team settings deep-linked to the API Tokens section; with `teamId` the
+ * page opens that team instead of the remembered one. */
+export function apiTokensSettingsHref(teamId?: string): string {
+  return teamSettingsHref("api-tokens", teamId);
 }
 
 /** SSO sub-page under team settings. The old `/settings/sso` URL redirects

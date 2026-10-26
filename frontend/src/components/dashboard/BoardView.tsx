@@ -55,10 +55,6 @@ export function columnDomId(status: string): string {
   return `db-col-${status}`;
 }
 
-/** DOM id of the board region (the columns, or the first-run empty state);
- *  the "Skip to board" link targets it. */
-export const BOARD_DOM_ID = "db-board";
-
 function getInitials(task: Task): string {
   const name = task.claimedByUser?.name ?? task.claimedByUser?.login ?? task.claimedByAgent?.name ?? "";
   const words = name.trim().split(/\s+/);
@@ -269,7 +265,7 @@ export default function BoardView({
         </a>
       ))}
     </nav>
-    <div className="db-board" id={BOARD_DOM_ID} role="group" aria-label="Board" tabIndex={-1}>
+    <div className="db-board" role="group" aria-label="Board">
       {STATUSES.map((status) => {
         const normStatus = normalizeStatus(status);
         const columnLabel = STATUS_LABELS[normStatus] ?? normStatus;
@@ -350,19 +346,23 @@ export default function BoardView({
 interface BoardEmptyStateProps {
   onNewTask: () => void;
   onImport: () => void;
-  /** Put the board region id on the wrapper (board view only), so the
-   *  "Skip to board" link has a target. */
-  asBoardRegion?: boolean;
+  /** Team whose settings the "Connect an agent" link opens. */
+  teamId?: string;
+  /** False hides "Connect an agent" for a viewer who cannot create the
+   *  team's agent tokens. Default true. */
+  canConnectAgent?: boolean;
 }
 
 /** Shown instead of the five empty columns when the project has no tasks at
  *  all (filters that hide every task still show the columns). */
-export function BoardEmptyState({ onNewTask, onImport, asBoardRegion = false }: BoardEmptyStateProps) {
+export function BoardEmptyState({
+  onNewTask,
+  onImport,
+  teamId,
+  canConnectAgent = true,
+}: BoardEmptyStateProps) {
   return (
-    <div
-      className="db-state-wrap"
-      {...(asBoardRegion ? { id: BOARD_DOM_ID, tabIndex: -1 } : {})}
-    >
+    <div className="db-state-wrap">
       <EmptyState
         icon="box"
         title="No tasks yet"
@@ -377,9 +377,11 @@ export function BoardEmptyState({ onNewTask, onImport, asBoardRegion = false }: 
             <Button variant="ghost" size="sm" onClick={onImport}>
               Import
             </Button>
-            <Button variant="ghost" size="sm" href={apiTokensSettingsHref()}>
-              Connect an agent
-            </Button>
+            {canConnectAgent && (
+              <Button variant="ghost" size="sm" href={apiTokensSettingsHref(teamId)}>
+                Connect an agent
+              </Button>
+            )}
           </div>
         }
       />

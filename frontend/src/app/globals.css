@@ -14,7 +14,9 @@ html[data-theme="light"] {
   /* Height of the sticky app header; pages that fill the viewport subtract it. */
   --app-header-height: 48px;
   /* One-row height of the sticky board toolbar and of the stacked-board jump
-     bar; the sticky column heads sit below them. */
+     bar; the sticky column heads sit below them. --board-toolbar-height
+     mirrors the single-row toolbar's rendered height: change it together with
+     the toolbar's padding or control sizes. */
   --board-toolbar-height: 52px;
   --board-jump-height: 49px;
 
@@ -4611,6 +4613,9 @@ html[data-theme="light"] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+  /* Wrapped chips carry 24px remove targets: a full 8px between rows keeps
+     them from overlapping. */
+  row-gap: 8px;
   flex-basis: 100%;
 }
 
@@ -8423,12 +8428,14 @@ a.proj-chip:hover {
   gap: var(--space-2);
 }
 
-/* "Skip to board" lands the board clear of the sticky bars. */
-.db-board {
+/* "Skip to board" lands the board region (the columns, the list or a state
+   message) clear of the sticky bars; the wrapper takes focus
+   programmatically, so it needs no ring. */
+.db-board-region {
   scroll-margin-top: calc(var(--app-header-height) + var(--board-toolbar-height) + var(--space-2));
 }
 
-.db-board:focus {
+.db-board-region:focus {
   outline: none;
 }
 

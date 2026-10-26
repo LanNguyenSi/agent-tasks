@@ -38,6 +38,7 @@ import ProjectPicker, { type ProjectOption } from "../../../components/dashboard
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import { PageShell } from "../../../components/ui/PageShell";
+import { BOARD_REGION_ID } from "../../../components/dashboard/boardRegion";
 import { GOVERNANCE_LABELS } from "../../../lib/governance";
 
 export default function ProjectLayout({ children }: { children: ReactNode }) {
@@ -199,8 +200,22 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   if (segment === "board") {
     // The board runs its own project load and shows its own error banner
     // with Retry, so a failed hub load never replaces it.
+    // "Skip to board" comes first, before the hub band and the toolbar; the
+    // board page renders its target (in every state), the layout knows
+    // neither the view nor the load state.
     return (
-      <PageShell variant="wide" flush header={hubBand}>
+      <PageShell
+        variant="wide"
+        flush
+        header={
+          <>
+            <a className="skip-link" href={`#${BOARD_REGION_ID}`}>
+              Skip to board
+            </a>
+            {hubBand}
+          </>
+        }
+      >
         {children}
       </PageShell>
     );
