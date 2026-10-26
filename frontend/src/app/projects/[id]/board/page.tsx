@@ -38,7 +38,7 @@ import { useToast } from "../../../../components/ui/Toast";
 import TaskDetail from "../../../../components/TaskDetail";
 import ImportDialog from "../../../../components/ImportDialog";
 import FilterToolbar from "../../../../components/dashboard/FilterToolbar";
-import BoardView from "../../../../components/dashboard/BoardView";
+import BoardView, { BOARD_DOM_ID, BoardEmptyState } from "../../../../components/dashboard/BoardView";
 import TaskListView from "../../../../components/dashboard/TaskListView";
 import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
@@ -490,6 +490,21 @@ export default function ProjectBoardPage() {
         </Button>
       </div>
     );
+  } else if (tasks.length === 0) {
+    // A project with no tasks at all: one first-run state in either view
+    // instead of five empty columns or an empty table. Tasks hidden by the
+    // filters (tasks.length > 0) keep the per-column placeholders.
+    content = (
+      <BoardEmptyState
+        asBoardRegion={viewMode === "board"}
+        onNewTask={() => {
+          setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
+          setBootError(null);
+          setShowNewTask(true);
+        }}
+        onImport={() => setShowImport(true)}
+      />
+    );
   } else if (viewMode === "board") {
     content = (
       <>
@@ -535,8 +550,17 @@ export default function ProjectBoardPage() {
     );
   }
 
+  // The board is below the toolbar's search, filter, view toggle and buttons;
+  // keyboard users skip them with this first-in-page link.
+  const showSkipLink = viewMode === "board" && !loading && !bootError && !!selectedProjectId;
+
   return (
     <div className="db-shell">
+      {showSkipLink && (
+        <a className="skip-link" href={`#${BOARD_DOM_ID}`}>
+          Skip to board
+        </a>
+      )}
       {toolbar}
       {filterBar}
       {accessBanner}

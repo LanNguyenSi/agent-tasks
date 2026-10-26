@@ -88,7 +88,8 @@ describe("board route (hub layout + board page)", () => {
   it("loads the board for an accessible project without navigating", async () => {
     mockGetProject.mockResolvedValue(PROJECT);
     renderRoute();
-    await waitFor(() => expect(screen.getByRole("button", { name: /new task/i })).toBeEnabled());
+    // The toolbar's button comes first; the empty board repeats it in its first-run state.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /new task/i })[0]).toBeEnabled());
     expect(nav.router.replace).not.toHaveBeenCalled();
   });
 

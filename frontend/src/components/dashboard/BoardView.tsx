@@ -2,12 +2,25 @@
 
 // Board view: 5-column kanban layout in the Quiet Precision style.
 // Card anatomy: PriorityLabel + confidence badge + (optional) PR chip | title
-// | footer (labels, due, avatar). Column header: status dot + title + tinted
-// count Badge + add-task (+) button.
+// | footer (labels, due, avatar). Column header: status dot + h2 title +
+// tinted count Badge + add-task (+) button (an empty slot of the same size on
+// the columns without one, so all five heads are equally tall).
+//
+// Semantics: each card is an <article> whose <h3> holds the one interactive
+// control, a button named by the task title. Priority, spec score, labels, due
+// date (with the word "Overdue") and assignee are the button's accessible
+// description (aria-describedby, a hidden sentence list: aria-label on the
+// bare spans of the visible row is not reliably part of a description), so a
+// screen reader hears the title first; the visible rows repeat that
+// description, so they are aria-hidden. A
+// click anywhere on the card opens it too (the article forwards the click);
+// keyboard users use the title button, Enter or Space.
 // Geometry in .db-col-*, .db-card-* classes in globals.css.
 
 import { memo, useState } from "react";
-import ConfidenceBadge from "../ConfidenceBadge";
+import { Button } from "../ui/Button";
+import EmptyState from "../ui/EmptyState";
+import ConfidenceBadge, { getConfidenceTier } from "../ConfidenceBadge";
 import { Badge, type BadgeTone } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { PriorityLabel } from "../ui/PriorityLabel";
@@ -23,6 +36,7 @@ import {
 import { DONE_BOARD_VISIBLE_LIMIT } from "../../lib/dashboardPrefs";
 import type { Task, TaskTemplate } from "../../lib/api";
 import { formatAbsoluteDate } from "../../lib/time";
+import { apiTokensSettingsHref } from "../../lib/routes";
 
 const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -40,6 +54,10 @@ const COLUMN_BADGE_TONE: Record<string, BadgeTone> = {
 export function columnDomId(status: string): string {
   return `db-col-${status}`;
 }
+
+/** DOM id of the board region (the columns, or the first-run empty state);
+ *  the "Skip to board" link targets it. */
+export const BOARD_DOM_ID = "db-board";
 
 function getInitials(task: Task): string {
   const name = task.claimedByUser?.name ?? task.claimedByUser?.login ?? task.claimedByAgent?.name ?? "";
@@ -109,9 +127,21 @@ const TaskCard = memo(function TaskCard({
           confidenceThreshold,
         ).effectiveThreshold;
 
+  const descId = `db-card-desc-${task.id}`;
+  const hasFoot = !!(firstLabel || task.dueAt || hasAssignee);
+  const description = [
+    `Priority: ${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1).toLowerCase()}`,
+    !isDone && `Spec ${confidence.score}, ${getConfidenceTier(confidence.score, effectiveThreshold)}`,
+    task.prNumber != null && `Pull request #${task.prNumber}`,
+    labels.length > 0 && `Labels: ${labels.join(", ")}`,
+    task.dueAt && `${overdue ? "Overdue, due" : "Due"} ${toDateLabel(task.dueAt)}`,
+    hasAssignee && `Assigned to ${getAssigneeName(task)}`,
+  ]
+    .filter(Boolean)
+    .join(". ");
+
   return (
-    <button
-      type="button"
+    <article
       className={[
         "db-card",
         active ? "db-card--active" : "",
@@ -124,7 +154,7 @@ const TaskCard = memo(function TaskCard({
       {/* Top row: priority + confidence + (optional) PR chip.
           Done-column cards show no spec badge; the score
           only steers work that is still live. */}
-      <div className="db-card-top">
+      <div className="db-card-top" aria-hidden="true">
         <PriorityLabel priority={task.priority} />
         {!isDone && (
           <ConfidenceBadge
@@ -141,26 +171,36 @@ const TaskCard = memo(function TaskCard({
         )}
       </div>
 
-      {/* Title: 2-line clamp */}
-      <h3 className="db-card-title">{task.title}</h3>
+      {/* Title: the card's one control, described by the hidden sentence. */}
+      <h3 className="db-card-title">
+        <button type="button" className="db-card-open" aria-describedby={descId}>
+          {task.title}
+        </button>
+      </h3>
+      <span id={descId} hidden>
+        {description}
+      </span>
 
       {/* Footer: labels + meta-right (due date, avatar) */}
-      {(firstLabel || task.dueAt || hasAssignee) && (
-        <div className="db-card-foot">
+      {hasFoot && (
+        <div className="db-card-foot" aria-hidden="true">
           {firstLabel && (
             <Badge tone="neutral">{firstLabel}</Badge>
           )}
           {extraLabelCount > 0 && (
-            <Badge tone="neutral">+{extraLabelCount}</Badge>
+            <Badge tone="neutral">
+              +{extraLabelCount}
+            </Badge>
           )}
 
           <div className="db-card-meta-right">
             {task.dueAt && (
               <span
                 className={`db-card-due${overdue ? " db-card-due--overdue" : ""}`}
-                title={overdue ? "Overdue" : formatAbsoluteDate(task.dueAt)}
+                title={formatAbsoluteDate(task.dueAt)}
               >
                 <Icon name="calendar" size={12} />
+                {overdue && <span className="db-card-due-word">Overdue</span>}
                 {toDateLabel(task.dueAt)}
               </span>
             )}
@@ -176,7 +216,7 @@ const TaskCard = memo(function TaskCard({
           </div>
         </div>
       )}
-    </button>
+    </article>
   );
 });
 
@@ -229,7 +269,7 @@ export default function BoardView({
         </a>
       ))}
     </nav>
-    <div className="db-board" aria-label="Board">
+    <div className="db-board" id={BOARD_DOM_ID} role="group" aria-label="Board" tabIndex={-1}>
       {STATUSES.map((status) => {
         const normStatus = normalizeStatus(status);
         const columnLabel = STATUS_LABELS[normStatus] ?? normStatus;
@@ -248,13 +288,13 @@ export default function BoardView({
           >
             <header className="db-col-head">
               <span className="db-col-dot" aria-hidden="true" />
-              <span className="db-col-title">{columnLabel}</span>
+              <h2 className="db-col-title">{columnLabel}</h2>
               <Badge tone={badgeTone}>{columnTasks.length}</Badge>
               {/* Column-gated create affordance (operator decision
                   2026-08-20): the + only appears where the pipeline can
                   legally start -- Backlog and Open. In Progress, Review, and
                   Done never get one. */}
-              {(status === "backlog" || status === "open") && (
+              {status === "backlog" || status === "open" ? (
                 <button
                   type="button"
                   className="db-col-add"
@@ -263,6 +303,9 @@ export default function BoardView({
                 >
                   <Icon name="plus" size={13} />
                 </button>
+              ) : (
+                /* Reserves the + slot so all five heads are equally tall. */
+                <span className="db-col-add db-col-add--slot" aria-hidden="true" />
               )}
             </header>
 
@@ -299,5 +342,47 @@ export default function BoardView({
       })}
     </div>
     </>
+  );
+}
+
+// ── First-run empty state ─────────────────────────────────────────
+
+interface BoardEmptyStateProps {
+  onNewTask: () => void;
+  onImport: () => void;
+  /** Put the board region id on the wrapper (board view only), so the
+   *  "Skip to board" link has a target. */
+  asBoardRegion?: boolean;
+}
+
+/** Shown instead of the five empty columns when the project has no tasks at
+ *  all (filters that hide every task still show the columns). */
+export function BoardEmptyState({ onNewTask, onImport, asBoardRegion = false }: BoardEmptyStateProps) {
+  return (
+    <div
+      className="db-state-wrap"
+      {...(asBoardRegion ? { id: BOARD_DOM_ID, tabIndex: -1 } : {})}
+    >
+      <EmptyState
+        icon="box"
+        title="No tasks yet"
+        description="Create the first task, import existing ones, or connect an agent that creates and picks up tasks."
+        dashed
+        action={
+          <div className="db-empty-actions">
+            <Button size="sm" onClick={onNewTask}>
+              <Icon name="plus" size={13} />
+              New task
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onImport}>
+              Import
+            </Button>
+            <Button variant="ghost" size="sm" href={apiTokensSettingsHref()}>
+              Connect an agent
+            </Button>
+          </div>
+        }
+      />
+    </div>
   );
 }

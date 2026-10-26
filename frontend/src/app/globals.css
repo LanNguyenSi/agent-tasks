@@ -13,6 +13,10 @@ html[data-theme="light"] {
   --page-gutter: 24px;
   /* Height of the sticky app header; pages that fill the viewport subtract it. */
   --app-header-height: 48px;
+  /* One-row height of the sticky board toolbar and of the stacked-board jump
+     bar; the sticky column heads sit below them. */
+  --board-toolbar-height: 52px;
+  --board-jump-height: 49px;
 
   /* Surfaces (3 elevation steps + page) */
   --bg: #08090c;
@@ -949,7 +953,7 @@ input[type="checkbox"] {
   justify-content: center;
   background: color-mix(in srgb, var(--primary) 30%, var(--surface));
   color: var(--primary-text);
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.03em;
   flex-shrink: 0;
@@ -1517,6 +1521,28 @@ input[type="checkbox"] {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Skip link: off screen until it takes focus, then pinned under the app
+   header above everything sticky. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+}
+
+.skip-link:focus {
+  position: fixed;
+  left: var(--page-gutter);
+  top: calc(var(--app-header-height) + var(--space-2));
+  z-index: 100;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 2px solid var(--primary);
+  border-radius: var(--radius-base);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 /* ── Project picker ───────────────────────────────────────────── */
@@ -3428,7 +3454,9 @@ html[data-theme="light"] {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 24px;
   padding: var(--space-1) var(--space-2) 10px;
+  background: var(--surface);
 }
 
 .db-col-dot {
@@ -3445,15 +3473,19 @@ html[data-theme="light"] {
 .db-col--done    .db-col-dot { background: var(--status-done); }
 
 .db-col-title {
+  margin: 0;
   font-size: var(--text-base);
   font-weight: 600;
   letter-spacing: -0.005em;
 }
 
+/* 24px square: the smallest pointer target WCAG 2.5.8 accepts without
+   spacing. The slot variant fills the same space on the columns that have no
+   + so all five heads are equally tall. */
 .db-col-add {
   margin-left: auto;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
@@ -3463,6 +3495,10 @@ html[data-theme="light"] {
   background: transparent;
   flex-shrink: 0;
   transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.db-col-add--slot {
+  pointer-events: none;
 }
 
 .db-col-add:hover {
@@ -3486,7 +3522,8 @@ html[data-theme="light"] {
   font-size: var(--text-xs);
 }
 
-/* Board card */
+/* Board card: an <article>; the title button inside is the keyboard control,
+   a click anywhere on the card opens it too. */
 .db-card {
   display: block;
   width: 100%;
@@ -3508,6 +3545,12 @@ html[data-theme="light"] {
 .db-card--active {
   border-color: var(--primary);
   background: var(--primary-muted);
+}
+
+/* Keyboard focus lands on the title button; the card shows it too. */
+.db-card:has(.db-card-open:focus-visible) {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
 }
 
 /* Done cards: muted title */
@@ -3544,16 +3587,36 @@ html[data-theme="light"] {
   color: var(--muted);
 }
 
-/* Card title: 2-line clamp */
+/* Card title: 2-line clamp. The clamp sits on the button so its focus ring
+   is not clipped by the heading. */
 .db-card-title {
+  margin: 0;
   font-size: var(--text-base);
   font-weight: 500;
   line-height: 1.45;
   letter-spacing: -0.003em;
+}
+
+.db-card-open {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.db-card-open:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Card footer row */
@@ -3562,7 +3625,9 @@ html[data-theme="light"] {
   align-items: center;
   gap: var(--space-1);
   margin-top: 10px;
-  flex-wrap: nowrap;
+  /* The due date with its "Overdue" word does not always fit beside the
+     labels in a narrow column: it drops to its own row, right-aligned. */
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -3580,7 +3645,7 @@ html[data-theme="light"] {
   align-items: center;
   gap: 4px;
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3592,17 +3657,22 @@ html[data-theme="light"] {
   color: var(--danger);
 }
 
+/* "Overdue" in words: colour alone does not say it. */
+.db-card-due-word {
+  font-weight: 600;
+}
+
 /* Assignee initials avatar */
 .db-card-avatar {
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--primary) 25%, var(--surface));
   color: var(--primary-text);
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.03em;
   flex-shrink: 0;
@@ -4552,12 +4622,15 @@ html[data-theme="light"] {
   padding-right: 3px;
 }
 
+/* 24px square target (WCAG 2.5.8); the negative margin keeps the chip as
+   tall as a chip without a remove button. */
 .td-label-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
   padding: 0;
   border: none;
   border-radius: var(--radius-full);
@@ -4802,6 +4875,18 @@ html[data-theme="light"] {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+}
+
+/* Delete / Confirm? / Cancel are text links: pad them to a 24px-tall target
+   (WCAG 2.5.8). Negative margins keep the comment head as tall as before. */
+.td-comment-actions .btn-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 var(--space-1);
+  margin: -4px 0;
 }
 
 .td-comment-body {
@@ -8296,6 +8381,55 @@ a.proj-chip:hover {
   .db-col {
     scroll-margin-top: calc(var(--app-header-height) + 56px);
   }
+}
+
+/* ── Sticky board column heads ────────────────────────────────────
+ * Long columns keep their head (title, count, +) in view. Only where the
+ * page itself scrolls past the heads:
+ *  - 1280px and up: five columns in a row; the head sticks below the sticky
+ *    toolbar (--board-toolbar-height is that bar's one-row height).
+ *  - under 640px: stacked columns; the head sticks below the sticky jump bar
+ *    (--board-jump-height), inside its own column.
+ * From 640px to 1279px the heads stay in the flow: there the board is either a
+ * horizontal scroller (761 to 1279px), which sticky cannot pin against the
+ * page, or the toolbar wraps to a height no token can name (640 to 760px). */
+@media (min-width: 1280px) {
+  .db-col-head {
+    position: sticky;
+    top: calc(var(--app-header-height) + var(--board-toolbar-height));
+    z-index: 2;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .db-col-head {
+    position: sticky;
+    top: calc(var(--app-header-height) + var(--board-jump-height));
+    z-index: 2;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+
+/* First-run empty state: its three actions in one wrapping row. */
+.db-state-wrap .empty-state-description {
+  color: var(--text-secondary);
+}
+
+.db-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* "Skip to board" lands the board clear of the sticky bars. */
+.db-board {
+  scroll-margin-top: calc(var(--app-header-height) + var(--board-toolbar-height) + var(--space-2));
+}
+
+.db-board:focus {
+  outline: none;
 }
 
 /* ── 390px: compact paddings on the primary surfaces ──────────────
