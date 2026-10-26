@@ -104,8 +104,6 @@ const PROJECT: Project = {
   accessRole: "ADMIN",
 };
 
-const TASKS: Task[] = [];
-
 function renderBoard() {
   return render(
     <ToastProvider>
@@ -126,7 +124,9 @@ beforeEach(() => {
   mockGetCurrentUser.mockResolvedValue(USER);
   mockGetTeams.mockResolvedValue([TEAM]);
   mockGetProject.mockResolvedValue(PROJECT);
-  mockGetTasks.mockResolvedValue(TASKS);
+  // One task, so the board shows its columns: a project with no tasks shows
+  // the first-run empty state instead.
+  mockGetTasks.mockResolvedValue([TASK]);
   window.localStorage.clear();
   window.history.replaceState({}, "", "/projects/p-1/board");
   // jsdom does not implement scrollIntoView; the Select listbox calls it.
