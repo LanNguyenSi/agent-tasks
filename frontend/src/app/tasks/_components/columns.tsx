@@ -120,15 +120,13 @@ export interface BacklogRowActionHandlers {
 // The table row itself is a clickable link (rowHref, see page.tsx), so the
 // trigger stops propagation on click and on Enter/Space keydown to keep the
 // row from navigating -- same pattern as ProjectRowActions in
-// app/projects/page.tsx -- and while the menu is open the actions wrapper
-// also stops click and keydown from reaching the row: the panel is portaled
-// to document.body, but React events still bubble through the portal to the
-// row, whose click/Enter handler would navigate instead of running the
-// action (the wrapper sits above the DropdownMenu in the React tree, so the
-// panel's own arrow-key/Escape handling sees the event first). The panel is
-// the shared keyboard-operable DropdownMenu primitive (ArrowUp/ArrowDown/
-// Home/End move between items, Escape closes and returns focus to the
-// trigger).
+// app/projects/page.tsx. The menu items need no such guard: the panel is
+// portaled to document.body, and the Table row ignores events whose target
+// is outside its own DOM (Table.tsx isFromRowDom), although React bubbles
+// them through the portal to it. The panel is the shared keyboard-operable
+// DropdownMenu primitive (ArrowUp/ArrowDown/Home/End move between items,
+// Escape closes and returns focus to the trigger), with menu semantics
+// (role="menu" named after the task, role="menuitem" items).
 // `rows` is the set of currently rendered table rows (the current page).
 // The row-actions column is only appended when at least one of those rows
 // is a backlog or an open task -- otherwise a page of in-progress, review or
@@ -163,14 +161,13 @@ export function buildTaskPageColumns(
 // row. Disabled while the row's action is in flight: every item of a busy
 // row is disabled, and once the menu is open the trigger follows suit so a
 // second click only ever closes it.
-// While the menu is open, the wrapper stops click and keydown: the panel is
-// portaled to document.body but React events bubble through the portal to
-// the owning Table row, whose onClick/onKeyDown navigate it (Table.tsx) --
-// without this, Enter on an item, or a click on the panel background or on
-// the disabled claim hint, opens the task instead of running the action.
-// The wrapper sits above the DropdownMenu (not inside its children), so the
-// panel div keeps handling ArrowUp/ArrowDown/Home/End/Escape before the
-// event is stopped here.
+// While the menu is open, the wrapper stops keydown from bubbling on: the
+// row no longer needs it (Table ignores events from outside its DOM), but
+// the page's window-level shortcuts ("/" focuses search, "C" opens the
+// create flow, page.tsx) would otherwise fire on a key typed inside the
+// open menu. The wrapper sits above the DropdownMenu (not inside its
+// children), so the panel div keeps handling ArrowUp/ArrowDown/Home/End/
+// Escape before the event is stopped here.
 function TaskRowActionsMenu({
   task,
   handlers,
@@ -184,9 +181,13 @@ function TaskRowActionsMenu({
   const busy = handlers.busyTaskId === task.id;
   const triggerDisabled = busy && menuOpen;
 
-  const run = (fn: (task: EnrichedTask) => void) => (e: MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
+  // Closing the menu removes the focused item, so focus goes back to the
+  // trigger instead of falling to the page: the row stays when the action
+  // keeps it in the current filter, and the Discard confirm dialog returns
+  // focus to the trigger when it closes.
+  const run = (fn: (task: EnrichedTask) => void) => () => {
     setMenuOpen(false);
+    menuBtnRef.current?.focus();
     fn(task);
   };
 
@@ -197,7 +198,6 @@ function TaskRowActionsMenu({
       className="tasks-row-actions"
       // Only while open: closed, the trigger's own Enter/Space guards below
       // are enough, and global key shortcuts keep working from the trigger.
-      onClick={menuOpen ? (e: MouseEvent<HTMLDivElement>) => e.stopPropagation() : undefined}
       onKeyDown={menuOpen ? (e: KeyboardEvent<HTMLDivElement>) => e.stopPropagation() : undefined}
     >
       <button
@@ -205,6 +205,7 @@ function TaskRowActionsMenu({
         type="button"
         className="tasks-row-actions-btn"
         disabled={triggerDisabled}
+        aria-haspopup="menu"
         aria-expanded={menuOpen}
         aria-label={`Actions for ${task.title}`}
         onClick={(e: MouseEvent<HTMLButtonElement>) => {
@@ -230,49 +231,55 @@ function TaskRowActionsMenu({
         onClose={() => setMenuOpen(false)}
         minWidth={180}
       >
-        {status === "backlog" ? (
-          <>
+        <div role="menu" aria-label={`Actions for ${task.title}`}>
+          {status === "backlog" ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className="app-dropdown-item"
+                disabled={busy}
+                onClick={run(handlers.onPromote)}
+              >
+                Promote
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="app-dropdown-item app-dropdown-item-danger"
+                disabled={busy}
+                onClick={run(handlers.onDiscard)}
+              >
+                Discard
+              </button>
+            </>
+          ) : blockedHint !== null ? (
+            // The hint is this menu's only content, so it is a disabled menu
+            // item the keyboard can reach (role + aria-disabled keep it in
+            // the panel's arrow-key cycle, see DropdownMenu.getFocusableItems;
+            // tabIndex -1 makes it focusable while open; the panel never
+            // activates an aria-disabled item).
+            <p
+              className="app-dropdown-item app-dropdown-item-disabled"
+              role="menuitem"
+              aria-disabled="true"
+              tabIndex={-1}
+              title={blockedHint}
+            >
+              {DEMOTE_LABEL}: {blockedHint}
+            </p>
+          ) : (
             <button
               type="button"
+              role="menuitem"
               className="app-dropdown-item"
               disabled={busy}
-              onClick={run(handlers.onPromote)}
+              onClick={run(handlers.onDemote)}
             >
-              Promote
+              {DEMOTE_LABEL}
             </button>
-            <button
-              type="button"
-              className="app-dropdown-item app-dropdown-item-danger"
-              disabled={busy}
-              onClick={run(handlers.onDiscard)}
-            >
-              Discard
-            </button>
-          </>
-        ) : blockedHint !== null ? (
-          // The hint is this menu's only content, so it is a disabled menu
-          // item the keyboard can reach (role + aria-disabled keep it in the
-          // panel's arrow-key cycle, see DropdownMenu.getFocusableItems;
-          // tabIndex -1 makes it focusable while open; it has no action).
-          <p
-            className="app-dropdown-item app-dropdown-item-disabled"
-            role="menuitem"
-            aria-disabled="true"
-            tabIndex={-1}
-            title={blockedHint}
-          >
-            {DEMOTE_LABEL}: {blockedHint}
-          </p>
-        ) : (
-          <button
-            type="button"
-            className="app-dropdown-item"
-            disabled={busy}
-            onClick={run(handlers.onDemote)}
-          >
-            {DEMOTE_LABEL}
-          </button>
-        )}
+          )}
+        </div>
       </DropdownMenu>
     </div>
   );

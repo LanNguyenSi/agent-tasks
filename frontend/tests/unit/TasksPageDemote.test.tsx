@@ -110,7 +110,7 @@ describe("/tasks page -- Move to backlog row action", () => {
 
     render(<TasksPage />);
     await openRowMenu("Promoted by mistake");
-    const button = await screen.findByRole("button", { name: "Move to backlog" });
+    const button = await screen.findByRole("menuitem", { name: "Move to backlog" });
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(1);
 
     await userEvent.click(button);
@@ -118,8 +118,8 @@ describe("/tasks page -- Move to backlog row action", () => {
     await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledWith("task-1", { status: "backlog" }));
     // The refreshed list replaces the open row's action with Promote/Discard.
     await openRowMenu("Promoted by mistake");
-    expect(await screen.findByRole("button", { name: "Promote" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Promote" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Move to backlog" })).not.toBeInTheDocument();
     expect(mockGetTeamTasks.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -130,7 +130,7 @@ describe("/tasks page -- Move to backlog row action", () => {
 
     render(<TasksPage />);
     await openRowMenu("Promoted by mistake");
-    const button = await screen.findByRole("button", { name: "Move to backlog" });
+    const button = await screen.findByRole("menuitem", { name: "Move to backlog" });
     await userEvent.click(button);
 
     expect(await screen.findByText("Action failed")).toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("/tasks page -- Move to backlog row action", () => {
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(1);
     // The row is still open and the action is available again.
     await openRowMenu("Promoted by mistake");
-    expect(screen.getByRole("button", { name: "Move to backlog" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Move to backlog" })).toBeEnabled();
   });
 
   it("an open row with a claim offers no action and never calls the API", async () => {
@@ -148,7 +148,7 @@ describe("/tasks page -- Move to backlog row action", () => {
 
     render(<TasksPage />);
     await openRowMenu("Promoted by mistake");
-    expect(screen.queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Move to backlog" })).not.toBeInTheDocument();
     expect(
       await screen.findByText(/Release the claim before moving this task back to backlog/),
     ).toBeInTheDocument();

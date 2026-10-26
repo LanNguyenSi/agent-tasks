@@ -13,7 +13,11 @@
  *   - Activating an item calls the matching handler with the row's task.
  *   - All items are disabled while busyTaskId matches the row.
  *   - The menu is keyboard operable: Enter opens it from the trigger, the
- *     first item receives focus, ArrowDown moves, Escape closes.
+ *     first item receives focus, ArrowDown moves, Escape closes; after an
+ *     item runs, focus is back on the trigger.
+ *   - Menu semantics: the trigger has aria-haspopup="menu", the items
+ *     (including the claim hint) are menuitems inside one role="menu"
+ *     named "Actions for <title>".
  *   - No column declares a width, so the Table primitive keeps the /tasks
  *     table in auto layout (Project/Due/Updated shrink to content, the Task
  *     column takes the free width; pinned with the CSS below).
@@ -133,28 +137,28 @@ describe("/tasks row actions menu", () => {
     const t = task({ id: "b-1", title: "Draft task", status: "backlog" });
     renderActionsCell(t);
     expect(trigger(t)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Promote")).not.toBeInTheDocument();
+    expect(screen.queryByText("Discard")).not.toBeInTheDocument();
   });
 
   it("offers Promote and Discard in the menu of a backlog row", async () => {
     const t = task({ id: "b-1", title: "Draft task", status: "backlog" });
     const { panel } = await openMenu(t);
-    expect(within(panel).getByRole("button", { name: "Promote" })).toBeInTheDocument();
-    expect(within(panel).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(within(panel).getByRole("menuitem", { name: "Promote" })).toBeInTheDocument();
+    expect(within(panel).getByRole("menuitem", { name: "Discard" })).toBeInTheDocument();
   });
 
   it("does not offer Promote or Discard in the menu of a non-backlog (e.g. open) row", async () => {
     const t = task({ id: "o-1", title: "Open task", status: "open" });
     const { panel } = await openMenu(t);
-    expect(within(panel).queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
-    expect(within(panel).queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("menuitem", { name: "Promote" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("menuitem", { name: "Discard" })).not.toBeInTheDocument();
   });
 
   it("clicking Promote calls onPromote with the row's task", async () => {
     const t = task({ id: "b-2", title: "Draft task 2", status: "backlog" });
     const { panel, onPromote } = await openMenu(t);
-    await userEvent.click(within(panel).getByRole("button", { name: "Promote" }));
+    await userEvent.click(within(panel).getByRole("menuitem", { name: "Promote" }));
     expect(onPromote).toHaveBeenCalledTimes(1);
     expect(onPromote).toHaveBeenCalledWith(t);
   });
@@ -162,7 +166,7 @@ describe("/tasks row actions menu", () => {
   it("clicking Discard calls onDiscard with the row's task", async () => {
     const t = task({ id: "b-3", title: "Draft task 3", status: "backlog" });
     const { panel, onDiscard } = await openMenu(t);
-    await userEvent.click(within(panel).getByRole("button", { name: "Discard" }));
+    await userEvent.click(within(panel).getByRole("menuitem", { name: "Discard" }));
     expect(onDiscard).toHaveBeenCalledTimes(1);
     expect(onDiscard).toHaveBeenCalledWith(t);
   });
@@ -170,8 +174,8 @@ describe("/tasks row actions menu", () => {
   it("disables all items while the row's task is busy", async () => {
     const t = task({ id: "b-4", title: "Draft task 4", status: "backlog" });
     const { panel } = await openMenu(t, { busyTaskId: "b-4" });
-    expect(within(panel).getByRole("button", { name: "Promote" })).toBeDisabled();
-    expect(within(panel).getByRole("button", { name: "Discard" })).toBeDisabled();
+    expect(within(panel).getByRole("menuitem", { name: "Promote" })).toBeDisabled();
+    expect(within(panel).getByRole("menuitem", { name: "Discard" })).toBeDisabled();
   });
 
   describe("keyboard operation", () => {
@@ -181,7 +185,7 @@ describe("/tasks row actions menu", () => {
       trigger(t).focus();
       await userEvent.keyboard("{Enter}");
       const panel = await menuPanel();
-      expect(within(panel).getByRole("button", { name: "Promote" })).toHaveFocus();
+      expect(within(panel).getByRole("menuitem", { name: "Promote" })).toHaveFocus();
     });
 
     it("ArrowDown moves between items and Enter activates the focused one", async () => {
@@ -202,6 +206,61 @@ describe("/tasks row actions menu", () => {
       await waitFor(() => expect(document.querySelector(".app-dropdown-menu")).toBeNull());
       expect(trigger(t)).toHaveFocus();
     });
+
+    it("Enter on an item runs it, closes the menu and returns focus to the trigger", async () => {
+      const t = task({ id: "b-8", title: "Draft task 8", status: "backlog" });
+      const spies = renderActionsCell(t);
+      trigger(t).focus();
+      await userEvent.keyboard("{Enter}");
+      const panel = await menuPanel();
+      expect(within(panel).getByRole("menuitem", { name: "Promote" })).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      expect(spies.onPromote).toHaveBeenCalledWith(t);
+      await waitFor(() => expect(document.querySelector(".app-dropdown-menu")).toBeNull());
+      expect(trigger(t)).toHaveFocus();
+    });
+
+    it("a click on Move to backlog also returns focus to the trigger", async () => {
+      const t = task({ id: "o-8", title: "Open task 8", status: "open" });
+      const { panel, onDemote } = await openMenu(t);
+      await userEvent.click(within(panel).getByRole("menuitem", { name: "Move to backlog" }));
+      expect(onDemote).toHaveBeenCalledWith(t);
+      await waitFor(() => expect(document.querySelector(".app-dropdown-menu")).toBeNull());
+      expect(trigger(t)).toHaveFocus();
+    });
+  });
+
+  describe("menu semantics", () => {
+    it("the trigger announces a menu popup", () => {
+      const t = task({ id: "b-9", title: "Draft task 9", status: "backlog" });
+      renderActionsCell(t);
+      expect(trigger(t)).toHaveAttribute("aria-haspopup", "menu");
+    });
+
+    it("Promote and Discard are menuitems of one menu named after the task", async () => {
+      const t = task({ id: "b-10", title: "Draft task 10", status: "backlog" });
+      const { panel } = await openMenu(t);
+      const menu = within(panel).getByRole("menu", { name: "Actions for Draft task 10" });
+      expect(within(menu).getAllByRole("menuitem").map((el) => el.textContent)).toEqual([
+        "Promote",
+        "Discard",
+      ]);
+    });
+
+    it("Move to backlog is a menuitem of the menu", async () => {
+      const t = task({ id: "o-10", title: "Open task 10", status: "open" });
+      const { panel } = await openMenu(t);
+      const item = within(panel).getByRole("menuitem", { name: "Move to backlog" });
+      expect(item.closest('[role="menu"]')).toHaveAttribute("aria-label", "Actions for Open task 10");
+    });
+
+    it("the claim hint sits inside the menu (a menuitem needs a menu parent)", async () => {
+      const t = task({ id: "o-11", title: "Claimed task 11", status: "open", claimedByUserId: "u-1" });
+      const { panel } = await openMenu(t);
+      const hint = within(panel).getByRole("menuitem", { name: /Release the claim/ });
+      expect(hint.closest('[role="menu"]')).not.toBeNull();
+      expect(hint.closest('[role="menu"]')).toHaveAttribute("aria-label", "Actions for Claimed task 11");
+    });
   });
 
   describe("Move to backlog (demote) on open rows", () => {
@@ -210,9 +269,9 @@ describe("/tasks row actions menu", () => {
     it("offers Move to backlog, and neither Promote nor Discard, in the menu of an open unclaimed task", async () => {
       const t = task({ id: "o-1", title: "Open task", status: "open" });
       const { panel } = await openMenu(t);
-      expect(within(panel).getByRole("button", { name: "Move to backlog" })).toBeEnabled();
-      expect(within(panel).queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
-      expect(within(panel).queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+      expect(within(panel).getByRole("menuitem", { name: "Move to backlog" })).toBeEnabled();
+      expect(within(panel).queryByRole("menuitem", { name: "Promote" })).not.toBeInTheDocument();
+      expect(within(panel).queryByRole("menuitem", { name: "Discard" })).not.toBeInTheDocument();
     });
 
     it.each(["in_progress", "review", "done", "abandoned"])(
@@ -227,7 +286,7 @@ describe("/tasks row actions menu", () => {
     it("clicking Move to backlog calls onDemote with the row's task", async () => {
       const t = task({ id: "o-2", title: "Open task 2", status: "open" });
       const { panel, onDemote, onPromote, onDiscard } = await openMenu(t);
-      await userEvent.click(within(panel).getByRole("button", { name: "Move to backlog" }));
+      await userEvent.click(within(panel).getByRole("menuitem", { name: "Move to backlog" }));
       expect(onDemote).toHaveBeenCalledTimes(1);
       expect(onDemote).toHaveBeenCalledWith(t);
       expect(onPromote).not.toHaveBeenCalled();
@@ -246,7 +305,7 @@ describe("/tasks row actions menu", () => {
         status: string;
       });
       const { panel, onDemote } = await openMenu(t);
-      expect(within(panel).queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
+      expect(within(panel).queryByRole("menuitem", { name: "Move to backlog" })).not.toBeInTheDocument();
       const note = within(panel).getByText(new RegExp(HINT));
       expect(note).toHaveAttribute("title", HINT);
       await userEvent.click(note);
@@ -256,16 +315,17 @@ describe("/tasks row actions menu", () => {
     it("disables Move to backlog while the row's task is busy", async () => {
       const t = task({ id: "o-4", title: "Open task 4", status: "open" });
       const { panel } = await openMenu(t, { busyTaskId: "o-4" });
-      expect(within(panel).getByRole("button", { name: "Move to backlog" })).toBeDisabled();
+      expect(within(panel).getByRole("menuitem", { name: "Move to backlog" })).toBeDisabled();
     });
   });
 
   // The menu panel is portaled to document.body, but React events bubble
   // through the portal to the owning table row, which navigates on click and
-  // on Enter (Table.tsx row link). These tests mount the REAL Table with
-  // rowHref plus the rowActions column (like page.tsx) and pin that nothing
-  // inside the open menu reaches that row: the fake router must never be
-  // called, and the row must never be treated as clicked.
+  // on Enter (Table.tsx row link) unless it ignores events from outside its
+  // own DOM. These tests mount the REAL Table with rowHref plus the
+  // rowActions column (like page.tsx) and pin that nothing inside the open
+  // menu navigates that row: the fake router must never be called, and the
+  // row must never be treated as clicked.
   describe("inside a real table row (rowHref)", () => {
     beforeEach(() => {
       vi.clearAllMocks();
@@ -302,7 +362,7 @@ describe("/tasks row actions menu", () => {
       const t = task({ id: "r-1", title: "Row task", status: "backlog" });
       const spies = renderRow(t);
       const panel = await openByKeyboard(t);
-      expect(within(panel).getByRole("button", { name: "Promote" })).toHaveFocus();
+      expect(within(panel).getByRole("menuitem", { name: "Promote" })).toHaveFocus();
       await userEvent.keyboard("{Enter}");
       expect(spies.onPromote).toHaveBeenCalledTimes(1);
       expect(spies.onPromote).toHaveBeenCalledWith(t);
@@ -323,7 +383,7 @@ describe("/tasks row actions menu", () => {
       const t = task({ id: "r-3", title: "Open row task", status: "open" });
       const spies = renderRow(t);
       const panel = await openByKeyboard(t);
-      expect(within(panel).getByRole("button", { name: "Move to backlog" })).toHaveFocus();
+      expect(within(panel).getByRole("menuitem", { name: "Move to backlog" })).toHaveFocus();
       await userEvent.keyboard("{Enter}");
       expect(spies.onDemote).toHaveBeenCalledTimes(1);
       expect(spies.onDemote).toHaveBeenCalledWith(t);
@@ -345,7 +405,7 @@ describe("/tasks row actions menu", () => {
       const spies = renderRow(t);
       await userEvent.click(trigger(t));
       const panel = await menuPanel();
-      await userEvent.click(within(panel).getByRole("button", { name: "Promote" }));
+      await userEvent.click(within(panel).getByRole("menuitem", { name: "Promote" }));
       expect(spies.onPromote).toHaveBeenCalledTimes(1);
       expectNoNavigation();
     });

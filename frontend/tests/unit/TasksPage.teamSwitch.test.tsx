@@ -314,7 +314,7 @@ describe("/tasks: nothing of the team that was left shows under the new team", (
     await screen.findAllByText("Alpha backlog task");
     // The action lives in the row's "..." menu.
     fireEvent.click(screen.getByRole("button", { name: "Actions for Alpha backlog task" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Discard" }));
     expect(screen.getByRole("dialog", { name: "Discard task?" })).toBeInTheDocument();
 
     act(() => nav.push("/tasks?teamId=t2"));
@@ -332,7 +332,7 @@ describe("/tasks: nothing of the team that was left shows under the new team", (
 
     // The demote action lives in the row's "..." menu.
     fireEvent.click(screen.getByRole("button", { name: "Actions for Alpha only task" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Move to backlog" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to backlog" }));
     await waitFor(() => expect(updateTask).toHaveBeenCalled());
     pick("Team Two");
     await screen.findAllByText("Beta only task");

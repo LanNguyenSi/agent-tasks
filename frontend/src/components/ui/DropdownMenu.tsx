@@ -9,6 +9,9 @@
 //   - First focusable item receives focus when the menu opens.
 //   - ArrowDown / ArrowUp / Home / End cycle through focusable items.
 //   - Escape closes the menu and restores focus to the trigger.
+//   - An item with aria-disabled="true" is never activated: the panel
+//     swallows clicks and Enter/Space on it (a role="menuitem" one stays
+//     focusable, see getFocusableItems).
 
 import { type CSSProperties, type ReactNode, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
@@ -27,11 +30,12 @@ interface DropdownMenuProps {
 
 /** Collect the menu items keyboard focus can land on. Disabled items are
  *  skipped, with one exception: an explicit role="menuitem" carrying
- *  aria-disabled="true" (the claim-hint item of the /tasks row-actions menu,
- *  the menu's only content while the task holds a claim) stays in the
- *  cycle, so focus always has something to land on. Elements that merely
- *  look disabled (.app-dropdown-item-disabled without that role) stay out,
- *  as before. */
+ *  aria-disabled="true" stays in the cycle (focusable, announced as
+ *  disabled), so a menu whose only entry is unavailable still gives focus
+ *  something to land on; the panel never activates such an item (see
+ *  disabledItemOf). Skipped: a disabled button, an element with the
+ *  .app-dropdown-item-disabled class (unless it is such a disabled
+ *  menuitem), and any other element with aria-disabled="true". */
 function getFocusableItems(container: HTMLElement): HTMLElement[] {
   return Array.from(
     container.querySelectorAll<HTMLElement>(
@@ -46,6 +50,15 @@ function getFocusableItems(container: HTMLElement): HTMLElement[] {
       el.getAttribute("aria-disabled") !== "true"
     );
   });
+}
+
+/** The aria-disabled="true" element inside `panel` that `target` sits in,
+ *  or null. Clicks and Enter/Space on it are swallowed by the panel, so an
+ *  item announced as disabled never runs a handler or follows a link. */
+function disabledItemOf(panel: HTMLElement | null, target: EventTarget | null): Element | null {
+  if (!panel || !(target instanceof Element)) return null;
+  const item = target.closest('[aria-disabled="true"]');
+  return item && panel.contains(item) ? item : null;
 }
 
 export default function DropdownMenu({
@@ -119,6 +132,23 @@ export default function DropdownMenu({
     [onClose],
   );
 
+  // Capture phase, so the panel sees the event before the item's own
+  // handlers: stopping it here keeps a disabled item's onClick/onKeyDown
+  // from running, and preventDefault cancels a link's navigation or a
+  // button's native activation.
+  const handleClickCapture = useCallback((e: React.MouseEvent) => {
+    if (!disabledItemOf(panelRef.current, e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, [panelRef]);
+
+  const handleKeyDownCapture = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (!disabledItemOf(panelRef.current, e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, [panelRef]);
+
   if (!open || !mounted) return null;
 
   // position, minWidth, and visibility are truly dynamic values.
@@ -136,6 +166,8 @@ export default function DropdownMenu({
     <div
       ref={panelRef}
       className={["app-dropdown-menu", className].filter(Boolean).join(" ")}
+      onClickCapture={handleClickCapture}
+      onKeyDownCapture={handleKeyDownCapture}
       onKeyDown={handleKeyDown}
       // eslint-disable-next-line no-restricted-syntax
       style={dynamicStyle}
