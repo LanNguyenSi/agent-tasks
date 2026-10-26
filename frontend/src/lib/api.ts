@@ -528,8 +528,12 @@ export async function discoverSso(email: string): Promise<SsoDiscoverResult | nu
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
-export async function getProjects(teamId: string): Promise<Project[]> {
-  const data = await request<{ projects: Project[] }>(`/api/projects?teamId=${teamId}`);
+/** Without a `teamId` the server lists the projects shared with the caller;
+ * that is the whole listing for a user who belongs to no team. */
+export async function getProjects(teamId?: string): Promise<Project[]> {
+  const data = await request<{ projects: Project[] }>(
+    teamId ? `/api/projects?teamId=${teamId}` : "/api/projects",
+  );
   return data.projects;
 }
 
