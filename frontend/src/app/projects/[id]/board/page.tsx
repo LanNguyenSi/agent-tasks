@@ -1,12 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../../../lib/confidence";
 import { useParams, useRouter } from "next/navigation";
 import {
   getCurrentUser,
-  getTeams,
   getProject,
   getTasks,
   getTask,
@@ -15,7 +13,6 @@ import {
   isProjectWriteRole,
   ApiRequestError,
   type User,
-  type Team,
   type Project,
   type Task,
   type WorkflowTransition,
@@ -34,21 +31,19 @@ import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import { Icon } from "../../../../components/ui/Icon";
 import { KeyHint } from "../../../../components/ui/KeyHint";
-import { PageHeader } from "../../../../components/ui/PageHeader";
 import { SkeletonList } from "../../../../components/ui/Skeleton";
 import { StatusChip } from "../../../../components/ui/StatusChip";
 import { Tabs } from "../../../../components/ui/Tabs";
 import { useToast } from "../../../../components/ui/Toast";
 import TaskDetail from "../../../../components/TaskDetail";
 import ImportDialog from "../../../../components/ImportDialog";
-import DropdownMenu from "../../../../components/ui/DropdownMenu";
 import FilterToolbar from "../../../../components/dashboard/FilterToolbar";
 import BoardView from "../../../../components/dashboard/BoardView";
 import TaskListView from "../../../../components/dashboard/TaskListView";
 import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
 import { DEFAULT_CREATE_STATUS } from "../../../../lib/status";
-import { projectHubHref, projectsHref } from "../../../../lib/routes";
+import { projectsHref } from "../../../../lib/routes";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -113,10 +108,7 @@ export default function ProjectBoardPage() {
 
   const [user, setUser] = useState<User | null>(null);
   // GET /projects/:id for the route's project; set once access is confirmed.
-  // The team name is only for the breadcrumb: a user with a per-project
-  // share and no team membership has no matching team, so no team crumb.
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [teamName, setTeamName] = useState<string | null>(null);
   const selectedProjectId = selectedProject?.id ?? "";
   const [tasks, setTasks] = useState<Task[]>([]);
 
@@ -138,10 +130,6 @@ export default function ProjectBoardPage() {
   const [viewMode, setViewMode] = useState<DashboardViewMode>("board");
   const [listPage, setListPage] = useState(1);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
-
-  // Overflow menu (settings / members / workflow links)
-  const overflowTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const [overflowOpen, setOverflowOpen] = useState(false);
 
   // Search input ref for "/" shortcut focus
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -268,11 +256,7 @@ export default function ProjectBoardPage() {
   useEffect(() => {
     void (async () => {
       try {
-        // Teams only name the breadcrumb, so a failed lookup is not fatal.
-        const [me, userTeams] = await Promise.all([
-          getCurrentUser(),
-          getTeams().catch((): Team[] => []),
-        ]);
+        const me = await getCurrentUser();
         if (!me) {
           router.replace("/auth");
           return;
@@ -294,7 +278,6 @@ export default function ProjectBoardPage() {
           throw err;
         }
         setSelectedProject(project);
-        setTeamName(userTeams.find((t) => t.id === project.teamId)?.name ?? null);
         storeProjectId(project.teamId, project.id);
 
         const requestedTaskId = new URLSearchParams(window.location.search).get("taskId");
@@ -380,138 +363,85 @@ export default function ProjectBoardPage() {
     </div>
   );
 
-  // Toolbar: project name + summary + search + filter + view toggle + new
-  // task. The title is plain text: projects are switched from Projects or
-  // Home, the hub band above owns project identity.
+  // Toolbar: search, filter, view toggle with the task count, import, new
+  // task. The project name, crumb and tabs are the hub band above (layout),
+  // so there is no title row here.
   const toolbar = (
-    <PageHeader
-      breadcrumb={
-        teamName ? (
-          <>
-            <span>{teamName}</span>
-            <span>/</span>
-          </>
-        ) : undefined
-      }
-      title={selectedProject?.name ?? "Board"}
-      summary={
-        selectedProjectId && !loading ? (
-          <span className="num">
+    <div className="page-header db-toolbar">
+      <div className="db-toolbar-main">
+        {/* Search with "/" shortcut */}
+        <div className="db-search">
+          <Icon name="search" size={14} />
+          <input
+            ref={searchInputRef}
+            type="search"
+            className="db-search-input"
+            aria-label="Search tasks"
+            value={taskQuery}
+            onChange={(e) => setTaskQuery(e.target.value)}
+            placeholder="Search tasks…"
+          />
+          <KeyHint>/</KeyHint>
+        </div>
+
+        {/* Filter toggle */}
+        <button
+          type="button"
+          className={`btn--box btn--sm ${showFilters || hasActiveFilters ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setShowFilters((v) => !v)}
+        >
+          <Icon name="filter" size={14} />
+          Filter
+          {hasActiveFilters && !showFilters && <span className="db-filter-dot" />}
+        </button>
+
+        {/* Board / List view toggle */}
+        <Tabs
+          value={viewMode}
+          onChange={(v) => setViewMode(v as DashboardViewMode)}
+          tabs={[
+            { value: "board", label: "Board", icon: <Icon name="board" size={14} /> },
+            { value: "list", label: "List", icon: <Icon name="list" size={14} /> },
+          ]}
+          label="View"
+        />
+
+        {selectedProjectId && !loading && (
+          <span className="db-toolbar-count num">
             {hasActiveFilters
               ? `${filteredTasks.length} / ${tasks.length} tasks`
               : `${filteredTasks.length} tasks`}
           </span>
-        ) : undefined
-      }
-    >
-      {/* Search with "/" shortcut */}
-      <div className="db-search">
-        <Icon name="search" size={14} />
-        <input
-          ref={searchInputRef}
-          type="search"
-          className="db-search-input"
-          aria-label="Search tasks"
-          value={taskQuery}
-          onChange={(e) => setTaskQuery(e.target.value)}
-          placeholder="Search tasks…"
-        />
-        <KeyHint>/</KeyHint>
+        )}
       </div>
 
-      {/* Filter toggle */}
-      <button
-        type="button"
-        className={`btn--box btn--sm ${showFilters || hasActiveFilters ? "btn-primary" : "btn-ghost"}`}
-        onClick={() => setShowFilters((v) => !v)}
-      >
-        <Icon name="filter" size={14} />
-        Filter
-        {hasActiveFilters && !showFilters && <span className="db-filter-dot" />}
-      </button>
+      <div className="page-header-actions db-toolbar-actions">
+        {/* Import (ghost) */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowImport(true)}
+          disabled={!selectedProjectId}
+        >
+          Import
+        </Button>
 
-      {/* Board / List view toggle */}
-      <Tabs
-        value={viewMode}
-        onChange={(v) => setViewMode(v as DashboardViewMode)}
-        tabs={[
-          { value: "board", label: "Board", icon: <Icon name="board" size={14} /> },
-          { value: "list", label: "List", icon: <Icon name="list" size={14} /> },
-        ]}
-        label="View"
-      />
-
-      {/* Import (ghost) */}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => setShowImport(true)}
-        disabled={!selectedProjectId}
-      >
-        Import
-      </Button>
-
-      {/* New task with "C" key hint */}
-      <Button
-        size="sm"
-        onClick={() => {
-          setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
-          setBootError(null);
-          setShowNewTask(true);
-        }}
-        disabled={!selectedProjectId}
-        keyHint="C"
-      >
-        <Icon name="plus" size={13} />
-        New task
-      </Button>
-
-      {/* Overflow menu: workflow / members / settings */}
-      {selectedProjectId && (
-        <>
-          <button
-            ref={overflowTriggerRef}
-            type="button"
-            className="db-overflow-btn"
-            aria-label="Project settings"
-            aria-haspopup="menu"
-            aria-expanded={overflowOpen}
-            onClick={() => setOverflowOpen((v) => !v)}
-          >
-            <Icon name="dots" size={14} />
-          </button>
-          <DropdownMenu
-            anchorRef={overflowTriggerRef}
-            open={overflowOpen}
-            onClose={() => setOverflowOpen(false)}
-            align="end"
-            minWidth={180}
-          >
-            <Link
-              href={projectHubHref(selectedProjectId, "workflow")}
-              className="app-dropdown-item"
-              onClick={() => setOverflowOpen(false)}
-            >
-              Workflow &amp; gates
-            </Link>
-            <Link
-              href={projectHubHref(selectedProjectId, "members")}
-              className="app-dropdown-item"
-              onClick={() => setOverflowOpen(false)}
-            >
-              Members
-            </Link>
-            <Link
-              href={projectHubHref(selectedProjectId, "settings")}
-              className="app-dropdown-item"
-              onClick={() => setOverflowOpen(false)}
-            >
-              Settings
-            </Link>
-          </DropdownMenu>
-        </>
-      )}
-    </PageHeader>
+        {/* New task with "C" key hint */}
+        <Button
+          size="sm"
+          onClick={() => {
+            setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
+            setBootError(null);
+            setShowNewTask(true);
+          }}
+          disabled={!selectedProjectId}
+          keyHint="C"
+        >
+          <Icon name="plus" size={13} />
+          New task
+        </Button>
+      </div>
+    </div>
   );
 
   // Filter bar (shown when showFilters is true)
