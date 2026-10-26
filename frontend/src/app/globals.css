@@ -2640,7 +2640,7 @@ input[type="checkbox"] {
 
 .page-header {
   position: sticky;
-  top: 48px; /* sits below the 48px AppHeader */
+  top: var(--app-header-height); /* sits below the AppHeader */
   z-index: 40;
   display: flex;
   align-items: center;
@@ -6944,7 +6944,7 @@ a.proj-chip:hover {
 /* Sticky side nav: hidden under 1000px via the responsive block below. */
 .settings-side-nav {
   position: sticky;
-  top: calc(48px + var(--space-4));
+  top: calc(var(--app-header-height) + var(--space-4));
   display: flex;
   flex-direction: column;
   gap: var(--space-1);

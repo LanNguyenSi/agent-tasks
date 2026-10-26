@@ -76,6 +76,10 @@ describe("task detail loading and error frames", () => {
     expect(frame(selector)).toEqual(page);
   });
 
+  it.each([".td-page", ".td-loading-wrap", ".td-error-wrap"])("%s sets no margin longhand that could re-centre it", (selector) => {
+    expect(rule(selector)).not.toMatch(/margin-(?:left|right|inline)/);
+  });
+
   it("the page frame is left-aligned with the page gutter", () => {
     const [maxWidth, margin, padding] = frame(".td-page");
     expect(maxWidth).toBe("calc(1200px + 2 * var(--page-gutter))");
@@ -87,6 +91,13 @@ describe("task detail loading and error frames", () => {
     const body = rule(".td-skeleton");
     expect(body).not.toMatch(/max-width/);
     expect(body).not.toMatch(/margin/);
+  });
+});
+
+describe("offsets below the app header", () => {
+  it("use the header height token, not a 48px literal", () => {
+    expect(rule(".page-header")).toMatch(/top:\s*var\(--app-header-height\)/);
+    expect(rule(".settings-side-nav")).toMatch(/top:\s*calc\(var\(--app-header-height\) \+ var\(--space-4\)\)/);
   });
 });
 
