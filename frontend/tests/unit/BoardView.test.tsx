@@ -113,3 +113,56 @@ describe("BoardView -- backlog column", () => {
     expect(within(backlogColumn).getByText("0")).toBeInTheDocument();
   });
 });
+
+describe("BoardView -- column jump bar", () => {
+  const tasks: Task[] = [
+    task({ id: "b-1", title: "B1", status: "backlog" }),
+    task({ id: "b-2", title: "B2", status: "backlog" }),
+    task({ id: "o-1", title: "O1", status: "open" }),
+    task({ id: "d-1", title: "D1", status: "done" }),
+  ];
+
+  function renderBoard() {
+    return render(
+      <BoardView tasks={tasks} activeTaskId={null} templateFields={null} onSelectTask={() => {}} />,
+    );
+  }
+
+  it("has one link per column, in column order, with the task count", () => {
+    renderBoard();
+    const nav = screen.getByRole("navigation", { name: "Jump to column" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((l) => l.getAttribute("aria-label"))).toEqual([
+      "Jump to Backlog, 2 tasks",
+      "Jump to Open, 1 task",
+      "Jump to In Progress, 0 tasks",
+      "Jump to Review, 0 tasks",
+      "Jump to Done, 1 task",
+    ]);
+    expect(links.map((l) => l.textContent)).toEqual([
+      "Backlog2",
+      "Open1",
+      "In Progress0",
+      "Review0",
+      "Done1",
+    ]);
+  });
+
+  it("links each chip to the id of its column section", () => {
+    renderBoard();
+    const nav = screen.getByRole("navigation", { name: "Jump to column" });
+    for (const link of within(nav).getAllByRole("link")) {
+      const id = link.getAttribute("href")!.slice(1);
+      const target = document.getElementById(id);
+      expect(target, `target for ${link.getAttribute("href")}`).not.toBeNull();
+      expect(target!.tagName).toBe("SECTION");
+    }
+    expect(within(nav).getAllByRole("link").map((l) => l.getAttribute("href"))).toEqual([
+      "#db-col-backlog",
+      "#db-col-open",
+      "#db-col-in_progress",
+      "#db-col-review",
+      "#db-col-done",
+    ]);
+  });
+});
