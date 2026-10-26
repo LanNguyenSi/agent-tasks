@@ -118,7 +118,14 @@ describe("SettingsPage (personal)", () => {
       "Appearance",
       "GitHub",
       "Agent Permissions",
+      "Team settings",
     ]);
+
+    // The Team settings card is the in-app entry to /settings/team.
+    expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
+      "href",
+      "/settings/team",
+    );
 
     // No team or token data is fetched for personal settings.
     expect(getTeams).not.toHaveBeenCalled();

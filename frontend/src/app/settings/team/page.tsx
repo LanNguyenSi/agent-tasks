@@ -13,8 +13,8 @@ import {
   type Team,
   type AgentToken,
 } from "../../../lib/api";
-import { resolveCurrentTeam } from "../../../lib/currentTeam";
-import { ssoSettingsHref } from "../../../lib/routes";
+import { rememberTeam, resolveCurrentTeam } from "../../../lib/currentTeam";
+import { settingsHref, ssoSettingsHref } from "../../../lib/routes";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import { FullPageLoader } from "../../../components/ui/FullPageLoader";
@@ -50,6 +50,7 @@ export default function TeamSettingsPage() {
       const urlTeamId = new URLSearchParams(window.location.search).get("teamId");
       const team = resolveCurrentTeam(t, { urlTeamId });
       if (team) {
+        if (team.id === urlTeamId) rememberTeam(team.id);
         setSelectedTeamId(team.id);
         const tok = await getAgentTokens(team.id);
         setTokens(tok);
@@ -94,7 +95,14 @@ export default function TeamSettingsPage() {
 
   return (
     <main className="page-shell">
-      <PageHeader title="Team settings" />
+      <PageHeader
+        breadcrumb={
+          <a href={settingsHref()} className="settings-breadcrumb">
+            Settings
+          </a>
+        }
+        title="Team settings"
+      />
 
       <div className="settings-layout">
         {/* Sticky side-nav: hidden under 1000px via CSS */}

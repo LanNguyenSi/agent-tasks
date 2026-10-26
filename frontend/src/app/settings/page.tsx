@@ -30,6 +30,7 @@ const SECTIONS = [
   { id: "appearance", label: "Appearance" },
   { id: "github", label: "GitHub" },
   { id: "delegation", label: "Agent Permissions" },
+  { id: "team", label: "Team settings" },
 ];
 
 // Anchors that used to live on this page and now live on /settings/team.
@@ -172,6 +173,13 @@ export default function SettingsPage() {
               className={`settings-side-nav-link${activeSection === "delegation" ? " settings-side-nav-link--active" : ""}`}
             >
               Agent Permissions
+            </a>
+            <p className="settings-side-nav-group-label">Team</p>
+            <a
+              href="#team"
+              className={`settings-side-nav-link${activeSection === "team" ? " settings-side-nav-link--active" : ""}`}
+            >
+              Team settings
             </a>
           </nav>
         </aside>
@@ -342,6 +350,23 @@ export default function SettingsPage() {
                     {error}
                   </AlertBanner>
                 )}
+              </section>
+            </Card>
+          </div>
+
+          {/* Group 3: Team */}
+          <div className="settings-section-group">
+            <p className="settings-group-eyebrow">Team</p>
+
+            <Card>
+              <section id="team">
+                <h2 className="settings-section-heading">Team settings</h2>
+                <p className="settings-section-desc">
+                  API tokens and Enterprise SSO are managed per team.
+                </p>
+                <Button href={teamSettingsHref()} variant="secondary">
+                  Open team settings
+                </Button>
               </section>
             </Card>
           </div>

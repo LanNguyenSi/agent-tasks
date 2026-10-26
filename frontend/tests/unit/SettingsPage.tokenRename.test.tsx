@@ -298,6 +298,31 @@ describe("TeamSettingsPage — page shell", () => {
     expect(screen.queryByRole("heading", { name: "Agent Permissions" })).not.toBeInTheDocument();
   });
 
+  it("links back to personal Settings with a breadcrumb", async () => {
+    await renderTeamSettingsPage("ADMIN", []);
+
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("remembers a team chosen via ?teamId", async () => {
+    window.history.replaceState(null, "", "/settings/team?teamId=team-2");
+    mockGetTeams.mockResolvedValue([
+      makeTeam("ADMIN"),
+      makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" }),
+    ]);
+    mockGetAgentTokens.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("team-2");
+  });
+
+  it("does not remember the first-team fallback when the URL names no team", async () => {
+    await renderTeamSettingsPage("ADMIN", []);
+
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBeNull();
+  });
+
   it("scrolls to the hash target once the sections have rendered", async () => {
     window.location.hash = "#sso";
     await renderTeamSettingsPage("ADMIN", []);
