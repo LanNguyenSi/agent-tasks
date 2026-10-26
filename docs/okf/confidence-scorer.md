@@ -3,7 +3,7 @@ type: invariant
 title: "Confidence scorer: authoritative backend + hand-mirrored frontend"
 description: "backend/src/lib/confidence.ts is the source of truth; the frontend copy is a manually kept-in-sync mirror, enforced live in CI by a cross-package parity test over a shared fixture corpus. The claim-time gate applies the score per project enforcementMode (OFF, WARN default, BLOCK)."
 tags: [confidence, scorer, invariant, keep-in-sync, claim-gate, enforcement]
-timestamp: 2026-10-25T19:07:44Z
+timestamp: 2026-10-26T07:36:06Z
 sources:
   - backend/src/lib/confidence.ts
   - frontend/src/lib/confidence.ts
