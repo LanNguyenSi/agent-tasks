@@ -44,6 +44,7 @@ import {
   type ProjectSortColumn,
   type SortDirection,
 } from "../../lib/projectSort";
+import { isActiveTask } from "../home/widgetFilters";
 
 const PROJECT_PAGE_SIZE = 25;
 
@@ -450,7 +451,7 @@ export default function ProjectsPage() {
       const results = await Promise.allSettled(
         projects.map(async (p) => {
           const tasks = await getTasks(p.id);
-          return [p.id, tasks.filter((t) => t.status !== "done").length] as const;
+          return [p.id, tasks.filter(isActiveTask).length] as const;
         }),
       );
       if (cancelled) return;

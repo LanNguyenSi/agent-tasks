@@ -12,7 +12,13 @@
  *     surface in their own widget instead).
  */
 import { describe, it, expect } from "vitest";
-import { isBacklogTask, isPriorityTask } from "../../src/app/home/widgetFilters";
+import {
+  ACTIVE_STATUSES,
+  ACTIVE_STATUS_PARAM,
+  isActiveTask,
+  isBacklogTask,
+  isPriorityTask,
+} from "../../src/app/home/widgetFilters";
 
 describe("isBacklogTask", () => {
   it("matches a backlog-status task", () => {
@@ -61,5 +67,24 @@ describe("isPriorityTask", () => {
   it("excludes a MEDIUM/LOW priority task regardless of status", () => {
     expect(isPriorityTask({ priority: "MEDIUM", status: "open" })).toBe(false);
     expect(isPriorityTask({ priority: "LOW", status: "open" })).toBe(false);
+  });
+});
+
+describe("isActiveTask (the one definition of active work)", () => {
+  it("matches open and in_progress", () => {
+    expect(isActiveTask({ status: "open" })).toBe(true);
+    expect(isActiveTask({ status: "in_progress" })).toBe(true);
+  });
+
+  it("does not match review, backlog, done or abandoned", () => {
+    expect(isActiveTask({ status: "review" })).toBe(false);
+    expect(isActiveTask({ status: "backlog" })).toBe(false);
+    expect(isActiveTask({ status: "done" })).toBe(false);
+    expect(isActiveTask({ status: "abandoned" })).toBe(false);
+  });
+
+  it("builds the status request value from the same list", () => {
+    expect(ACTIVE_STATUSES).toEqual(["open", "in_progress"]);
+    expect(ACTIVE_STATUS_PARAM).toBe("open,in_progress");
   });
 });

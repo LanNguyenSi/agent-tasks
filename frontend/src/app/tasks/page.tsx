@@ -67,7 +67,7 @@ const STATUS_CHIP_LABELS: Record<Status, string> = {
 // Full scope labels used as H1.
 const SCOPE_LABELS: Record<Scope, string> = {
   all: "All Tasks",
-  open: "Open Tasks",
+  open: "Active Tasks",
   mine: "My Tasks",
   priority: "Priority (High / Critical)",
   review: "In Review",
@@ -77,7 +77,7 @@ const SCOPE_LABELS: Record<Scope, string> = {
 // Shorter labels for the segmented control tabs.
 const SCOPE_TAB_LABELS: Record<Scope, string> = {
   all: "All",
-  open: "Open",
+  open: "Active",
   mine: "My Tasks",
   priority: "Priority",
   review: "In Review",

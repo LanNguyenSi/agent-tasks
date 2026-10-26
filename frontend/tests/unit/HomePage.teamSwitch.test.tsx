@@ -109,7 +109,7 @@ describe("/home: current team follows the URL", () => {
 
     expect(await screen.findByRole("heading", { name: "Beta Team" })).toBeInTheDocument();
     expect(await screen.findAllByText("Beta only task")).not.toHaveLength(0);
-    expect(vi.mocked(getTeamTasks)).toHaveBeenLastCalledWith("team-2");
+    expect(vi.mocked(getTeamTasks)).toHaveBeenLastCalledWith("team-2", expect.anything());
     // The old team's tasks do not linger next to the new team's heading.
     expect(screen.queryByText("Alpha only task")).not.toBeInTheDocument();
     expect(headerTeam()).toBe("Beta Team");
@@ -142,7 +142,7 @@ describe("/home: current team follows the URL", () => {
     );
 
     pick("Beta Team");
-    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("team-2"));
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("team-2", expect.anything()));
     pick("Alpha Team");
     expect(await screen.findAllByText("Alpha only task")).not.toHaveLength(0);
     await act(async () => {
@@ -165,7 +165,7 @@ describe("/home: current team follows the URL", () => {
     );
 
     pick("Beta Team");
-    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("team-2"));
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("team-2", expect.anything()));
     pick("Alpha Team");
     await screen.findAllByText("Alpha only task");
     await act(async () => {
@@ -230,7 +230,7 @@ describe("/home: current team follows the URL", () => {
       teamId === "team-1" ? slowFirst.promise : Promise.resolve(result("Beta only task", "b")),
     );
     renderBoth();
-    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("team-1"));
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("team-1", expect.anything()));
 
     pick("Beta Team");
     expect(await screen.findAllByText("Beta only task")).not.toHaveLength(0);
@@ -254,5 +254,64 @@ describe("/home: current team follows the URL", () => {
     expect(screen.getByRole("heading", { name: "Alpha Team" })).toBeInTheDocument();
     expect(screen.getAllByText("Alpha only task")).not.toHaveLength(0);
     expect(vi.mocked(getTeamTasks).mock.calls).toHaveLength(calls);
+  });
+});
+
+describe("/home: Your projects strip recents", () => {
+  const PROJECTS_ABC = ["pa", "pb", "pc"].map(
+    (id) => ({ id, name: `Project ${id}`, slug: id, accessSource: "team" }) as TeamTasksProject,
+  );
+
+  function stripOrder(): string[] {
+    return Array.from(document.querySelectorAll(".home-projects-item-name")).map(
+      (el) => el.textContent ?? "",
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(getTeamTasks).mockImplementation(async () => ({
+      tasks: [],
+      projects: PROJECTS_ABC,
+      counts: COUNTS,
+    }));
+  });
+
+  it("re-reads the new team's recents when the header switches teams", async () => {
+    window.localStorage.setItem("agent-tasks:recentProjects:team-1", JSON.stringify(["pb"]));
+    window.localStorage.setItem("agent-tasks:recentProjects:team-2", JSON.stringify(["pc"]));
+    renderBoth();
+    await screen.findByRole("heading", { name: "Alpha Team" });
+    await waitFor(() =>
+      expect(stripOrder()).toEqual(["Project pb", "Project pa", "Project pc"]),
+    );
+
+    pick("Beta Team");
+
+    await screen.findByRole("heading", { name: "Beta Team" });
+    await waitFor(() =>
+      expect(stripOrder()).toEqual(["Project pc", "Project pa", "Project pb"]),
+    );
+  });
+
+  it("keeps the strip order when stored recents change between polls", async () => {
+    const interval = vi.spyOn(globalThis, "setInterval");
+    window.localStorage.setItem("agent-tasks:recentProjects:team-1", JSON.stringify(["pb"]));
+    renderBoth();
+    await waitFor(() =>
+      expect(stripOrder()).toEqual(["Project pb", "Project pa", "Project pc"]),
+    );
+
+    // Another tab visits pc; the 15 s poll must not reshuffle the strip.
+    window.localStorage.setItem("agent-tasks:recentProjects:team-1", JSON.stringify(["pc"]));
+    const before = vi.mocked(getTeamTasks).mock.calls.length;
+    const poll = interval.mock.calls.find((c) => c[1] === 15_000);
+    if (!poll) throw new Error("no 15 s poll registered");
+    await act(async () => {
+      (poll[0] as () => void)();
+    });
+
+    expect(vi.mocked(getTeamTasks).mock.calls.length).toBeGreaterThan(before);
+    expect(stripOrder()).toEqual(["Project pb", "Project pa", "Project pc"]);
+    interval.mockRestore();
   });
 });
