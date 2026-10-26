@@ -13,6 +13,7 @@ import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/tasks",
   useRouter: () => routerMocks,
   useSearchParams: () => new URLSearchParams(""),
 }));
@@ -92,6 +93,8 @@ describe("/tasks with a team", () => {
     expect(vi.mocked(getTeamTasks).mock.calls[0]![0]).toBe("t1");
     expect(screen.queryByText("Cross-project tasks need a team.")).toBeNull();
     expect(getProjects).not.toHaveBeenCalled();
-    expect(routerMocks.replace).not.toHaveBeenCalled();
+    // No redirect: the only replace writes the resolved team into this page's
+    // own URL (lib/teamSwitch useCurrentTeam).
+    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/tasks?teamId=t1"]);
   });
 });

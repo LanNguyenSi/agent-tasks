@@ -8,7 +8,7 @@
  * Mock/render pattern mirrors TasksPageDemote.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent, waitFor, within } from "@testing-library/react";
 import type { Project, Team, User } from "../../src/lib/api";
 
 // The page's URL is the in-memory history of tests/setup/fakeNavigation.ts, so
@@ -360,6 +360,111 @@ describe("/projects page: current team follows the URL", () => {
     expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
     // Nor does the old team's sync outcome show up under the new team.
     expect(screen.queryByText("Already up to date")).not.toBeInTheDocument();
+  });
+
+  /** Open the delete confirmation for `name` and confirm it. */
+  async function confirmDelete(name: string) {
+    // With one project the view settles on its count-based default (cards)
+    // right after the list arrives; open the row menu only after that, or the
+    // view change unmounts it.
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Cards" })).toHaveAttribute("aria-selected", "true"),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: `Actions for ${name}` })[0]!);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete project" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete project?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" }));
+  }
+
+  it("a delete that finishes after a switch shows no feedback under the new team", async () => {
+    const { deleteProject } = await import("../../src/lib/api");
+    const del = deferred<void>();
+    vi.mocked(deleteProject).mockReturnValue(del.promise);
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+
+    await confirmDelete("Agent Tasks");
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("proj-1"));
+    act(() => nav.push("/projects?teamId=t2"));
+    await screen.findAllByText("Second Team Project");
+    await act(async () => {
+      del.resolve();
+    });
+
+    expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(screen.queryByText("Project deleted")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Project "Agent Tasks" deleted/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Second Team Project").length).toBeGreaterThan(0);
+  });
+
+  it("a delete that fails after a switch shows no error under the new team", async () => {
+    const { deleteProject } = await import("../../src/lib/api");
+    const del = deferred<void>();
+    vi.mocked(deleteProject).mockReturnValue(del.promise);
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+
+    await confirmDelete("Agent Tasks");
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("proj-1"));
+    act(() => nav.push("/projects?teamId=t2"));
+    await screen.findAllByText("Second Team Project");
+    await act(async () => {
+      del.reject(new Error("delete failed late"));
+    });
+
+    expect(screen.queryByText("Delete failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("delete failed late")).not.toBeInTheDocument();
+  });
+
+  it.each(["resolves", "rejects"] as const)(
+    "a create that %s after a switch leaves the new team's dialog and list alone",
+    async (outcome) => {
+      const { createProject } = await import("../../src/lib/api");
+      const create = deferred<Project>();
+      vi.mocked(createProject).mockReturnValueOnce(create.promise);
+      renderBoth();
+      await screen.findAllByText("Agent Tasks");
+      fireEvent.click(screen.getAllByRole("button", { name: /New Project/ })[0]!);
+      fireEvent.change(screen.getByPlaceholderText("My Project"), { target: { value: "Late" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      await waitFor(() =>
+        expect(createProject).toHaveBeenCalledWith(expect.objectContaining({ teamId: "t1" })),
+      );
+
+      act(() => nav.push("/projects?teamId=t2"));
+      await screen.findAllByText("Second Team Project");
+      // The user starts a project for the new team.
+      fireEvent.click(screen.getAllByRole("button", { name: /New Project/ })[0]!);
+      fireEvent.change(screen.getByPlaceholderText("My Project"), { target: { value: "Mine" } });
+      await act(async () => {
+        if (outcome === "resolves") create.resolve({ ...PROJECT, id: "proj-late", name: "Late" });
+        else create.reject(new Error("create failed late"));
+      });
+
+      expect(screen.queryByText("create failed late")).not.toBeInTheDocument();
+      expect(screen.queryByText("Late")).not.toBeInTheDocument();
+      expect(screen.getByPlaceholderText("My Project")).toHaveValue("Mine");
+    },
+  );
+
+  it("a GitHub sync that fails after a switch shows no error under the new team", async () => {
+    const { syncTeamFromGitHub } = await import("../../src/lib/api");
+    const sync = deferred<Awaited<ReturnType<typeof syncTeamFromGitHub>>>();
+    vi.mocked(syncTeamFromGitHub).mockReturnValue(sync.promise);
+    mockGetCurrentUser.mockResolvedValue({ ...USER, githubConnected: true });
+    renderBoth();
+    await screen.findAllByText("Agent Tasks");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync GitHub" }));
+    await waitFor(() => expect(syncTeamFromGitHub).toHaveBeenCalledWith("t1"));
+    pick("Team Two");
+    await screen.findAllByText("Second Team Project");
+    await act(async () => {
+      sync.reject(new Error("sync failed late"));
+    });
+
+    expect(screen.queryByText("Sync failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("sync failed late")).not.toBeInTheDocument();
   });
 
   it("a failing project list shows an error for the current team instead of spinning forever", async () => {

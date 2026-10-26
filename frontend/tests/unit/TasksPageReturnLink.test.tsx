@@ -13,6 +13,7 @@ import type { Task, User, Team, TeamTasksProject } from "../../src/lib/api";
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 const nav = vi.hoisted(() => ({ search: "" }));
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/tasks",
   useRouter: () => routerMocks,
   useSearchParams: () => new URLSearchParams(nav.search),
 }));

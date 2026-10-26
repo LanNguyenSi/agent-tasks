@@ -359,20 +359,25 @@ export default function ProjectsPage() {
   async function handleCreateProject(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedTeam) return;
+    const teamId = selectedTeam.id;
     setCreating(true);
     setError(null);
     try {
       const project = await createProject({
-        teamId: selectedTeam.id,
+        teamId,
         name: projectName.trim(),
         slug: projectSlug.trim(),
         githubRepo: githubRepo.trim() || undefined,
       });
+      // The user switched teams meanwhile: the outcome belongs to the team
+      // that was left (its dialog is already closed).
+      if (activeTeamRef.current !== teamId) return;
       setProjectsState((prev) =>
-        prev.teamId === selectedTeam.id ? { ...prev, list: [...prev.list, project] } : prev,
+        prev.teamId === teamId ? { ...prev, list: [...prev.list, project] } : prev,
       );
       closeNewProjectModal();
     } catch (err) {
+      if (activeTeamRef.current !== teamId) return;
       setError((err as Error).message);
     } finally {
       setCreating(false);
@@ -380,22 +385,29 @@ export default function ProjectsPage() {
   }
 
   async function handleConfirmDeleteProject() {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !selectedTeam) return;
+    const target = deleteTarget;
+    const teamId = selectedTeam.id;
     setDeletingProject(true);
     setError(null);
     try {
-      await deleteProject(deleteTarget.id);
-      setProjectsState((prev) => ({
-        ...prev,
-        list: prev.list.filter((project) => project.id !== deleteTarget.id),
-      }));
+      await deleteProject(target.id);
+      // The user switched teams meanwhile: the outcome belongs to the team
+      // that was left, not under the new team's name.
+      if (activeTeamRef.current !== teamId) return;
+      setProjectsState((prev) =>
+        prev.teamId === teamId
+          ? { ...prev, list: prev.list.filter((project) => project.id !== target.id) }
+          : prev,
+      );
       setFeedback({
         tone: "success",
         title: "Project deleted",
-        message: `Project "${deleteTarget.name}" deleted.`,
+        message: `Project "${target.name}" deleted.`,
       });
       setDeleteTarget(null);
     } catch (err) {
+      if (activeTeamRef.current !== teamId) return;
       setFeedback({
         tone: "danger",
         title: "Delete failed",
@@ -642,8 +654,8 @@ export default function ProjectsPage() {
                     void (async () => {
                       setFeedback(null);
                       setSyncing(true);
+                      const syncedTeamId = selectedTeam.id;
                       try {
-                        const syncedTeamId = selectedTeam.id;
                         const result = await syncTeamFromGitHub(syncedTeamId);
                         await loadProjects(syncedTeamId);
                         // The user switched teams meanwhile: the outcome
@@ -674,6 +686,7 @@ export default function ProjectsPage() {
                           });
                         }
                       } catch (err) {
+                        if (activeTeamRef.current !== syncedTeamId) return;
                         setFeedback({
                           tone: "danger",
                           title: "Sync failed",

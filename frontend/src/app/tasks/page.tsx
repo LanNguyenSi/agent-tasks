@@ -38,6 +38,17 @@ type SortColumn = "title" | "status" | "project" | "due" | "updated" | "priority
 type SortDirection = "asc" | "desc";
 type Scope = "all" | "open" | "mine" | "priority" | "review" | "done";
 
+/** One loaded page of the list, tagged with the team it was loaded for. */
+interface TeamTasksPage {
+  teamId: string;
+  projects: TeamTasksProject[];
+  tasks: EnrichedTask[];
+  filteredTotal: number;
+  counts: TeamTasksCounts | null;
+}
+const NO_PROJECTS: TeamTasksProject[] = [];
+const NO_TASKS: EnrichedTask[] = [];
+
 const STATUSES: Status[] = ["backlog", "open", "in_progress", "review", "done"];
 const PRIORITIES: Priority[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
@@ -172,17 +183,32 @@ function TasksPageInner() {
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so a switch and back/forward always agree.
   const selectedTeam = useCurrentTeam(teams);
-  const [projects, setProjects] = useState<TeamTasksProject[]>([]);
-  const [serverTasks, setServerTasks] = useState<EnrichedTask[]>([]);
-  const [filteredTotal, setFilteredTotal] = useState(0);
-  const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
+  const selectedTeamId = selectedTeam?.id ?? null;
+  // The rows, projects and counts on screen are tagged with the team they
+  // were loaded for and only shown under that team: after a team change the
+  // page shows its loading state (or the new team's error) until the new
+  // team's list arrives, never the old team's rows or projects.
+  const [loaded, setLoaded] = useState<TeamTasksPage | null>(null);
+  const teamPage = loaded && loaded.teamId === selectedTeamId ? loaded : null;
+  const projects = teamPage?.projects ?? NO_PROJECTS;
+  const serverTasks = teamPage?.tasks ?? NO_TASKS;
+  const filteredTotal = teamPage?.filteredTotal ?? 0;
+  const counts = teamPage?.counts ?? null;
   // loading = initial bootstrap; isFetching = background data refresh
   const [loading, setLoading] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
   // No team but shared projects: cross-project tasks need a team, so the page
   // explains that instead of redirecting to onboarding.
   const [noTeam, setNoTeam] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  // Tagged with its team like the list (null: no error).
+  const [fetchErrorState, setFetchErrorState] = useState<{
+    teamId: string;
+    message: string;
+  } | null>(null);
+  const fetchError =
+    fetchErrorState && fetchErrorState.teamId === selectedTeamId ? fetchErrorState.message : null;
+  // The current team has neither a list nor an error yet.
+  const awaitingTeamPage = selectedTeamId !== null && teamPage === null && fetchError === null;
   const [isFetching, setIsFetching] = useState(false);
   // Incrementing retryToken forces the fetch effect to re-run without
   // changing any real filter params — used by the "Retry" button and to
@@ -196,7 +222,16 @@ function TasksPageInner() {
   // TaskDetail's delete-task confirm.
   const [rowActionBusyId, setRowActionBusyId] = useState<string | null>(null);
   const [discardTarget, setDiscardTarget] = useState<EnrichedTask | null>(null);
-  const [rowActionError, setRowActionError] = useState<string | null>(null);
+  // Tagged with the team the action ran under: an action that fails after a
+  // team change does not report under the new team.
+  const [rowActionErrorState, setRowActionErrorState] = useState<{
+    teamId: string | null;
+    message: string;
+  } | null>(null);
+  const rowActionError =
+    rowActionErrorState && rowActionErrorState.teamId === selectedTeamId
+      ? rowActionErrorState.message
+      : null;
 
   // ── Parse URL params ──────────────────────────────────────────
 
@@ -283,14 +318,17 @@ function TasksPageInner() {
 
   // ── Data fetch ────────────────────────────────────────────────
 
+  // A team change closes what belongs to the team that was left: the create
+  // flow (its picker and form hold that team's projects) and a pending
+  // discard confirmation.
   useEffect(() => {
-    if (!selectedTeam) {
-      setServerTasks([]);
-      setProjects([]);
-      setFilteredTotal(0);
-      setCounts(null);
-      return;
-    }
+    if (!selectedTeamId) return;
+    setNewTaskOpen(false);
+    setDiscardTarget(null);
+  }, [selectedTeamId]);
+
+  useEffect(() => {
+    if (!selectedTeam) return;
     let cancelled = false;
 
     // Server-side filter + sort + pagination: fetch exactly the rows shown.
@@ -309,17 +347,24 @@ function TasksPageInner() {
           limit: pageSize,
         });
         if (cancelled) return;
-        setFetchError(null);
-        setProjects(r.projects);
+        setFetchErrorState(null);
         const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
-        setServerTasks(
-          r.tasks.map((t) => ({ ...t, projectName: projectName.get(t.projectId) ?? "(unknown)" })),
-        );
-        setFilteredTotal(r.filteredTotal ?? r.tasks.length);
-        setCounts(r.counts ?? null);
+        setLoaded({
+          teamId,
+          projects: r.projects,
+          tasks: r.tasks.map((t) => ({
+            ...t,
+            projectName: projectName.get(t.projectId) ?? "(unknown)",
+          })),
+          filteredTotal: r.filteredTotal ?? r.tasks.length,
+          counts: r.counts ?? null,
+        });
       } catch (err) {
         if (!cancelled) {
-          setFetchError(err instanceof Error ? err.message : "Failed to load tasks.");
+          setFetchErrorState({
+            teamId,
+            message: err instanceof Error ? err.message : "Failed to load tasks.",
+          });
         }
       } finally {
         if (!cancelled) setIsFetching(false);
@@ -406,13 +451,17 @@ function TasksPageInner() {
   // any failure (403/409/etc.) surfaces via rowActionError, same as the
   // fetch-error banner above.
   async function handlePromote(task: EnrichedTask): Promise<void> {
+    const teamId = selectedTeamId;
     setRowActionBusyId(task.id);
-    setRowActionError(null);
+    setRowActionErrorState(null);
     try {
       await updateTask(task.id, { status: "open" });
       setRetryToken((t) => t + 1);
     } catch (err) {
-      setRowActionError(err instanceof Error ? err.message : "Failed to promote task.");
+      setRowActionErrorState({
+        teamId,
+        message: err instanceof Error ? err.message : "Failed to promote task.",
+      });
     } finally {
       setRowActionBusyId(null);
     }
@@ -424,13 +473,17 @@ function TasksPageInner() {
   // rowActionError. No confirm dialog: unlike discard, the move is
   // reversible with Promote.
   async function handleDemote(task: EnrichedTask): Promise<void> {
+    const teamId = selectedTeamId;
     setRowActionBusyId(task.id);
-    setRowActionError(null);
+    setRowActionErrorState(null);
     try {
       await updateTask(task.id, { status: "backlog" });
       setRetryToken((t) => t + 1);
     } catch (err) {
-      setRowActionError(err instanceof Error ? err.message : "Failed to move task to backlog.");
+      setRowActionErrorState({
+        teamId,
+        message: err instanceof Error ? err.message : "Failed to move task to backlog.",
+      });
     } finally {
       setRowActionBusyId(null);
     }
@@ -443,14 +496,18 @@ function TasksPageInner() {
   async function confirmDiscard(): Promise<void> {
     if (!discardTarget) return;
     const task = discardTarget;
+    const teamId = selectedTeamId;
     setRowActionBusyId(task.id);
-    setRowActionError(null);
+    setRowActionErrorState(null);
     try {
       await updateTask(task.id, { status: "abandoned" });
       setDiscardTarget(null);
       setRetryToken((t) => t + 1);
     } catch (err) {
-      setRowActionError(err instanceof Error ? err.message : "Failed to discard task.");
+      setRowActionErrorState({
+        teamId,
+        message: err instanceof Error ? err.message : "Failed to discard task.",
+      });
       setDiscardTarget(null);
     } finally {
       setRowActionBusyId(null);
@@ -705,7 +762,7 @@ function TasksPageInner() {
           <AlertBanner
             tone="danger"
             title="Action failed"
-            onDismiss={() => setRowActionError(null)}
+            onDismiss={() => setRowActionErrorState(null)}
           >
             {rowActionError}
           </AlertBanner>
@@ -716,7 +773,7 @@ function TasksPageInner() {
           <AlertBanner
             tone="danger"
             title="Failed to load tasks"
-            onDismiss={() => setFetchError(null)}
+            onDismiss={() => setFetchErrorState(null)}
           >
             {fetchError}
             <div>
@@ -725,7 +782,7 @@ function TasksPageInner() {
                 size="sm"
                 className="tasks-retry-btn"
                 onClick={() => {
-                  setFetchError(null);
+                  setFetchErrorState(null);
                   setRetryToken((t) => t + 1);
                 }}
               >
@@ -735,12 +792,17 @@ function TasksPageInner() {
           </AlertBanner>
         )}
 
-        {/* Results: table or empty state, dimmed while fetching */}
+        {/* Results: table or empty state, dimmed while fetching. Until the
+            current team's list has arrived (first load, or after a team
+            change) the region shows the loading state, and after a failed
+            load of that team only the error banner above. */}
         <div
           className="tasks-table-region"
-          aria-busy={isFetching || undefined}
+          aria-busy={isFetching || awaitingTeamPage || undefined}
         >
-          {totalCount === 0 && !isFetching ? (
+          {awaitingTeamPage ? (
+            <SkeletonList rows={8} rowHeight="3rem" label="Loading tasks" />
+          ) : teamPage === null ? null : totalCount === 0 && !isFetching ? (
             <EmptyState
               icon="box"
               title={

@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout, type Team } from "../lib/api";
-import { rememberTeam, resolveCurrentTeam } from "../lib/currentTeam";
+import { rememberTeam } from "../lib/currentTeam";
 import { projectsHref, settingsHref, teamSettingsHref } from "../lib/routes";
-import { teamSwitchHref } from "../lib/teamSwitch";
+import { teamSwitchHref, useResolvedTeam } from "../lib/teamSwitch";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
 
@@ -40,8 +40,10 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
 
   // The current team follows the single current-team rule (?teamId, then the
-  // remembered team, then the first team), the same input every team-scoped
-  // page resolves (useCurrentTeam). A switch made here is held in
+  // remembered team, then the first team) through `useResolvedTeam`, the
+  // hook every team-scoped page resolves through (useCurrentTeam). Those
+  // pages write the team they resolved into the URL, so on them the header
+  // and the page read the same `?teamId`. A switch made here is held in
   // `switchedTeamId` until the URL changes (the navigation it triggered, or
   // the browser's back/forward), so the label never lags behind the click.
   const urlTeamId = searchParams?.get("teamId") ?? null;
@@ -49,6 +51,12 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   useEffect(() => {
     setSwitchedTeamId(null);
   }, [pathname, urlTeamId]);
+  const targetTeamId = switchedTeamId ?? urlTeamId;
+  const currentTeam = useResolvedTeam(teams, targetTeamId);
+  // The team the URL names (or the pending switch navigates to), if it is one
+  // of the caller's teams. Picking it changes nothing; picking any other team,
+  // including one shown only through the remembered-team fallback, switches.
+  const urlTeam = teams?.find((t) => t.id === targetTeamId) ?? null;
 
   // Opening the team menu puts focus on the checked (current) team. The
   // DropdownMenu focuses its first item in a zero-delay timeout from its own
@@ -60,14 +68,10 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   }, [teamMenuOpen]);
 
   const teamCount = teams?.length ?? 0;
-  const currentTeam =
-    teams && teams.length > 0
-      ? resolveCurrentTeam(teams, { urlTeamId: switchedTeamId ?? urlTeamId })
-      : null;
 
   function switchTeam(teamId: string) {
     setTeamMenuOpen(false);
-    if (teamId === currentTeam?.id) return;
+    if (teamId === urlTeam?.id) return;
     setSwitchedTeamId(teamId);
     rememberTeam(teamId);
     const href = teamSwitchHref(pathname, teamId);

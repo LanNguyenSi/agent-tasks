@@ -1,9 +1,13 @@
 /**
  * A tiny in-memory stand-in for `next/navigation`, for tests that render the
- * header and a page together. It keeps a history stack, so `router.push`
- * (what the header switcher calls) and `nav.back()` / `nav.forward()` (the
- * browser buttons) change the URL the way the real router does, and every
- * component reading `usePathname` / `useSearchParams` re-renders with it.
+ * header and a page together. It keeps a history stack that approximates the
+ * browser's: `router.push` adds an entry (dropping the forward entries, like
+ * `history.pushState`), `router.replace` swaps the current entry and keeps
+ * the forward entries (like `history.replaceState`), and `nav.back()` /
+ * `nav.forward()` stand in for the browser buttons. Every component reading
+ * `usePathname` / `useSearchParams` re-renders on a change; both ignore a
+ * `#hash`. It does not model the real router's asynchronous transitions,
+ * prefetching or scrolling: a navigation here is synchronous.
  *
  * Usage (the factory import keeps the module instance shared with the test):
  *
@@ -34,6 +38,10 @@ function subscribe(listener: () => void): () => void {
 function current(): string {
   return state.stack[state.index] ?? "/";
 }
+/** The current URL without its `#hash` (the hooks never see the hash). */
+function currentWithoutHash(): string {
+  return current().split("#")[0] ?? "/";
+}
 
 export const nav = {
   /** Start a fresh history at `url` (no notification: call before render). */
@@ -47,8 +55,7 @@ export const nav = {
     notify();
   },
   replace(url: string): void {
-    state.stack = [...state.stack.slice(0, state.index), url];
-    state.index = state.stack.length - 1;
+    state.stack = state.stack.map((entry, i) => (i === state.index ? url : entry));
     notify();
   },
   back(): void {
@@ -66,6 +73,14 @@ export const nav = {
   get url(): string {
     return current();
   },
+  /** A copy of the history entries (for "no new entry" assertions). */
+  get entries(): string[] {
+    return [...state.stack];
+  },
+  /** Index of the current entry in `entries`. */
+  get index(): number {
+    return state.index;
+  },
 };
 
 export const router = {
@@ -81,14 +96,14 @@ export function useRouter() {
 export function usePathname(): string {
   return useSyncExternalStore(
     subscribe,
-    () => current().split("?")[0] ?? "/",
+    () => currentWithoutHash().split("?")[0] ?? "/",
     () => "/",
   );
 }
 export function useSearchParams(): URLSearchParams {
   const query = useSyncExternalStore(
     subscribe,
-    () => current().split("?")[1] ?? "",
+    () => currentWithoutHash().split("?")[1] ?? "",
     () => "",
   );
   return useMemo(() => new URLSearchParams(query), [query]);

@@ -15,6 +15,7 @@ import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => routerMocks,
   useSearchParams: () => new URLSearchParams(""),
 }));
@@ -106,6 +107,8 @@ describe("/projects with a team", () => {
     expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();
     expect(screen.queryByText("Shared Project")).toBeNull();
     expect(vi.mocked(getProjects).mock.calls.every((c) => c[0] === "t1")).toBe(true);
-    expect(routerMocks.replace).not.toHaveBeenCalled();
+    // No redirect: the only replace writes the resolved team into this page's
+    // own URL (lib/teamSwitch useCurrentTeam).
+    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/projects?teamId=t1"]);
   });
 });

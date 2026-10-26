@@ -195,17 +195,33 @@ describe("/home: current team follows the URL", () => {
     expect(headerTeam()).toBe("Beta Team");
   });
 
-  it("back to a URL without ?teamId resolves the remembered team for page and header alike", async () => {
+  it("a URL without ?teamId resolves the remembered team and writes it, for page and header alike", async () => {
     renderBoth();
     await screen.findAllByText("Alpha only task");
     pick("Beta Team");
     await screen.findAllByText("Beta only task");
 
-    act(() => nav.back());
+    // The Home nav link: no ?teamId. Both fall to the remembered team (the
+    // pick), not teams[0], and the page writes it into the URL.
+    act(() => nav.push("/home"));
 
-    // No ?teamId: both fall to the remembered team (the pick), not teams[0].
     expect(await screen.findByRole("heading", { name: "Beta Team" })).toBeInTheDocument();
     expect(headerTeam()).toBe("Beta Team");
+    expect(nav.url).toBe("/home?teamId=team-2");
+  });
+
+  it("back to the first entry shows the team written into its URL on arrival", async () => {
+    renderBoth();
+    await screen.findAllByText("Alpha only task");
+    expect(nav.url).toBe("/home?teamId=team-1");
+    pick("Beta Team");
+    await screen.findAllByText("Beta only task");
+
+    act(() => nav.back());
+
+    expect(await screen.findByRole("heading", { name: "Alpha Team" })).toBeInTheDocument();
+    expect(await screen.findAllByText("Alpha only task")).not.toHaveLength(0);
+    expect(headerTeam()).toBe("Alpha Team");
   });
 
   it("a switch that happens before the first load finished still lands on the picked team", async () => {

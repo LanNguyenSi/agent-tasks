@@ -20,6 +20,7 @@ import type { User, Team, Task, TeamTasksProject, TeamTasksCounts } from "../../
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 const navState = vi.hoisted(() => ({ search: "" }));
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/home",
   useRouter: () => routerMocks,
   useSearchParams: () => new URLSearchParams(navState.search),
 }));

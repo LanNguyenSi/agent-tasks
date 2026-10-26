@@ -205,11 +205,34 @@ describe("AppHeader team switch", () => {
     expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
   });
 
-  it("picking the current team does nothing", () => {
+  it("picking the team the URL names does nothing", () => {
+    navState.search = "teamId=t1";
     render(<AppHeader user={USER} teams={[T1, T2]} />);
     pick("Team One");
     expect(routerMocks.push).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBeNull();
+  });
+
+  it("picking the team shown only through the fallback (no ?teamId) writes it to the URL", () => {
+    // No ?teamId: the label shows the remembered team, but the URL names none,
+    // so a pick of that team is a real switch, not a no-op.
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
+    pick("Team Two");
+    expect(routerMocks.push).toHaveBeenCalledWith("/home?teamId=t2");
+  });
+
+  it("reads the remembered team once per URL, not on every render", () => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
+    const teams = [T1, T2];
+    const { rerender } = render(<AppHeader user={USER} teams={teams} />);
+    expect(screen.getByRole("button", { name: /current team Team One/ })).toBeInTheDocument();
+    // Another tab remembers t2; a re-render with the same URL and team list
+    // keeps the label.
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    rerender(<AppHeader user={{ ...USER }} teams={teams} />);
+    expect(screen.getByRole("button", { name: /current team Team One/ })).toBeInTheDocument();
   });
 
   it("returns focus to the switcher after a pick that stays on the page", () => {
