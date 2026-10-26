@@ -116,9 +116,9 @@ describe("board route (hub layout + board page)", () => {
     mockGetProject.mockRejectedValue(new ApiRequestError(code, "nope", status));
     renderRoute();
 
-    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/teams"));
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/projects"));
     // The layout and the board both react; both go to the same place.
-    expect(redirectTargets()).toEqual(["/teams"]);
+    expect(redirectTargets()).toEqual(["/projects"]);
     expect(nav.router.push).not.toHaveBeenCalled();
     expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
   });

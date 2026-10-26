@@ -121,7 +121,7 @@ describe("NewTaskFlow", () => {
     expect(screen.getByText("No projects yet")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to projects" })).toHaveAttribute(
       "href",
-      "/teams",
+      "/projects",
     );
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
   });

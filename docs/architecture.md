@@ -137,8 +137,8 @@ agent-tasks/
 | `/auth/error` | Login error page |
 | `/onboarding` | First team creation |
 | `/home` | Signed-in start page: the team's tasks across projects |
-| `/teams` | Project management, GitHub sync |
-| `/dashboard` | Legacy: redirects to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/teams` |
+| `/projects` | Projects list (project management, GitHub sync); `?teamId=<id>` pre-selects a team |
+| `/dashboard` | Legacy: redirects to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/projects` |
 | `/tasks` | Task list |
 | `/tasks/[id]` | Task detail |
 | `/projects/[id]` | Project overview |
@@ -146,9 +146,10 @@ agent-tasks/
 | `/projects/[id]/settings` | Project settings |
 | `/projects/[id]/members` | Project members |
 | `/projects/[id]/workflow` | Workflow editor (states, transitions, agent instructions) |
-| `/settings` | Account, GitHub connection, API tokens |
+| `/settings` | Personal settings: account, appearance, GitHub connection, agent permissions |
+| `/settings/team` | Team settings: API tokens (Connect an agent, create, rename, revoke) and the Enterprise SSO entry |
 | `/settings/sso` | Team OIDC SSO connection |
 | `/invite/[token]` | Accept a project share |
 | `/docs` | Interactive Swagger UI (served by backend) |
 
-Legacy redirects: `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, and `/teams/tokens` goes to `/settings`. `/dev/ui` is a developer component gallery.
+Legacy redirects: `/teams?teamId=<id>` goes to `/projects?teamId=<id>` (a `next.config.mjs` redirect, query string preserved), `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, `/teams/tokens` goes to `/settings/team`, and the old `/settings#api-tokens` and `/settings#sso` anchors are forwarded client-side to `/settings/team#api-tokens` and `/settings/team#sso`. `/dev/ui` is a developer component gallery.

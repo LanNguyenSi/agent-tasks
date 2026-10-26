@@ -16,6 +16,7 @@ import {
   projectsHref,
   projectHubHref,
   settingsHref,
+  teamSettingsHref,
   apiTokensSettingsHref,
   ssoSettingsHref,
   taskHref,
@@ -29,7 +30,7 @@ describe("boardHref", () => {
   });
 
   it("is the team's Projects page for teamId alone", () => {
-    expect(boardHref({ teamId: "t1" })).toBe("/teams?teamId=t1");
+    expect(boardHref({ teamId: "t1" })).toBe("/projects?teamId=t1");
   });
 
   it("is the project's board tab for projectId alone", () => {
@@ -45,7 +46,7 @@ describe("boardHref", () => {
   });
 
   it("is the team's Projects page for teamId and taskId without a project", () => {
-    expect(boardHref({ teamId: "t1", taskId: "k1" })).toBe("/teams?teamId=t1");
+    expect(boardHref({ teamId: "t1", taskId: "k1" })).toBe("/projects?teamId=t1");
   });
 
   it("appends taskId to the project's board", () => {
@@ -62,7 +63,7 @@ describe("boardHref", () => {
 
   it("omits empty-string parameters (absent beats empty, as in the replaced ternaries)", () => {
     expect(boardHref({ teamId: "", projectId: "", taskId: "" })).toBe("/dashboard");
-    expect(boardHref({ teamId: "t1", projectId: "", taskId: "k1" })).toBe("/teams?teamId=t1");
+    expect(boardHref({ teamId: "t1", projectId: "", taskId: "k1" })).toBe("/projects?teamId=t1");
     expect(boardHref({ projectId: "p1", taskId: "" })).toBe("/projects/p1/board");
   });
 
@@ -74,17 +75,17 @@ describe("boardHref", () => {
 });
 
 describe("projectsHref", () => {
-  it("is a bare /teams when no team is selected", () => {
-    expect(projectsHref()).toBe("/teams");
-    expect(projectsHref({})).toBe("/teams");
+  it("is a bare /projects when no team is selected", () => {
+    expect(projectsHref()).toBe("/projects");
+    expect(projectsHref({})).toBe("/projects");
   });
 
   it("appends the teamId query parameter when a team is selected", () => {
-    expect(projectsHref({ teamId: "t1" })).toBe("/teams?teamId=t1");
+    expect(projectsHref({ teamId: "t1" })).toBe("/projects?teamId=t1");
   });
 
   it("omits an empty-string teamId (absent beats empty)", () => {
-    expect(projectsHref({ teamId: "" })).toBe("/teams");
+    expect(projectsHref({ teamId: "" })).toBe("/projects");
   });
 });
 
@@ -115,8 +116,14 @@ describe("settings routes", () => {
     expect(settingsHref()).toBe("/settings");
   });
 
-  it("apiTokensSettingsHref deep-links the API Tokens section", () => {
-    expect(apiTokensSettingsHref()).toBe("/settings#api-tokens");
+  it("teamSettingsHref is the team settings root, optionally deep-linked", () => {
+    expect(teamSettingsHref()).toBe("/settings/team");
+    expect(teamSettingsHref("api-tokens")).toBe("/settings/team#api-tokens");
+    expect(teamSettingsHref("sso")).toBe("/settings/team#sso");
+  });
+
+  it("apiTokensSettingsHref deep-links the API Tokens section of team settings", () => {
+    expect(apiTokensSettingsHref()).toBe("/settings/team#api-tokens");
   });
 
   it("ssoSettingsHref is the SSO sub-page", () => {

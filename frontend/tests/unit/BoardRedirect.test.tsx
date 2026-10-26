@@ -69,7 +69,7 @@ describe("/dashboard with a teamId only", () => {
 
   it("goes to that team's Projects page when it has no stored board, not to another team's", async () => {
     window.localStorage.setItem("dashboard:lastProject:t2", "p-t2");
-    expect(await redirectFrom("/dashboard?teamId=t1")).toBe("/teams?teamId=t1");
+    expect(await redirectFrom("/dashboard?teamId=t1")).toBe("/projects?teamId=t1");
   });
 });
 
@@ -95,14 +95,14 @@ describe("bare /dashboard", () => {
   });
 
   it("goes to the Projects page when no board is stored", async () => {
-    expect(await redirectFrom("/dashboard")).toBe("/teams");
+    expect(await redirectFrom("/dashboard")).toBe("/projects");
   });
 
   it("goes to the Projects page when storage is blocked", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    expect(await redirectFrom("/dashboard")).toBe("/teams");
+    expect(await redirectFrom("/dashboard")).toBe("/projects");
   });
 });
 
@@ -130,7 +130,7 @@ describe("projectId validation", () => {
   });
 
   it("goes to the Projects page when the query value is invalid and nothing is stored", async () => {
-    expect(await redirectFrom("/dashboard?projectId=..%2F..%2Fsettings%23")).toBe("/teams");
+    expect(await redirectFrom("/dashboard?projectId=..%2F..%2Fsettings%23")).toBe("/projects");
   });
 
   it.each([
@@ -147,7 +147,7 @@ describe("projectId validation", () => {
   ])("rejects an invalid stored id in %s", async (_label, url) => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
     window.localStorage.setItem("dashboard:lastProject:t1", "../../settings#");
-    expect(await redirectFrom(url)).toBe(url.includes("teamId") ? "/teams?teamId=t1" : "/teams");
+    expect(await redirectFrom(url)).toBe(url.includes("teamId") ? "/projects?teamId=t1" : "/projects");
   });
 
   it("skips an invalid stored id and uses a valid one from another team", async () => {

@@ -1,5 +1,5 @@
 /**
- * Pure sorting logic for the /teams projects table.
+ * Pure sorting logic for the /projects projects table.
  *
  * Extracted from the page component so the per-column comparators and the
  * header-click direction rule are unit-testable without rendering React.
