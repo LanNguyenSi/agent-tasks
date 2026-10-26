@@ -11,13 +11,18 @@ import {
   type Project,
   type Task,
   type TeamTasksCounts,
+  type TeamTasksProject,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
+import {
+  HOME_PROJECTS_STRIP_LIMIT,
+  readRecentProjects,
+} from "../../lib/recentProjects";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
 import { normalizeStatus } from "../../lib/taskDisplay";
-import { boardHref } from "../../lib/routes";
+import { boardHref, projectsHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
@@ -179,6 +184,72 @@ function StatTile({
   );
 }
 
+// ── ProjectsStrip ─────────────────────────────────────────────────
+
+interface ProjectsStripProps {
+  /** Jump-list order already resolved (recents first, then the
+   * `getTeamTasks` projects order); the component caps the rendering. */
+  projects: TeamTasksProject[];
+  teamId: string;
+  /** Active (open + in_progress) task count per project. Present only when
+   * the team aggregation is known to be complete — see the truncation
+   * guard in the page — so a count is never shown when it could be wrong. */
+  activeCounts: Map<string, number> | null;
+}
+
+/**
+ * "Your projects" jump strip (T05, UI/IA S1): up to
+ * `HOME_PROJECTS_STRIP_LIMIT` project links above the stat strip, recents
+ * first (localStorage, recorded when a board is opened) and then the
+ * remaining projects in the order `getTeamTasks` returns them, plus the
+ * "All projects" link to the team's Projects page. Shared projects
+ * (`accessSource: "project"`) are listed like any other project; the
+ * dedicated "Shared with you" group is a later stage.
+ */
+function ProjectsStrip({ projects, teamId, activeCounts }: ProjectsStripProps) {
+  return (
+    <section className="home-projects-strip" aria-label="Your projects">
+      <div className="home-projects-head">
+        <h2 className="home-projects-title">Your projects</h2>
+        <Link href={projectsHref({ teamId })} className="widget-link home-projects-all">
+          All projects &rarr;
+        </Link>
+      </div>
+      {projects.length === 0 ? (
+        <p className="home-projects-empty">
+          No projects in this team yet.{" "}
+          <Link href={projectsHref({ teamId })} className="widget-link">
+            Go to Projects &rarr;
+          </Link>
+        </p>
+      ) : (
+        <ul className="home-projects-items">
+          {projects.slice(0, HOME_PROJECTS_STRIP_LIMIT).map((project) => (
+            <li key={project.id} className="home-projects-item-wrap">
+              <Link
+                href={boardHref({ projectId: project.id })}
+                className="home-projects-item"
+                aria-label={
+                  activeCounts
+                    ? `${project.name}, ${activeCounts.get(project.id) ?? 0} active`
+                    : project.name
+                }
+              >
+                <span className="home-projects-item-name">{project.name}</span>
+                {activeCounts && (
+                  <span className="home-projects-item-count num">
+                    {activeCounts.get(project.id) ?? 0} active
+                  </span>
+                )}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────
 
 export default function HomeDashboardPage() {
@@ -189,8 +260,13 @@ export default function HomeDashboardPage() {
   // Zero-team user with shared projects: the project list replaces the task
   // widgets (the team task aggregation needs a team).
   const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
-  const [, setFirstProjectId] = useState<string | null>(null);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
+  // Team projects for the "Your projects" jump strip, in the order
+  // getTeamTasks returns them.
+  const [teamProjects, setTeamProjects] = useState<TeamTasksProject[]>([]);
+  // Recents are read once per team after the team resolves (not on every
+  // 15s refetch), so the strip order does not shuffle under a poll.
+  const [recentProjectIds, setRecentProjectIds] = useState<string[]>([]);
   const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);
   // Distinct from `loading` (auth/team bootstrap): the task aggregation is a
@@ -223,6 +299,7 @@ export default function HomeDashboardPage() {
       const urlTeamId = searchParams.get("teamId");
       const team = resolveCurrentTeam(teams, { urlTeamId })!; // non-empty list
       if (team.id === urlTeamId) rememberTeam(team.id);
+      setRecentProjectIds(readRecentProjects(team.id));
       setSelectedTeam(team);
       setLoading(false);
     })();
@@ -245,9 +322,7 @@ export default function HomeDashboardPage() {
         }));
         setAllTasks(enriched);
         setCounts(r.counts ?? null);
-        if (r.projects.length > 0) {
-          setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
-        }
+        setTeamProjects(r.projects);
         hasDataRef.current = true;
         setError(null);
         setStaleWarning(false);
@@ -300,11 +375,45 @@ export default function HomeDashboardPage() {
     [allTasks, user],
   );
 
+  // ── "Your projects" strip (T05) ──────────────────────────────
+  // Recents first in recorded order (ids no longer in the team's project
+  // list are skipped), then the remaining projects in the order
+  // getTeamTasks returned them.
+  const stripProjects = useMemo(() => {
+    const byId = new Map(teamProjects.map((p) => [p.id, p]));
+    const recentIds = new Set(recentProjectIds);
+    const recents = recentProjectIds
+      .map((id) => byId.get(id))
+      .filter((p): p is TeamTasksProject => p !== undefined);
+    return [...recents, ...teamProjects.filter((p) => !recentIds.has(p.id))];
+  }, [teamProjects, recentProjectIds]);
+
+  // Per-project open/in_progress counts come from the loaded task slice,
+  // which the backend caps (DEFAULT_LIMIT = 500 in
+  // backend/src/routes/tasks.ts). A slice is provably complete only when
+  // counts is present AND counts.total <= allTasks.length; while the
+  // aggregation is truncated the slice misses tasks, so no per-project
+  // count is shown at all (never a wrong one).
+  const activeCounts = useMemo(() => {
+    if (counts === null || counts.total > allTasks.length) return null;
+    const map = new Map<string, number>();
+    for (const t of allTasks) {
+      if (t.status === "open" || t.status === "in_progress") {
+        map.set(t.projectId, (map.get(t.projectId) ?? 0) + 1);
+      }
+    }
+    return map;
+  }, [allTasks, counts]);
+
   if (loading) {
     return <FullPageLoader variant="shell" label="Loading your tasks" />;
   }
 
   const teamId = selectedTeam?.id ?? "";
+
+  const projectsStrip = (
+    <ProjectsStrip projects={stripProjects} teamId={teamId} activeCounts={activeCounts} />
+  );
 
   // ── Ordered scope list (D1/D3) ───────────────────────────────
   // Single source of truth for BOTH the stat strip and the widget grid:
@@ -471,6 +580,7 @@ export default function HomeDashboardPage() {
           </AlertBanner>
         ) : (
           <>
+            {projectsStrip}
             {statStrip}
 
             {/* Stale-warning slot: always present (reserves space, prevents layout jump).

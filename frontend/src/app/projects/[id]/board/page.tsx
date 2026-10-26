@@ -43,6 +43,7 @@ import TaskListView from "../../../../components/dashboard/TaskListView";
 import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
 import { DEFAULT_CREATE_STATUS } from "../../../../lib/status";
+import { recordRecentProject } from "../../../../lib/recentProjects";
 import { projectsHref } from "../../../../lib/routes";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -279,6 +280,10 @@ export default function ProjectBoardPage() {
         }
         setSelectedProject(project);
         storeProjectId(project.teamId, project.id);
+        // Home "Your projects" strip recents (T05): keyed by the project's
+        // team, which is the same id Home's getTeamTasks aggregation is read
+        // under, so the strip and this record always agree on the key.
+        recordRecentProject(project.teamId, project.id);
 
         const requestedTaskId = new URLSearchParams(window.location.search).get("taskId");
         const projectTasks = await getTasks(project.id);
