@@ -8,7 +8,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  getAgentTokens,
   createAgentToken,
   revokeAgentToken,
   renameAgentToken,
@@ -25,7 +24,6 @@ import { CopyableCode } from "../ui/CopyableCode";
 import EmptyState from "../ui/EmptyState";
 import FormField from "../ui/FormField";
 import Modal from "../ui/Modal";
-import Select from "../ui/Select";
 import ConnectAgentModal from "../ConnectAgentModal";
 import { formatRelativeTime } from "./formatRelativeTime";
 
@@ -56,11 +54,13 @@ type TokenRecord = AgentToken;
 const REVEAL_MASK_DELAY_MS = 30_000;
 
 interface ApiTokensSectionProps {
-  /** All teams of the caller (drives the Team select and the empty state). */
+  /** All teams of the caller (drives the empty state and the admin check). */
   teams: Team[];
-  /** The current team's id; the page owns it so the rest of the page follows. */
+  /**
+   * The current team's id. The header switcher owns team switching; the page
+   * remounts this section (`key`) with the new team's tokens when it changes.
+   */
   selectedTeamId: string;
-  onSelectTeam: (teamId: string) => void;
   /** Tokens of `selectedTeamId`, loaded by the page before first render. */
   initialTokens: TokenRecord[];
 }
@@ -68,7 +68,6 @@ interface ApiTokensSectionProps {
 export default function ApiTokensSection({
   teams,
   selectedTeamId,
-  onSelectTeam,
   initialTokens,
 }: ApiTokensSectionProps) {
   const [tokens, setTokens] = useState<TokenRecord[]>(initialTokens);
@@ -108,12 +107,6 @@ export default function ApiTokensSection({
         // keep FALLBACK_SCOPES
       });
   }, []);
-
-  async function loadTokens(teamId: string) {
-    setError(null);
-    const tok = await getAgentTokens(teamId);
-    setTokens(tok);
-  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -220,6 +213,11 @@ export default function ApiTokensSection({
             <div>
               <h2 className="settings-section-heading">API Tokens</h2>
               <p className="settings-section-desc">
+                {selectedTeam && (
+                  <>
+                    API tokens for <strong>{selectedTeam.name}</strong>.{" "}
+                  </>
+                )}
                 Tokens are team-scoped. Create and manage them here in team settings.
               </p>
             </div>
@@ -251,30 +249,6 @@ export default function ApiTokensSection({
                 );
               })()}
           </div>
-
-          {teams.length > 0 && (
-            <div className="settings-team-select">
-              <FormField label="Team">
-                <Select
-                  value={selectedTeamId}
-                  onChange={(v) => {
-                    onSelectTeam(v);
-                    // Both targets reference a token from the
-                    // now-stale team's list; a stale id could
-                    // otherwise be actioned against the newly
-                    // selected team's tokens.
-                    setRenameTarget(null);
-                    setRevokeTarget(null);
-                    void loadTokens(v);
-                  }}
-                  options={teams.map((team) => ({
-                    value: team.id,
-                    label: team.name,
-                  }))}
-                />
-              </FormField>
-            </div>
-          )}
 
           {/* Documentation banners collapsed by default so the token list
               is visible above the fold on a standard 1440x900 viewport. */}

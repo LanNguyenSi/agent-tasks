@@ -13,8 +13,9 @@ import {
   type Team,
   type AgentToken,
 } from "../../../lib/api";
-import { rememberTeam, resolveCurrentTeam } from "../../../lib/currentTeam";
 import { settingsHref, ssoSettingsHref } from "../../../lib/routes";
+import { useCurrentTeam } from "../../../lib/teamSwitch";
+import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import { FullPageLoader } from "../../../components/ui/FullPageLoader";
@@ -30,10 +31,27 @@ const SECTIONS = [
 export default function TeamSettingsPage() {
   const router = useRouter();
   const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
-  const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<string>("api-tokens");
+
+  // The current team is derived from the URL, the same input the header
+  // switcher uses (?teamId, then the remembered team, then the first team).
+  // The page keeps no team state of its own: a switch, back/forward and a
+  // pasted link all re-resolve it.
+  const team = useCurrentTeam(teams);
+  const teamId = team?.id ?? null;
+
+  // Tokens of the team that was loaded last, tagged with that team so the
+  // section only ever renders tokens of the current team.
+  const [loadedTokens, setLoadedTokens] = useState<{
+    teamId: string;
+    tokens: AgentToken[];
+  } | null>(null);
+  const [tokenError, setTokenError] = useState<{
+    teamId: string;
+    message: string;
+  } | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -43,22 +61,40 @@ export default function TeamSettingsPage() {
         return;
       }
 
-      const t = await getTeams();
-      setTeams(t);
-
-      // Single current-team rule: ?teamId -> remembered team -> first team.
-      const urlTeamId = new URLSearchParams(window.location.search).get("teamId");
-      const team = resolveCurrentTeam(t, { urlTeamId });
-      if (team) {
-        if (team.id === urlTeamId) rememberTeam(team.id);
-        setSelectedTeamId(team.id);
-        const tok = await getAgentTokens(team.id);
-        setTokens(tok);
-      }
-
+      setTeams(await getTeams());
       setLoading(false);
     })();
   }, [router]);
+
+  // Load the current team's tokens. The effect is keyed on the resolved team,
+  // so the last resolution always wins: leaving a team (a later switch, back,
+  // forward, unmount) cancels its load and a late response is dropped. A
+  // failed load is shown in the section, never left unhandled.
+  useEffect(() => {
+    if (!teamId) return;
+    let cancelled = false;
+    setLoadedTokens(null);
+    setTokenError(null);
+    getAgentTokens(teamId)
+      .then((tokens) => {
+        if (!cancelled) setLoadedTokens({ teamId, tokens });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTokenError({
+          teamId,
+          message: err instanceof Error ? err.message : "Failed to load API tokens.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, retryToken]);
+
+  const tokensForTeam =
+    loadedTokens && loadedTokens.teamId === teamId ? loadedTokens.tokens : null;
+  const errorForTeam =
+    tokenError && tokenError.teamId === teamId ? tokenError.message : null;
 
   // The sections only exist once loading is done, so the browser's own
   // hash scroll (including a /settings#api-tokens redirect) finds nothing on
@@ -129,12 +165,47 @@ export default function TeamSettingsPage() {
           <div className="settings-section-group">
             <p className="settings-group-eyebrow">Developer</p>
 
-            <ApiTokensSection
-              teams={teams}
-              selectedTeamId={selectedTeamId}
-              onSelectTeam={setSelectedTeamId}
-              initialTokens={tokens}
-            />
+            {!team ? (
+              <ApiTokensSection
+                teams={teams}
+                selectedTeamId=""
+                initialTokens={[]}
+              />
+            ) : tokensForTeam ? (
+              <ApiTokensSection
+                key={team.id}
+                teams={teams}
+                selectedTeamId={team.id}
+                initialTokens={tokensForTeam}
+              />
+            ) : (
+              <Card>
+                <section id="api-tokens">
+                  <h2 className="settings-section-heading">API Tokens</h2>
+                  <p className="settings-section-desc">
+                    API tokens for <strong>{team.name}</strong>
+                  </p>
+                  {errorForTeam ? (
+                    <>
+                      <AlertBanner tone="danger" title="Could not load API tokens">
+                        {errorForTeam}
+                      </AlertBanner>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setRetryToken((n) => n + 1)}
+                      >
+                        Retry
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="settings-section-desc" role="status">
+                      Loading tokens…
+                    </p>
+                  )}
+                </section>
+              </Card>
+            )}
           </div>
 
           <div className="settings-section-group">

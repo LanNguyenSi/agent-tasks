@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
   getTeamTasks,
@@ -19,8 +19,8 @@ import {
   HOME_PROJECTS_STRIP_LIMIT,
   readRecentProjects,
 } from "../../lib/recentProjects";
-import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { useCurrentTeam } from "../../lib/teamSwitch";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref, projectsHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
@@ -254,9 +254,11 @@ function ProjectsStrip({ projects, teamId, activeCounts }: ProjectsStripProps) {
 
 export default function HomeDashboardPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  // Derived from the URL like the header's team (?teamId, remembered, first):
+  // no team state of its own, so back/forward and a switch always agree.
+  const selectedTeam = useCurrentTeam(teams);
   // Zero-team user with shared projects: the project list replaces the task
   // widgets (the team task aggregation needs a team).
   const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
@@ -267,6 +269,10 @@ export default function HomeDashboardPage() {
   // Recents are read once per team after the team resolves (not on every
   // 15s refetch), so the strip order does not shuffle under a poll.
   const [recentProjectIds, setRecentProjectIds] = useState<string[]>([]);
+  const selectedTeamId = selectedTeam?.id ?? null;
+  useEffect(() => {
+    setRecentProjectIds(selectedTeamId ? readRecentProjects(selectedTeamId) : []);
+  }, [selectedTeamId]);
   const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);
   // Distinct from `loading` (auth/team bootstrap): the task aggregation is a
@@ -279,6 +285,8 @@ export default function HomeDashboardPage() {
   const [staleWarning, setStaleWarning] = useState(false);
   const [refetchKey, setRefetchKey] = useState(0);
   const hasDataRef = useRef(false);
+  // The team whose tasks are on screen.
+  const loadedTeamIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -295,21 +303,26 @@ export default function HomeDashboardPage() {
         return;
       }
 
-      // Single current-team rule: ?teamId -> remembered team -> first team.
-      const urlTeamId = searchParams.get("teamId");
-      const team = resolveCurrentTeam(teams, { urlTeamId })!; // non-empty list
-      if (team.id === urlTeamId) rememberTeam(team.id);
-      setRecentProjectIds(readRecentProjects(team.id));
-      setSelectedTeam(team);
+      setTeams(teams);
       setLoading(false);
     })();
-    // searchParams.get is stable within the render; we only bootstrap once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   useEffect(() => {
     if (!selectedTeam) return;
     let cancelled = false;
+
+    // A different team than the one on screen: drop its tasks and show the
+    // loading state until the new team's tasks arrive.
+    if (loadedTeamIdRef.current !== selectedTeam.id) {
+      loadedTeamIdRef.current = selectedTeam.id;
+      hasDataRef.current = false;
+      setAllTasks([]);
+      setCounts(null);
+      setError(null);
+      setStaleWarning(false);
+      setTasksLoaded(false);
+    }
 
     async function fetchTeamTasks(teamId: string) {
       try {
