@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
   getTeamTasks,
-  getTeams,
   updateTask,
   type Team,
   type TeamTasksCounts,
@@ -14,6 +13,7 @@ import {
 } from "../../lib/api";
 import { projectsHref, taskHref } from "../../lib/routes";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
+import { getAccessContext, needsOnboarding } from "../../lib/access";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { KeyHint } from "../../components/ui/KeyHint";
@@ -177,6 +177,9 @@ function TasksPageInner() {
   // loading = initial bootstrap; isFetching = background data refresh
   const [loading, setLoading] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
+  // No team but shared projects: cross-project tasks need a team, so the page
+  // explains that instead of redirecting to onboarding.
+  const [noTeam, setNoTeam] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   // Incrementing retryToken forces the fetch effect to re-run without
@@ -245,8 +248,14 @@ function TasksPageInner() {
         const me = await getCurrentUser();
         if (!me) { router.replace("/auth"); return; }
         setUser(me);
-        const fetchedTeams = await getTeams();
-        if (fetchedTeams.length === 0) { router.replace("/onboarding"); return; }
+        const ctx = await getAccessContext();
+        if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
+        const fetchedTeams = ctx.teams;
+        if (fetchedTeams.length === 0) {
+          setNoTeam(true);
+          setLoading(false);
+          return;
+        }
         setTeams(fetchedTeams);
         // Single current-team rule: ?teamId -> remembered team -> first team.
         const urlTeamId = searchParams.get("teamId");
@@ -517,6 +526,27 @@ function TasksPageInner() {
           >
             Retry
           </Button>
+        </div>
+      </main>
+    );
+  }
+
+  if (noTeam) {
+    return (
+      <main className="tasks-shell">
+        <PageHeader title="All Tasks" />
+        <div className="tasks-content">
+          <EmptyState
+            icon="box"
+            title="Cross-project tasks need a team."
+            description="Open a project from Projects to see its tasks."
+            dashed
+            action={
+              <Button href={projectsHref()} variant="primary" size="sm">
+                Go to Projects
+              </Button>
+            }
+          />
         </div>
       </main>
     );

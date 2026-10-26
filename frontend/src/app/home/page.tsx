@@ -5,16 +5,17 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
-  getTeams,
   getTeamTasks,
   type User,
   type Team,
+  type Project,
   type Task,
   type TeamTasksCounts,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
+import { getAccessContext, needsOnboarding } from "../../lib/access";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
@@ -25,6 +26,7 @@ import { Button } from "../../components/ui/Button";
 import EmptyState from "../../components/ui/EmptyState";
 import { StatusChip } from "../../components/ui/StatusChip";
 import { PriorityLabel } from "../../components/ui/PriorityLabel";
+import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import { isBacklogTask, isPriorityTask } from "./widgetFilters";
 
 type EnrichedTask = Task & { projectName: string };
@@ -184,6 +186,9 @@ export default function HomeDashboardPage() {
   const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  // Zero-team user with shared projects: the project list replaces the task
+  // widgets (the team task aggregation needs a team).
+  const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
   const [, setFirstProjectId] = useState<string | null>(null);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
   const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
@@ -205,8 +210,14 @@ export default function HomeDashboardPage() {
       if (!me) { router.replace("/auth"); return; }
       setUser(me);
 
-      const teams = await getTeams();
-      if (teams.length === 0) { router.replace("/onboarding"); return; }
+      const ctx = await getAccessContext();
+      if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
+      const teams = ctx.teams;
+      if (teams.length === 0) {
+        setSharedProjects(ctx.sharedProjects);
+        setLoading(false);
+        return;
+      }
 
       // Single current-team rule: ?teamId -> remembered team -> first team.
       const urlTeamId = searchParams.get("teamId");
@@ -404,15 +415,36 @@ export default function HomeDashboardPage() {
     </div>
   );
 
+  const heading = (
+    <div className="home-header">
+      <h1 className="home-header-title">
+        {selectedTeam?.name ?? "Home"}
+      </h1>
+      <p className="home-header-sub">
+        {selectedTeam
+          ? "Task overview across all your projects."
+          : "Projects shared with you."}
+      </p>
+    </div>
+  );
+
   return (
     <main className="page-shell">
-      {/* PageHeader-style heading */}
-      <div className="home-header">
-        <h1 className="home-header-title">
-          {selectedTeam?.name ?? "Home"}
-        </h1>
-        <p className="home-header-sub">Task overview across all your projects.</p>
-      </div>
+      {selectedTeam ? (
+        heading
+      ) : (
+        <>
+          <div className="teams-header-row">
+            {heading}
+            <div className="teams-actions">
+              <Button href="/onboarding" variant="secondary">
+                Create a team
+              </Button>
+            </div>
+          </div>
+          <SharedProjectsList projects={sharedProjects} />
+        </>
+      )}
 
       {selectedTeam && (
         !tasksLoaded ? (

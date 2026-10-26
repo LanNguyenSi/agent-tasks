@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getCurrentUser, getTeams, createTeam, logout, type User } from "../../lib/api";
+import { getCurrentUser, createTeam, logout, type User } from "../../lib/api";
+import { getAccessContext } from "../../lib/access";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
@@ -14,6 +16,8 @@ export default function OnboardingPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<"loading" | "create-team" | "redirect">("loading");
+  // A team-less user who already has shared projects may skip team creation.
+  const [canSkip, setCanSkip] = useState(false);
 
   // Create team form
   const [teamName, setTeamName] = useState("");
@@ -30,14 +34,18 @@ export default function OnboardingPage() {
         return;
       }
       setUser(me);
-      const existingTeams = await getTeams();
+      const ctx = await getAccessContext();
       setLoading(false);
 
-      if (existingTeams.length > 0) {
-        // Already has teams, send them straight to home.
+      if (ctx.teams.length > 0) {
+        // Already has teams, send them straight to home. Only this branch
+        // redirects: a user without teams stays here (the form, plus a skip
+        // link when they have shared projects), so /home <-> /onboarding
+        // cannot loop.
         setStep("redirect");
         router.replace("/home");
       } else {
+        setCanSkip(ctx.sharedProjects.length > 0);
         setStep("create-team");
       }
     })();
@@ -164,6 +172,13 @@ export default function OnboardingPage() {
             Create Team
           </Button>
         </form>
+
+        {canSkip && (
+          <p className="auth-muted-line">
+            <Link href="/home">Skip for now</Link>
+            {" "}(you can create a team later from Home).
+          </p>
+        )}
 
         <p className="auth-muted-line">
           Joining an existing team? Ask a teammate for an invite link instead.

@@ -132,7 +132,7 @@ agent-tasks/
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Landing page; signed-in users go to `/onboarding` or `/home` |
+| `/` | Landing page; signed-in users go to `/onboarding` only when they have neither a team nor a shared project (`needsOnboarding` in `frontend/src/lib/access.ts`), else to `/home` |
 | `/auth` | Login / Register |
 | `/auth/error` | Login error page |
 | `/onboarding` | First team creation |

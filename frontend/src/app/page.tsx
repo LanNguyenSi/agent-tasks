@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getCurrentUser, getTeams } from "../lib/api";
+import { getCurrentUser } from "../lib/api";
+import { getAccessContext, needsOnboarding } from "../lib/access";
 import { FullPageLoader } from "../components/ui/FullPageLoader";
 
 export default function HomePage() {
@@ -15,8 +16,8 @@ export default function HomePage() {
     void (async () => {
       const me = await getCurrentUser();
       if (me) {
-        const teams = await getTeams();
-        router.replace(teams.length === 0 ? "/onboarding" : "/home");
+        const ctx = await getAccessContext();
+        router.replace(needsOnboarding(ctx) ? "/onboarding" : "/home");
         return;
       }
       setCheckingSession(false);
