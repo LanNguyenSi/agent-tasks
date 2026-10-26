@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { ExactPathTitle } from "../../components/DocumentTitle";
 
-// Segment metadata: the document (tab) title for `/projects` and its project
-// hub children is "Projects" instead of the root "agent-tasks".
+// Segment metadata: the server-rendered document (tab) title for `/projects`
+// is "Projects" instead of the root "agent-tasks". The project hub below it
+// (`[id]/layout.tsx`) and `/projects/workflow` set their own.
 // `frontend/src/app/projects/page.tsx` is a client component and cannot
 // export metadata itself, so the title lives in this pass-through layout;
 // it renders no DOM of its own. The tab title is set

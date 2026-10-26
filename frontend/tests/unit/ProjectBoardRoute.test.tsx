@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { ApiRequestError, type User, type Project } from "../../src/lib/api";
+import userEvent from "@testing-library/user-event";
+import { ApiRequestError, type User, type Project, type Task } from "../../src/lib/api";
 
 const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn() } }));
 vi.mock("next/navigation", () => ({
@@ -35,7 +36,7 @@ vi.mock("../../src/lib/api", async () => {
 import ProjectLayout from "../../src/app/projects/[id]/layout";
 import ProjectBoardPage from "../../src/app/projects/[id]/board/page";
 import { ToastProvider } from "../../src/components/ui/Toast";
-import { getCurrentUser, getTeams, getProject, getTasks } from "../../src/lib/api";
+import { getCurrentUser, getTeams, getProject, getTasks, getTask } from "../../src/lib/api";
 
 const mockGetProject = vi.mocked(getProject);
 
@@ -99,6 +100,51 @@ describe("board route (hub layout + board page)", () => {
     document.title = "stale";
     renderRoute();
     await waitFor(() => expect(document.title).toBe("Project One · Board - agent-tasks"));
+  });
+
+  it("keeps the tab title and adds no history entry while the task modal opens and closes", async () => {
+    // The board's ?taskId= sync uses history.replaceState: no router call,
+    // which in Next re-renders the document head with the segment title.
+    const task = {
+      id: "k-1",
+      projectId: "p-1",
+      title: "Deep-linked task",
+      status: "open",
+      priority: "MEDIUM",
+      labels: [],
+      attachments: [],
+      artifacts: [],
+      comments: [],
+      blockedBy: [],
+      blocks: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    } as unknown as Task;
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getTasks).mockResolvedValue([task]);
+    vi.mocked(getTask).mockResolvedValue(task);
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    try {
+      renderRoute();
+      await waitFor(() => expect(document.title).toBe("Project One · Board - agent-tasks"));
+      const entries = window.history.length;
+
+      await userEvent.click(await screen.findByRole("button", { name: /Deep-linked task/ }));
+      await screen.findByRole("dialog");
+      await waitFor(() => expect(window.location.search).toBe("?taskId=k-1"));
+      expect(document.title).toBe("Project One · Board - agent-tasks");
+
+      await userEvent.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(window.location.search).toBe(""));
+      expect(document.title).toBe("Project One · Board - agent-tasks");
+
+      expect(replaceState).toHaveBeenCalledTimes(2);
+      expect(window.history.length).toBe(entries);
+      expect(nav.router.replace).not.toHaveBeenCalled();
+      expect(nav.router.push).not.toHaveBeenCalled();
+    } finally {
+      replaceState.mockRestore();
+    }
   });
 
   it.each([

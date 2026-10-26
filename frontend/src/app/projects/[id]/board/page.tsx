@@ -206,12 +206,18 @@ export default function ProjectBoardPage() {
   }, []);
 
   // The URL follows the modal: `?taskId=<id>` while a task is open, removed when
-  // it closes (router.replace, so open and close add no history entries and Back
-  // leaves the board instead of toggling the modal). Query and hash (the jump
-  // bar's `#db-col-...`) are otherwise kept. Runs after a successful boot only,
-  // so the arrival `?taskId` is read once by the bootstrap, a reload after
-  // close finds none, and a boot that redirected (signed out, project missing)
-  // or failed leaves its own navigation alone.
+  // it closes. Open and close replace the current history entry, so Back
+  // leaves the board instead of toggling the modal. The native
+  // history.replaceState is used, not router.replace: Next adopts the new URL
+  // (usePathname and useSearchParams follow it) without fetching the route
+  // again, so the document head, and with it the tab title, is not
+  // re-rendered on every open and close. The `null` state lets Next copy its
+  // own entry state; passing history.state would mark the call as Next's own,
+  // and the router would keep the old URL and write it back later. Query and
+  // hash (the jump bar's `#db-col-...`) are otherwise kept. Runs after a
+  // successful boot only, so the arrival `?taskId` is read once by the
+  // bootstrap, a reload after close finds none, and a boot that redirected
+  // (signed out, project missing) or failed leaves its own navigation alone.
   useEffect(() => {
     if (loading || !bootSucceeded) return;
     const params = new URLSearchParams(window.location.search);
@@ -219,11 +225,12 @@ export default function ProjectBoardPage() {
     if (activeTaskId) params.set("taskId", activeTaskId);
     else params.delete("taskId");
     const query = params.toString();
-    router.replace(
+    window.history.replaceState(
+      null,
+      "",
       `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
-      { scroll: false },
     );
-  }, [activeTaskId, loading, bootSucceeded, router]);
+  }, [activeTaskId, loading, bootSucceeded]);
 
   useEffect(() => {
     if (!activeTaskId) {

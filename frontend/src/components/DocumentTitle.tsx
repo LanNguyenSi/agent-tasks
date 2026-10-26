@@ -4,10 +4,10 @@
 // <DocumentTitle title="Tasks" /> and the tab reads "Tasks - agent-tasks".
 // The title is set in an effect (client-side), so it can use loaded data such
 // as a project or task name; the segment `metadata` exports only supply the
-// server-rendered fallback until then.
+// server-rendered fallback until then, where a route has one.
 
 import { useEffect } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 export const TITLE_SUFFIX = "agent-tasks";
 
@@ -17,29 +17,21 @@ export function formatDocumentTitle(title: string | null | undefined): string {
   return t ? `${t} - ${TITLE_SUFFIX}` : TITLE_SUFFIX;
 }
 
-// Next re-applies the server-rendered segment title in places a title
-// component's props do not change: after a router.replace that only changes
-// the query (the board modal adds and drops `?taskId=`), and on a reload that
-// restores the router state of such an entry. So the title is set again
-// after every navigation commit (pathname and query string are effect
-// dependencies), and while the component is mounted on its own route a change
-// to the <title> element is undone. The route guard keeps a leaving page from
-// overwriting the title of the page that replaces it.
+// Set when the title or `enabled` changes, which includes the mount of the page
+// or layout that owns it. A navigation to another page renders the new
+// document head (with the segment's server-rendered title) in the same commit
+// that changes or mounts the title of the page it lands on, so the effect runs
+// after the head and wins. Two cases change no title prop: a query-only URL
+// change, which therefore goes through history.replaceState (the board
+// modal's `?taskId=`; it does not re-render the head), and a soft navigation
+// to the same URL, which mounts the server-rendered <title> again; a route
+// whose title only the client knows renders none
+// (app/projects/[id]/layout.tsx).
 export function useDocumentTitle(title: string | null | undefined, enabled = true): void {
-  const pathname = usePathname();
-  const search = useSearchParams()?.toString() ?? "";
   useEffect(() => {
     if (!enabled) return;
-    const wanted = formatDocumentTitle(title);
-    document.title = wanted;
-    if (typeof MutationObserver === "undefined") return;
-    const observer = new MutationObserver(() => {
-      if (window.location.pathname !== pathname) return;
-      if (document.title !== wanted) document.title = wanted;
-    });
-    observer.observe(document.head, { childList: true, characterData: true, subtree: true });
-    return () => observer.disconnect();
-  }, [title, enabled, pathname, search]);
+    document.title = formatDocumentTitle(title);
+  }, [title, enabled]);
 }
 
 export default function DocumentTitle({ title }: { title: string | null | undefined }) {

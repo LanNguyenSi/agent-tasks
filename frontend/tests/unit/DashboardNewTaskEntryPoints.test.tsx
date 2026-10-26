@@ -326,14 +326,21 @@ describe("board bootstrap from the route's project", () => {
 });
 
 describe("task modal and the URL", () => {
-  // The router mock does not touch the address bar; make replace do what the
-  // real router does so the effect's own reads of window.location see it.
+  // The URL sync writes the address bar with the native history.replaceState
+  // (Next adopts the URL without a route fetch, see the board page), never
+  // through the router: router.replace re-renders the document head on every
+  // open and close. jsdom's history updates window.location directly.
+  let replaceStateSpy: ReturnType<typeof vi.spyOn>;
+  let pushStateSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
-    routerMocks.replace.mockImplementation((url: string) => {
-      window.history.replaceState({}, "", url);
-    });
     mockGetTasks.mockResolvedValue([TASK]);
     mockGetTask.mockResolvedValue(TASK);
+    replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    pushStateSpy = vi.spyOn(window.history, "pushState");
+  });
+  afterEach(() => {
+    replaceStateSpy.mockRestore();
+    pushStateSpy.mockRestore();
   });
 
   async function openCard() {
@@ -341,16 +348,30 @@ describe("task modal and the URL", () => {
     await screen.findByRole("dialog");
   }
 
-  it("adds ?taskId=<id> when a card opens, with router.replace", async () => {
+  async function closeModal() {
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  }
+
+  it("adds ?taskId=<id> when a card opens and removes it on close with history.replaceState, without the router or a new history entry", async () => {
     await renderDashboardReady();
+    const entries = window.history.length;
+    document.title = "Project One · Board - agent-tasks";
+
     await openCard();
-    await waitFor(() =>
-      expect(routerMocks.replace).toHaveBeenCalledWith("/projects/p-1/board?taskId=k-1", {
-        scroll: false,
-      }),
-    );
+    await waitFor(() => expect(window.location.search).toBe("?taskId=k-1"));
+    expect(replaceStateSpy).toHaveBeenLastCalledWith(null, "", "/projects/p-1/board?taskId=k-1");
+
+    await closeModal();
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(replaceStateSpy).toHaveBeenLastCalledWith(null, "", "/projects/p-1/board");
+    expect(replaceStateSpy).toHaveBeenCalledTimes(2);
+
+    expect(routerMocks.replace).not.toHaveBeenCalled();
     expect(routerMocks.push).not.toHaveBeenCalled();
-    expect(window.location.search).toBe("?taskId=k-1");
+    expect(pushStateSpy).not.toHaveBeenCalled();
+    expect(window.history.length).toBe(entries);
+    expect(document.title).toBe("Project One · Board - agent-tasks");
   });
 
   it("removes taskId when the modal closes and keeps other query parameters and the hash", async () => {
@@ -360,21 +381,23 @@ describe("task modal and the URL", () => {
     await waitFor(() => expect(window.location.search).toBe("?view=x&taskId=k-1"));
     expect(window.location.hash).toBe("#db-col-open");
 
-    await userEvent.click(screen.getByRole("button", { name: "Close" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await closeModal();
     await waitFor(() => expect(window.location.search).toBe("?view=x"));
     expect(window.location.hash).toBe("#db-col-open");
+    expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 
   it("arriving with ?taskId= and closing leaves no taskId, and a reload does not reopen the modal", async () => {
     window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+    replaceStateSpy.mockClear();
     const first = renderBoard();
     await screen.findByRole("dialog");
-    expect(routerMocks.replace).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await closeModal();
     await waitFor(() => expect(window.location.search).toBe(""));
     expect(window.location.pathname).toBe("/projects/p-1/board");
+    expect(routerMocks.replace).not.toHaveBeenCalled();
 
     first.unmount();
     mockGetTask.mockClear();
@@ -385,50 +408,51 @@ describe("task modal and the URL", () => {
 
   describe("a boot that does not succeed leaves its own navigation alone", () => {
     // With ?taskId= still in the address bar and no task open, the URL sync
-    // would replace the URL with the bare board path and win over the boot's
-    // redirect. It must not run after a redirect or a boot error. The real
-    // router changes the address bar after the call returns, so these cases
-    // leave the URL as it was (the mock above would rewrite it at once and
-    // hide the race).
-    beforeEach(() => {
-      routerMocks.replace.mockImplementation(() => {});
-    });
-
+    // would replace the URL with the bare board path; in Next that replace
+    // also cancels the boot's pending redirect. It must not run after a
+    // redirect or a boot error. The router mock does not change the address
+    // bar, as the real router does not until its navigation commits.
     async function settled() {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
       });
     }
 
-    it("signed out with ?taskId=: the only navigation is /auth", async () => {
+    beforeEach(() => {
       window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+      replaceStateSpy.mockClear();
+    });
+
+    it("signed out with ?taskId=: the only navigation is /auth", async () => {
       mockGetCurrentUser.mockResolvedValue(null);
       renderBoard();
       await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
       await settled();
       expect(routerMocks.replace.mock.calls).toEqual([["/auth"]]);
-      expect(routerMocks.replace.mock.lastCall?.[0]).toBe("/auth");
+      expect(replaceStateSpy).not.toHaveBeenCalled();
+      expect(window.location.search).toBe("?taskId=k-1");
     });
 
     it.each([
       ["a missing project (404)", new ApiRequestError("not_found", "Not found", 404)],
       ["a project without access (403)", new ApiRequestError("forbidden", "Access denied", 403)],
     ])("%s with ?taskId=: the only navigation is the Projects page", async (_label, err) => {
-      window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
       mockGetProject.mockRejectedValue(err);
       renderBoard();
       await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/projects"));
       await settled();
       expect(routerMocks.replace.mock.calls).toEqual([["/projects"]]);
+      expect(replaceStateSpy).not.toHaveBeenCalled();
+      expect(window.location.search).toBe("?taskId=k-1");
     });
 
     it("a boot error with ?taskId=: no navigation at all, the URL is kept", async () => {
-      window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
       mockGetProject.mockRejectedValue(new ApiRequestError("internal", "Server exploded", 500));
       renderBoard();
       expect(await screen.findByText("Could not load tasks")).toBeInTheDocument();
       await settled();
       expect(routerMocks.replace).not.toHaveBeenCalled();
+      expect(replaceStateSpy).not.toHaveBeenCalled();
       expect(window.location.search).toBe("?taskId=k-1");
     });
   });
@@ -437,6 +461,7 @@ describe("task modal and the URL", () => {
     window.history.replaceState({}, "", "/projects/p-1/board?taskId=other");
     await renderDashboardReady();
     await waitFor(() => expect(window.location.search).toBe(""));
+    expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 });
 
