@@ -4,7 +4,7 @@
 // revoke) and the Enterprise SSO entry. Personal settings (account,
 // appearance, GitHub, agent permissions) live at /settings.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
@@ -15,6 +15,7 @@ import {
 } from "../../../lib/api";
 import { rememberTeam, resolveCurrentTeam } from "../../../lib/currentTeam";
 import { settingsHref, ssoSettingsHref } from "../../../lib/routes";
+import { useTeamChange } from "../../../lib/teamSwitch";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import { FullPageLoader } from "../../../components/ui/FullPageLoader";
@@ -59,6 +60,21 @@ export default function TeamSettingsPage() {
       setLoading(false);
     })();
   }, [router]);
+
+  // The header switcher owns team switching: on a switch, load the new
+  // team's tokens, then swap team and tokens together (the section below is
+  // keyed by the team, so open dialogs and a revealed token of the old team
+  // are dropped). The newest switch wins if several overlap.
+  const switchSeq = useRef(0);
+  useTeamChange((teamId) => {
+    if (teamId === selectedTeamId || !teams.some((t) => t.id === teamId)) return;
+    const seq = ++switchSeq.current;
+    void getAgentTokens(teamId).then((tok) => {
+      if (seq !== switchSeq.current) return;
+      setTokens(tok);
+      setSelectedTeamId(teamId);
+    });
+  });
 
   // The sections only exist once loading is done, so the browser's own
   // hash scroll (including a /settings#api-tokens redirect) finds nothing on
@@ -130,9 +146,9 @@ export default function TeamSettingsPage() {
             <p className="settings-group-eyebrow">Developer</p>
 
             <ApiTokensSection
+              key={selectedTeamId}
               teams={teams}
               selectedTeamId={selectedTeamId}
-              onSelectTeam={setSelectedTeamId}
               initialTokens={tokens}
             />
           </div>

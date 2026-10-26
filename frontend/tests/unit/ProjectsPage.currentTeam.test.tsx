@@ -2,12 +2,13 @@
 /**
  * /projects page-level tests for the single current-team rule (T02):
  * the initial team resolves through lib/currentTeam (?teamId -> remembered
- * team -> teams[0]), a valid `?teamId` is remembered, and the header
- * switcher keeps writing the same `agent-tasks:lastTeamId` key via
- * rememberTeam. Mock/render pattern mirrors TasksPageDemote.test.tsx.
+ * team -> teams[0]) and a valid `?teamId` is remembered. The page has no
+ * team select of its own: the header switcher owns switching (AppHeader),
+ * and the page re-resolves its team when the switch is announced.
+ * Mock/render pattern mirrors TasksPageDemote.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, act, waitFor } from "@testing-library/react";
 import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -28,6 +29,7 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import ProjectsPage from "../../src/app/projects/page";
+import { announceTeamChange } from "../../src/lib/teamSwitch";
 import { getCurrentUser, getTeams, getProjects, getTasks } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);
@@ -76,9 +78,6 @@ const PROJECT: Project = {
   createdAt: "2026-01-01T00:00:00Z",
 };
 
-// jsdom has no scrollIntoView; the Select listbox scrolls on open.
-Element.prototype.scrollIntoView = () => {};
-
 beforeEach(() => {
   vi.clearAllMocks();
   navState.search = "";
@@ -99,8 +98,6 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
 
     render(<ProjectsPage />);
-    await screen.findByRole("combobox", { name: "Switch team" });
-
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
     expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
   });
@@ -110,10 +107,8 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
 
     render(<ProjectsPage />);
-    await screen.findByRole("combobox", { name: "Switch team" });
-
-    expect(mockGetProjects).toHaveBeenCalledWith("t2");
     expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(mockGetProjects).toHaveBeenCalledWith("t2");
     // URL-selected team becomes the remembered one (same key as the switcher).
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
   });
@@ -123,21 +118,45 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
 
     render(<ProjectsPage />);
-    await screen.findByRole("combobox", { name: "Switch team" });
-
+    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
     expect(mockGetProjects).toHaveBeenCalledWith("t2");
   });
 
-  it("the header switcher remembers the picked team", async () => {
+  it("has no in-page team select (the header switcher owns switching)", async () => {
     render(<ProjectsPage />);
-    const trigger = await screen.findByRole("combobox", { name: "Switch team" });
+    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Switch team" })).not.toBeInTheDocument();
+  });
+});
+
+describe("/projects page — header team switch", () => {
+  const T2_PROJECT: Project = { ...PROJECT, id: "proj-2", teamId: "t2", name: "Second Team Project", slug: "second" };
+
+  it("re-resolves the team and reloads its projects when the switch is announced", async () => {
+    mockGetProjects.mockImplementation(async (teamId?: string) =>
+      teamId === "t2" ? [T2_PROJECT] : [PROJECT],
+    );
+    render(<ProjectsPage />);
+    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t1"));
 
-    fireEvent.click(trigger);
-    const option = await screen.findByRole("option", { name: "Team Two" });
-    fireEvent.click(option);
+    act(() => announceTeamChange("t2"));
 
+    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
+    expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
+  });
+
+  it("ignores an announced switch to the team already shown or to an unknown team", async () => {
+    render(<ProjectsPage />);
+    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    await waitFor(() => expect(mockGetProjects).toHaveBeenCalledTimes(1));
+
+    act(() => announceTeamChange("t1"));
+    act(() => announceTeamChange("ghost"));
+
+    expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(mockGetProjects).toHaveBeenCalledTimes(1);
   });
 });

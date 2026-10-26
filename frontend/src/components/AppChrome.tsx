@@ -14,10 +14,10 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import AppHeader from "./AppHeader";
-import { getCurrentUser } from "../lib/api";
+import { getCurrentUser, getTeams, type Team } from "../lib/api";
 import type { ReactNode } from "react";
 
 interface User {
@@ -40,17 +40,29 @@ export default function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const showHeader = !isShellSuppressed(pathname);
   const [user, setUser] = useState<User | null>(null);
+  // null = unknown (not loaded, or the lookup failed): the header then shows
+  // no team switcher and no team-dependent menu entries.
+  const [teams, setTeams] = useState<Team[] | null>(null);
 
   useEffect(() => {
     if (!showHeader) return;
     getCurrentUser()
       .then((u) => setUser(u ? { login: u.login, avatarUrl: u.avatarUrl } : null))
       .catch(() => setUser(null));
+    // One team lookup per shell mount (the chrome outlives route changes).
+    getTeams()
+      .then(setTeams)
+      .catch(() => setTeams(null));
   }, [showHeader]);
 
   return (
     <>
-      {showHeader && <AppHeader user={user} />}
+      {showHeader && (
+        // The header reads ?teamId (useSearchParams), which needs a boundary.
+        <Suspense fallback={null}>
+          <AppHeader user={user} teams={teams} />
+        </Suspense>
+      )}
       {children}
     </>
   );

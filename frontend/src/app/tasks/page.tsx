@@ -567,16 +567,6 @@ function TasksPageInner() {
           </span>
         }
       >
-        {/* Team selector (multi-team only) */}
-        {teams.length > 1 && (
-          <Select
-            ariaLabel="Switch team"
-            value={selectedTeam?.id ?? ""}
-            onChange={(v) => updateParams({ teamId: v, projectId: null })}
-            options={teams.map((t) => ({ value: t.id, label: t.name }))}
-          />
-        )}
-
         {/* Search with "/" shortcut */}
         <div className="db-search">
           <Icon name="search" size={14} />

@@ -798,6 +798,71 @@ input[type="checkbox"] {
   flex: 1;
 }
 
+/* Team switcher (between brand and nav): a static label for one team, a
+   dropdown trigger for several. The name truncates instead of widening the
+   header. */
+.app-team-label,
+.app-team-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  min-width: 0;
+  max-width: 180px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.app-team-label {
+  display: inline-block;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-team-trigger {
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.app-team-trigger:hover {
+  background: color-mix(in srgb, white 3%, transparent);
+  color: var(--text);
+}
+
+.app-team-trigger .icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.app-team-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Doubled class: .app-dropdown-item (later in the file) sets display:block. */
+.app-dropdown-item.app-team-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.app-team-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-user-trigger {
   display: flex;
   align-items: center;
@@ -6930,12 +6995,6 @@ a.proj-chip:hover {
   flex-shrink: 0;
 }
 
-/* Team select row in tokens section. */
-.settings-team-select {
-  margin-bottom: var(--space-3);
-  max-width: 320px;
-}
-
 /* Documentation blocks inside CollapsibleSection. */
 .settings-docs-block {
   display: flex;
@@ -7232,11 +7291,6 @@ a.proj-chip:hover {
 }
 
 /* ── Teams page v2 ─────────────────────────────────────────────── */
-
-.teams-team-switcher {
-  max-width: 240px;
-  margin-bottom: var(--space-2);
-}
 
 .teams-page-title {
   font-size: var(--text-xl);
@@ -8007,20 +8061,20 @@ a.proj-chip:hover {
 }
 
 /* ── Header nav: 390px responsive ───────────────────────────────────────────
- * At ≤520px the full nav (Home|Dashboard|Tasks|Teams|Settings) overflows.
- * "Home" is reachable via the brand logo; "Settings" is in the user dropdown.
- * Hide them at mobile width, reduce padding, and tighten the header padding
- * so the remaining 3 nav items (Dashboard, Tasks, Teams) fit inside 390px.
+ * At <=520px the header must still show Home, Projects and Tasks (no nav link
+ * is ever hidden), the team switcher and the avatar. Room comes from the
+ * parts that have another way in: the brand text goes (the icon still links
+ * to Home and keeps its aria-label), the username goes (the avatar still opens
+ * the account menu), paddings and gaps shrink, and the team name truncates to
+ * a short width. Nothing here selects nav links by position.
  */
 @media (max-width: 520px) {
   .app-header-inner {
     padding: 0 var(--space-3);
-    gap: var(--space-3);
+    gap: var(--space-2);
   }
 
-  /* Hide first (Home) and last (Settings) nav links — both reachable elsewhere */
-  .app-nav-link:first-child,
-  .app-nav-link:last-child {
+  .app-brand-text {
     display: none;
   }
 
@@ -8031,6 +8085,13 @@ a.proj-chip:hover {
 
   .app-nav-links {
     gap: 0;
+  }
+
+  .app-team-label,
+  .app-team-trigger {
+    max-width: 88px;
+    padding: 0 var(--space-1);
+    font-size: var(--text-xs);
   }
 
   /* Hide the username text; keep avatar for account access */

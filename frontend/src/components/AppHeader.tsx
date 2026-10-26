@@ -1,10 +1,16 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { logout } from "../lib/api";
-import { boardHref, projectsHref, settingsHref } from "../lib/routes";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { logout, type Team } from "../lib/api";
+import { rememberTeam, resolveCurrentTeam } from "../lib/currentTeam";
+import { projectsHref, settingsHref, teamSettingsHref } from "../lib/routes";
+import {
+  announceTeamChange,
+  teamSwitchHref,
+  useTeamChange,
+} from "../lib/teamSwitch";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
 
@@ -13,30 +19,113 @@ interface AppHeaderProps {
     login: string;
     avatarUrl?: string | null;
   } | null;
+  /**
+   * The caller's teams. `undefined`/`null` means unknown (not loaded yet, or
+   * the lookup failed): no switcher and no team-dependent menu entries. An
+   * empty list means the user has no team.
+   */
+  teams?: Team[] | null;
 }
 
-export default function AppHeader({ user }: AppHeaderProps) {
+export default function AppHeader({ user, teams }: AppHeaderProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const teamTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
 
   const isHome = pathname.startsWith("/home");
-  const isDashboard = pathname.startsWith("/dashboard");
   const isTasks = pathname.startsWith("/tasks");
-  // Exact match: the Projects list is current only on `/projects` itself,
-  // not on the `/projects/<id>/...` hub tabs (same as before the move, when
-  // `/teams` never matched `/projects/...`).
-  const isProjects = pathname === "/projects";
-  const isSettings = pathname.startsWith("/settings");
+  // Projects is current on the list and on every project hub route below it
+  // (`/projects/<id>/board`, members, settings, workflow).
+  const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
+
+  // The current team follows the single current-team rule (?teamId, then the
+  // remembered team, then the first team). A switch made here is held in
+  // `switchedTeamId` until the URL catches up, so the label never lags behind
+  // the click; the pages that listen for the change update at the same time.
+  const urlTeamId = searchParams?.get("teamId") ?? null;
+  const [switchedTeamId, setSwitchedTeamId] = useState<string | null>(null);
+  useEffect(() => {
+    setSwitchedTeamId(null);
+  }, [pathname, urlTeamId]);
+  // Another component (or tab-local code) announcing a switch re-renders the
+  // label too; the remembered id is read during render.
+  const [, setAnnounced] = useState(0);
+  useTeamChange(() => setAnnounced((n) => n + 1));
+
+  const teamCount = teams?.length ?? 0;
+  const currentTeam =
+    teams && teams.length > 0
+      ? resolveCurrentTeam(teams, { urlTeamId: switchedTeamId ?? urlTeamId })
+      : null;
+
+  function switchTeam(teamId: string) {
+    setTeamMenuOpen(false);
+    if (teamId === currentTeam?.id) return;
+    setSwitchedTeamId(teamId);
+    rememberTeam(teamId);
+    announceTeamChange(teamId);
+    const href = teamSwitchHref(pathname, teamId);
+    if (href) router.push(href);
+  }
 
   return (
     <header className="app-header">
       <div className="app-header-inner">
-        <Link href="/home" className="app-brand">
+        <Link href="/home" className="app-brand" aria-label="agent-tasks">
           <Icon name="board" size={15} />
-          agent-tasks
+          <span className="app-brand-text">agent-tasks</span>
         </Link>
+
+        {teams && teamCount === 1 && currentTeam && (
+          <span className="app-team-label" title={currentTeam.name}>
+            <span className="sr-only">Team: </span>
+            {currentTeam.name}
+          </span>
+        )}
+        {teams && teamCount > 1 && currentTeam && (
+          <>
+            <button
+              ref={teamTriggerRef}
+              type="button"
+              className="app-team-trigger"
+              onClick={() => setTeamMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={teamMenuOpen}
+              aria-label={`Switch team, current team ${currentTeam.name}`}
+              title={currentTeam.name}
+            >
+              <span className="app-team-name">{currentTeam.name}</span>
+              <Icon name="chevron-down" size={12} />
+            </button>
+            <DropdownMenu
+              anchorRef={teamTriggerRef}
+              open={teamMenuOpen}
+              onClose={() => setTeamMenuOpen(false)}
+              align="start"
+              minWidth={180}
+            >
+              <div role="menu" aria-label="Teams">
+                {teams.map((team) => (
+                  <button
+                    key={team.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={team.id === currentTeam.id}
+                    onClick={() => switchTeam(team.id)}
+                    className="app-dropdown-item app-team-option"
+                  >
+                    <span className="app-team-option-name">{team.name}</span>
+                    {team.id === currentTeam.id && <Icon name="check" size={12} />}
+                  </button>
+                ))}
+              </div>
+            </DropdownMenu>
+          </>
+        )}
 
         <nav className="app-nav-links" aria-label="Main">
           <Link
@@ -47,20 +136,6 @@ export default function AppHeader({ user }: AppHeaderProps) {
             Home
           </Link>
           <Link
-            href={boardHref()}
-            className="app-nav-link"
-            aria-current={isDashboard ? "page" : undefined}
-          >
-            Dashboard
-          </Link>
-          <Link
-            href="/tasks"
-            className="app-nav-link"
-            aria-current={isTasks ? "page" : undefined}
-          >
-            Tasks
-          </Link>
-          <Link
             href={projectsHref()}
             className="app-nav-link"
             aria-current={isProjects ? "page" : undefined}
@@ -68,11 +143,11 @@ export default function AppHeader({ user }: AppHeaderProps) {
             Projects
           </Link>
           <Link
-            href={settingsHref()}
+            href="/tasks"
             className="app-nav-link"
-            aria-current={isSettings ? "page" : undefined}
+            aria-current={isTasks ? "page" : undefined}
           >
-            Settings
+            Tasks
           </Link>
         </nav>
 
@@ -120,6 +195,26 @@ export default function AppHeader({ user }: AppHeaderProps) {
                 >
                   Settings
                 </Link>
+                {teams && teamCount > 0 && (
+                  <Link
+                    href={teamSettingsHref()}
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                    className="app-dropdown-item"
+                  >
+                    Team settings
+                  </Link>
+                )}
+                {teams && teamCount === 0 && (
+                  <Link
+                    href="/onboarding"
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                    className="app-dropdown-item"
+                  >
+                    Create a team
+                  </Link>
+                )}
                 <button
                   type="button"
                   role="menuitem"

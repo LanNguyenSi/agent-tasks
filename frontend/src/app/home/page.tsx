@@ -16,6 +16,7 @@ import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { useTeamChange } from "../../lib/teamSwitch";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
@@ -203,6 +204,10 @@ export default function HomeDashboardPage() {
   const [staleWarning, setStaleWarning] = useState(false);
   const [refetchKey, setRefetchKey] = useState(0);
   const hasDataRef = useRef(false);
+  // Teams of the bootstrap and the team whose tasks are on screen, for the
+  // header switcher's team change below.
+  const teamsRef = useRef<Team[]>([]);
+  const loadedTeamIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -213,6 +218,7 @@ export default function HomeDashboardPage() {
       const ctx = await getAccessContext();
       if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
       const teams = ctx.teams;
+      teamsRef.current = teams;
       if (teams.length === 0) {
         setSharedProjects(ctx.sharedProjects);
         setLoading(false);
@@ -230,9 +236,28 @@ export default function HomeDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  // The header switcher owns team switching: re-resolve the team from the
+  // announced change (the bootstrap above runs once).
+  useTeamChange((teamId) => {
+    const team = teamsRef.current.find((t) => t.id === teamId);
+    if (team) setSelectedTeam(team);
+  });
+
   useEffect(() => {
     if (!selectedTeam) return;
     let cancelled = false;
+
+    // A different team than the one on screen: drop its tasks and show the
+    // loading state until the new team's tasks arrive.
+    if (loadedTeamIdRef.current !== selectedTeam.id) {
+      loadedTeamIdRef.current = selectedTeam.id;
+      hasDataRef.current = false;
+      setAllTasks([]);
+      setCounts(null);
+      setError(null);
+      setStaleWarning(false);
+      setTasksLoaded(false);
+    }
 
     async function fetchTeamTasks(teamId: string) {
       try {

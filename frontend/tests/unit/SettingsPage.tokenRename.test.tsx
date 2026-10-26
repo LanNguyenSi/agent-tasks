@@ -25,7 +25,7 @@
  *     must not be actioned against the newly selected team's tokens).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { User, Team, AgentToken } from "../../src/lib/api";
 
@@ -53,6 +53,7 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import TeamSettingsPage from "../../src/app/settings/team/page";
+import { announceTeamChange } from "../../src/lib/teamSwitch";
 import {
   getCurrentUser,
   getTeams,
@@ -242,11 +243,12 @@ describe("TeamSettingsPage — agent token rename", () => {
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
 
     // A stale rename target must not survive into the newly selected
-    // team's token list (mutation probe: removing the setRenameTarget(null)
-    // in the team-select onChange turns this red). The team Select is the
-    // custom combobox component: open it, then click the option.
-    await user.click(screen.getByRole("combobox", { name: "Team" }));
-    await user.click(await screen.findByRole("option", { name: "Second" }));
+    // team's token list. The header switcher announces the switch; the page
+    // remounts the token section for the new team.
+    mockGetAgentTokens.mockResolvedValue([makeToken({ id: "tok-b", name: "other-bot" })]);
+    act(() => announceTeamChange("team-2"));
+    expect(await screen.findByText("other-bot")).toBeInTheDocument();
+    expect(mockGetAgentTokens).toHaveBeenLastCalledWith("team-2");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
@@ -263,10 +265,10 @@ describe("TeamSettingsPage — agent token rename", () => {
     expect(await screen.findByText("Revoke API token?")).toBeInTheDocument();
 
     // A stale revoke target must not survive into the newly selected team's
-    // token list (mutation probe: removing the setRevokeTarget(null) in the
-    // team-select onChange turns this red).
-    await user.click(screen.getByRole("combobox", { name: "Team" }));
-    await user.click(await screen.findByRole("option", { name: "Second" }));
+    // token list (the section is keyed by the team).
+    mockGetAgentTokens.mockResolvedValue([makeToken({ id: "tok-b", name: "other-bot" })]);
+    act(() => announceTeamChange("team-2"));
+    expect(await screen.findByText("other-bot")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Revoke API token?")).not.toBeInTheDocument());
   });
 });
@@ -348,7 +350,23 @@ describe("TeamSettingsPage — page shell", () => {
     await screen.findByRole("heading", { name: "API Tokens" });
 
     expect(mockGetAgentTokens).toHaveBeenCalledWith("team-2");
-    expect(screen.getByRole("combobox", { name: "Team" })).toHaveTextContent("Second");
+    // The team select moved to the header switcher.
+    expect(screen.queryByRole("combobox", { name: "Team" })).not.toBeInTheDocument();
+  });
+
+  it("ignores an announced switch to the current or an unknown team", async () => {
+    const teamA = makeTeam("ADMIN");
+    const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
+    mockGetTeams.mockResolvedValue([teamA, teamB]);
+    mockGetAgentTokens.mockResolvedValue([]);
+    render(<TeamSettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+    expect(mockGetAgentTokens).toHaveBeenCalledTimes(1);
+
+    act(() => announceTeamChange("team-1"));
+    act(() => announceTeamChange("ghost"));
+
+    expect(mockGetAgentTokens).toHaveBeenCalledTimes(1);
   });
 
   it("?teamId in the URL wins over the remembered team", async () => {

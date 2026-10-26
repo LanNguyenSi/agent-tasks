@@ -23,6 +23,7 @@ import {
 } from "../../lib/teamsPrefs";
 import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { useTeamChange } from "../../lib/teamSwitch";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import { boardHref, settingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -35,7 +36,6 @@ import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
-import Select from "@/components/ui/Select";
 import { Skeleton, SkeletonList } from "../../components/ui/Skeleton";
 import { Table, type ColumnDef } from "../../components/ui/Table";
 import { Tabs } from "../../components/ui/Tabs";
@@ -312,13 +312,16 @@ export default function ProjectsPage() {
     }
   }
 
+  // The header switcher owns team switching (it also remembers the team and
+  // moves the URL); this page re-resolves the team on the announced change.
   function handleTeamSwitch(teamId: string) {
     const team = teams.find((t) => t.id === teamId);
-    if (!team) return;
+    if (!team || team.id === selectedTeam?.id) return;
     setSelectedTeam(team);
     rememberTeam(teamId);
     void loadProjects(teamId);
   }
+  useTeamChange(handleTeamSwitch);
 
   function closeNewProjectModal() {
     setShowNewProject(false);
@@ -593,16 +596,6 @@ export default function ProjectsPage() {
         <>
           <div className="teams-header-row">
             <div>
-              {teams.length > 1 && (
-                <div className="teams-team-switcher">
-                  <Select
-                    ariaLabel="Switch team"
-                    value={selectedTeam.id}
-                    onChange={handleTeamSwitch}
-                    options={teams.map((t) => ({ value: t.id, label: t.name }))}
-                  />
-                </div>
-              )}
               <h1 className="teams-page-title">{selectedTeam.name}</h1>
               <p className="teams-project-count">
                 {selectedTeam.projectCount ?? projects.length} projects
