@@ -84,7 +84,7 @@ describe("/home with no teams", () => {
 
     // No task widgets, no team aggregation request, no redirect.
     expect(screen.queryByText("My Tasks")).toBeNull();
-    expect(screen.queryByText("Open Tasks")).toBeNull();
+    expect(screen.queryByText("Active Tasks")).toBeNull();
     expect(getTeamTasks).not.toHaveBeenCalled();
     expect(routerMocks.replace).not.toHaveBeenCalled();
   });
@@ -99,7 +99,7 @@ describe("/home with a team", () => {
     render(<HomeDashboardPage />);
 
     expect(await screen.findByRole("heading", { name: "Pandora" })).toBeInTheDocument();
-    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("t1"));
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("t1", expect.anything()));
     expect(await screen.findByText("My Tasks")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();
     expect(screen.queryByRole("link", { name: /Shared Project/ })).toBeNull();

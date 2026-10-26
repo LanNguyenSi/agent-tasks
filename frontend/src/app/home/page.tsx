@@ -14,7 +14,7 @@ import {
   type TeamTasksProject,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
-import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
+import { DONE_RECENT_DAYS, isDoneTaskHidden } from "../../lib/dashboardPrefs";
 import {
   HOME_PROJECTS_STRIP_LIMIT,
   readRecentProjects,
@@ -32,13 +32,32 @@ import EmptyState from "../../components/ui/EmptyState";
 import { StatusChip } from "../../components/ui/StatusChip";
 import { PriorityLabel } from "../../components/ui/PriorityLabel";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
-import { isBacklogTask, isPriorityTask } from "./widgetFilters";
+import {
+  WIDGET_LIMIT,
+  WIDGET_REQUESTS,
+  isActiveTask,
+  isBacklogTask,
+  isPriorityTask,
+  type WidgetKey,
+} from "./widgetFilters";
 
 type EnrichedTask = Task & { projectName: string };
 
+// Label of the done tile and widget: the window comes from the same constant
+// as the recency filter, so the label cannot drift from what is counted.
+const DONE_LABEL = `Done · ${DONE_RECENT_DAYS} days`;
+
+const WIDGET_KEYS = Object.keys(WIDGET_REQUESTS) as WidgetKey[];
+
+type WidgetRows = Record<WidgetKey, EnrichedTask[]>;
+
+function emptyWidgetRows(): WidgetRows {
+  return { mine: [], priority: [], backlog: [], open: [], review: [], done: [] };
+}
+
 type HomeScope = {
   key: string;
-  scope: "mine" | "priority" | "backlog" | "open" | "review" | "done";
+  scope: WidgetKey;
   statLabel: string;
   widgetTitle: string;
   count: number;
@@ -69,7 +88,9 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
       </span>
       {task.externalRef && (
         <span className="home-task-row-ref" title={task.externalRef}>
-          {task.externalRef}
+          {/* The distinctive part of a ref is its end: the CSS truncates from
+              the start, and <bdi> keeps the characters in reading order. */}
+          <bdi>{task.externalRef}</bdi>
         </span>
       )}
       <PriorityLabel priority={task.priority} />
@@ -80,8 +101,6 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
 
 // ── TaskWidget ────────────────────────────────────────────────────
 
-const WIDGET_LIMIT = 10;
-
 interface WidgetProps {
   title: string;
   tasks: EnrichedTask[];
@@ -91,13 +110,13 @@ interface WidgetProps {
   emptyState: ReactNode;
   /**
    * Team-wide total for this scope, sourced from the server-side counts block.
-   * Falls back to loaded-slice length when the backend hasn't been redeployed
-   * yet (forward-compat). Drives badges and "+N more" so the numbers don't
-   * drift when the team's task count exceeds the row-fetch page size.
+   * Falls back to the loaded rows when the backend hasn't been redeployed
+   * yet (forward-compat). Drives the "N total" badge; "+N more" is this total
+   * minus the rows the widget shows.
    */
   total?: number;
   /**
-   * "Recently Done" only: count of done tasks beyond the 14-day window. When
+   * Done widget only: count of done tasks beyond the recency window. When
    * set, the widget offers a link to reveal them via the full done list.
    */
   olderCount?: number;
@@ -114,14 +133,17 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
   const moreHref = moreHrefOverride ?? (scope === "done" ? `${listHref}&recency=recent` : listHref);
   const olderHref = `/tasks?teamId=${teamId}&scope=done&recency=older`;
   const displayTotal = total ?? tasks.length;
-  const moreCount = Math.max(0, displayTotal - WIDGET_LIMIT);
+  const shownTasks = tasks.slice(0, WIDGET_LIMIT);
+  // Rows not shown = team-wide total minus the rows on screen (not minus the
+  // row limit: a scope may load fewer than WIDGET_LIMIT rows of a larger total).
+  const moreCount = Math.max(0, displayTotal - shownTasks.length);
 
   return (
     <Card className="home-widget-card" padding="sm">
       <div className="home-widget-header">
-        <Link href={moreHref} className="home-widget-title-link">
-          <h2 className="home-widget-title">{title}</h2>
-        </Link>
+        {/* Plain text: the stat tile above is the one link to this scope
+            ("N total" and "+N more" below lead there too). */}
+        <h2 className="home-widget-title">{title}</h2>
         <Link href={moreHref} className="widget-link home-widget-more">
           <span className="num">{displayTotal}</span> total &rarr;
         </Link>
@@ -141,7 +163,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
       ) : (
         <>
           <div className="home-widget-tasks">
-            {tasks.slice(0, WIDGET_LIMIT).map((task) => (
+            {shownTasks.map((task) => (
               <TaskRow key={task.id} task={task} teamId={teamId} />
             ))}
           </div>
@@ -262,7 +284,8 @@ export default function HomeDashboardPage() {
   // Zero-team user with shared projects: the project list replaces the task
   // widgets (the team task aggregation needs a team).
   const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
-  const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
+  // Raw rows of each widget's scoped request (see WIDGET_REQUESTS).
+  const [widgetRows, setWidgetRows] = useState<WidgetRows>(emptyWidgetRows);
   // Team projects for the "Your projects" jump strip, in the order
   // getTeamTasks returns them.
   const [teamProjects, setTeamProjects] = useState<TeamTasksProject[]>([]);
@@ -317,7 +340,7 @@ export default function HomeDashboardPage() {
     if (loadedTeamIdRef.current !== selectedTeam.id) {
       loadedTeamIdRef.current = selectedTeam.id;
       hasDataRef.current = false;
-      setAllTasks([]);
+      setWidgetRows(emptyWidgetRows());
       setCounts(null);
       setError(null);
       setStaleWarning(false);
@@ -326,16 +349,27 @@ export default function HomeDashboardPage() {
 
     async function fetchTeamTasks(teamId: string) {
       try {
-        const r = await getTeamTasks(teamId);
+        // One scoped request per widget, in parallel: the rows of every
+        // widget come from its own scope, not from filtering one capped slice
+        // of the whole team. `counts` and `projects` are team-wide and the
+        // same in every response, so the first one supplies them.
+        const responses = await Promise.all(
+          WIDGET_KEYS.map((key) => getTeamTasks(teamId, WIDGET_REQUESTS[key])),
+        );
         if (cancelled) return;
-        const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
-        const enriched: EnrichedTask[] = r.tasks.map((t) => ({
-          ...t,
-          projectName: projectName.get(t.projectId) ?? "(unknown)",
-        }));
-        setAllTasks(enriched);
-        setCounts(r.counts ?? null);
-        setTeamProjects(r.projects);
+        const first = responses[0];
+        if (!first) return;
+        const projectName = new Map(first.projects.map((p) => [p.id, p.name]));
+        const rows = emptyWidgetRows();
+        WIDGET_KEYS.forEach((key, i) => {
+          rows[key] = (responses[i]?.tasks ?? []).map((t) => ({
+            ...t,
+            projectName: projectName.get(t.projectId) ?? "(unknown)",
+          }));
+        });
+        setWidgetRows(rows);
+        setCounts(first.counts ?? null);
+        setTeamProjects(first.projects);
         hasDataRef.current = true;
         setError(null);
         setStaleWarning(false);
@@ -358,34 +392,46 @@ export default function HomeDashboardPage() {
 
   // ── Filtered task sets ────────────────────────────────────────
 
-  const openTasks = useMemo(
-    () => allTasks.filter((t) => t.status === "open" || t.status === "in_progress"),
-    [allTasks],
-  );
+  // The requests already filter by scope; the predicates below are the same
+  // rules applied again to what came back, so a response that ignores a
+  // filter cannot put a task into the wrong widget.
+
+  const openTasks = useMemo(() => widgetRows.open.filter(isActiveTask), [widgetRows.open]);
 
   const inReviewTasks = useMemo(
-    () => allTasks.filter((t) => t.status === "review"),
-    [allTasks],
+    () => widgetRows.review.filter((t) => t.status === "review"),
+    [widgetRows.review],
   );
 
-  const priorityTasks = useMemo(() => allTasks.filter(isPriorityTask), [allTasks]);
+  const priorityTasks = useMemo(
+    () => widgetRows.priority.filter(isPriorityTask),
+    [widgetRows.priority],
+  );
 
-  const backlogTasks = useMemo(() => allTasks.filter(isBacklogTask), [allTasks]);
+  const backlogTasks = useMemo(
+    () => widgetRows.backlog.filter(isBacklogTask),
+    [widgetRows.backlog],
+  );
 
   const recentlyDone = useMemo(() => {
     const now = Date.now();
-    return allTasks.filter((t) => t.status === "done" && !isDoneTaskHidden("recent", t.updatedAt, now));
-  }, [allTasks]);
+    return widgetRows.done.filter(
+      (t) => t.status === "done" && !isDoneTaskHidden("recent", t.updatedAt, now),
+    );
+  }, [widgetRows.done]);
 
   const olderDoneCount = useMemo(() => {
     if (typeof counts?.doneOlder === "number") return counts.doneOlder;
-    const doneTotal = counts?.done ?? allTasks.filter((t) => t.status === "done").length;
+    const doneTotal = counts?.done ?? recentlyDone.length;
     return Math.max(0, doneTotal - recentlyDone.length);
-  }, [counts, allTasks, recentlyDone]);
+  }, [counts, recentlyDone]);
 
   const myTasks = useMemo(
-    () => allTasks.filter((t) => t.claimedByUserId === user?.id && t.status !== "done"),
-    [allTasks, user],
+    () =>
+      widgetRows.mine.filter(
+        (t) => t.claimedByUserId === user?.id && t.status !== "done" && t.status !== "abandoned",
+      ),
+    [widgetRows.mine, user],
   );
 
   // ── "Your projects" strip (T05) ──────────────────────────────
@@ -401,22 +447,20 @@ export default function HomeDashboardPage() {
     return [...recents, ...teamProjects.filter((p) => !recentIds.has(p.id))];
   }, [teamProjects, recentProjectIds]);
 
-  // Per-project open/in_progress counts come from the loaded task slice,
-  // which the backend caps (DEFAULT_LIMIT = 500 in
-  // backend/src/routes/tasks.ts). A slice is provably complete only when
-  // counts is present AND counts.total <= allTasks.length; while the
-  // aggregation is truncated the slice misses tasks, so no per-project
-  // count is shown at all (never a wrong one).
+  // Per-project active counts come from the active widget's rows, which the
+  // backend caps (ACTIVE_FETCH_LIMIT, at most 500 per request). Those rows
+  // are provably complete only when counts is present AND counts.open (the
+  // team-wide active count: open + in_progress) <= the rows loaded; while the
+  // active scope is truncated the rows miss tasks, so no per-project count
+  // is shown at all (never a wrong one).
   const activeCounts = useMemo(() => {
-    if (counts === null || counts.total > allTasks.length) return null;
+    if (counts === null || counts.open > openTasks.length) return null;
     const map = new Map<string, number>();
-    for (const t of allTasks) {
-      if (t.status === "open" || t.status === "in_progress") {
-        map.set(t.projectId, (map.get(t.projectId) ?? 0) + 1);
-      }
+    for (const t of openTasks) {
+      map.set(t.projectId, (map.get(t.projectId) ?? 0) + 1);
     }
     return map;
-  }, [allTasks, counts]);
+  }, [openTasks, counts]);
 
   if (loading) {
     return <FullPageLoader variant="shell" label="Loading your tasks" />;
@@ -431,8 +475,8 @@ export default function HomeDashboardPage() {
   // ── Ordered scope list (D1/D3) ───────────────────────────────
   // Single source of truth for BOTH the stat strip and the widget grid:
   // each surface below renders this list, in this order, and nothing
-  // else. D1 (operator-decided): My Tasks, Priority, Backlog, Open
-  // Tasks, In Review, Recently Done. To reorder either surface, reorder
+  // else. D1 (operator-decided): My Tasks, Priority, Backlog, Active
+  // Tasks, In Review, Done. To reorder either surface, reorder
   // this array; do not add a second, independently-ordered list. hrefs,
   // counts, and empty states are carried over unchanged from before.
   const homeScopes: HomeScope[] = [
@@ -450,7 +494,7 @@ export default function HomeDashboardPage() {
           title="Nothing assigned to you."
           action={
             <Button href={`/tasks?teamId=${teamId}&scope=open`} variant="ghost" size="sm">
-              Browse open tasks
+              Browse active tasks
             </Button>
           }
         />
@@ -482,15 +526,15 @@ export default function HomeDashboardPage() {
     {
       key: "open",
       scope: "open",
-      statLabel: "Open",
-      widgetTitle: "Open Tasks",
+      statLabel: "Active",
+      widgetTitle: "Active Tasks",
       count: counts?.open ?? openTasks.length,
       tasks: openTasks,
       total: counts?.open,
       href: `/tasks?teamId=${teamId}&scope=open`,
       emptyState: (
         <EmptyState
-          title="No open tasks."
+          title="No active tasks."
           action={
             <Button href={`/tasks?teamId=${teamId}&scope=all`} variant="ghost" size="sm">
               View all tasks
@@ -513,8 +557,8 @@ export default function HomeDashboardPage() {
     {
       key: "done",
       scope: "done",
-      statLabel: "Recently Done",
-      widgetTitle: "Recently Done",
+      statLabel: DONE_LABEL,
+      widgetTitle: DONE_LABEL,
       count: counts?.doneRecent ?? recentlyDone.length,
       tasks: recentlyDone,
       // total = the server's recent (<=14d) done count; olderCount = the >14d count.
@@ -523,7 +567,7 @@ export default function HomeDashboardPage() {
       total: counts?.doneRecent ?? recentlyDone.length,
       href: `/tasks?teamId=${teamId}&scope=done`,
       olderCount: olderDoneCount,
-      emptyState: <EmptyState title="No tasks completed in the last 14 days." />,
+      emptyState: <EmptyState title={`No tasks completed in the last ${DONE_RECENT_DAYS} days.`} />,
     },
   ];
 
@@ -596,25 +640,24 @@ export default function HomeDashboardPage() {
             {projectsStrip}
             {statStrip}
 
-            {/* Stale-warning slot: always present (reserves space, prevents layout jump).
-                Visibility controlled by staleWarning state. */}
+            {/* Stale-warning slot: the live region is always mounted so the
+                warning is announced when it appears; the banner itself (and its
+                role="alert") exists only while the warning is active. */}
             <div
               className={["home-stale-slot", staleWarning ? "" : "home-stale-slot--hidden"].filter(Boolean).join(" ")}
               aria-live="polite"
             >
-              <AlertBanner
-                tone="warning"
-                onDismiss={staleWarning ? () => setStaleWarning(false) : undefined}
-              >
-                Last update failed; showing the most recent data.
-              </AlertBanner>
+              {staleWarning && (
+                <AlertBanner tone="warning" onDismiss={() => setStaleWarning(false)}>
+                  Last update failed; showing the most recent data.
+                </AlertBanner>
+              )}
             </div>
 
             {/* Widgets: same six scopes as the stat strip above, rendered
                 from the same `homeScopes` list in the same D1 order (My
-                Tasks, Priority, Backlog, Open Tasks, In Review, Recently
-                Done) -- see the comment at homeScopes for the ordering
-                rule. */}
+                Tasks, Priority, Backlog, Active Tasks, In Review, Done) --
+                see the comment at homeScopes for the ordering rule. */}
             <div className="home-widgets-grid">
               {homeScopes.map((s) => (
                 <TaskWidget

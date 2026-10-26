@@ -3814,6 +3814,7 @@ html[data-theme="light"] {
 .home-projects-all {
   font-size: var(--text-xs);
   flex-shrink: 0;
+  color: var(--primary-text);
 }
 
 /* One line: wraps without page scroll, items never stretch below content */
@@ -3887,15 +3888,10 @@ html[data-theme="light"] {
   gap: var(--space-2);
 }
 
-/* Title link takes remaining width, single line with ellipsis */
-.home-widget-title-link {
+/* Plain-text title takes the remaining width, single line with ellipsis */
+.home-widget-title {
   flex: 1;
   min-width: 0;
-  text-decoration: none;
-  color: inherit;
-}
-
-.home-widget-title {
   font-size: var(--text-base);
   font-weight: 600;
   overflow: hidden;
@@ -3965,7 +3961,7 @@ html[data-theme="light"] {
 /* External-ref / PR chip (mono, accent tint) */
 .home-task-row-ref {
   font-size: var(--text-xs);
-  color: var(--primary);
+  color: var(--primary-text);
   background: var(--primary-muted);
   border-radius: var(--radius-sm);
   padding: 0.05rem 0.3rem;
@@ -3973,6 +3969,11 @@ html[data-theme="light"] {
   font-family: var(--font-mono, monospace);
   max-width: 6rem;
   overflow: hidden;
+  /* Truncate from the start: the end of a ref (its number) tells refs apart.
+     The element is rtl so the ellipsis lands on the left; the <bdi> inside
+     keeps the text itself in reading order. */
+  direction: rtl;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
