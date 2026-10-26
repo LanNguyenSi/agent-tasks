@@ -213,6 +213,15 @@ describe("AppHeader team switcher", () => {
     expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false"]);
   });
 
+  it("ends the team menu with a + New team link to the create form", () => {
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch team, current team Team One" }));
+    const link = within(screen.getByRole("menu", { name: "Teams" })).getByRole("menuitem", {
+      name: "+ New team",
+    });
+    expect(link.getAttribute("href")).toBe("/onboarding?create=team");
+  });
+
   it("follows the current-team rule: ?teamId, then the remembered team, then the first", () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
     const { unmount } = render(<AppHeader user={USER} teams={[T1, T2]} />);
@@ -370,19 +379,20 @@ describe("AppHeader avatar menu", () => {
       .map((el) => [el.textContent, el.getAttribute("href")]);
   }
 
-  it("with a team: Settings, Team settings, Logout (no Create a team)", () => {
+  it("with a team: Settings, Team settings, New team, Logout (no Create a team)", () => {
     render(<AppHeader user={USER} teams={[T1]} />);
     const menu = openMenu();
     expect(entries(menu)).toEqual([
       ["Settings", "/settings"],
       ["Team settings", "/settings/team?teamId=t1"],
+      ["New team", "/onboarding?create=team"],
       ["Logout", null],
     ]);
   });
 
   it("with 2 teams: same entries as with one", () => {
     render(<AppHeader user={USER} teams={[T1, T2]} />);
-    expect(entries(openMenu()).map((e) => e[0])).toEqual(["Settings", "Team settings", "Logout"]);
+    expect(entries(openMenu()).map((e) => e[0])).toEqual(["Settings", "Team settings", "New team", "Logout"]);
   });
 
   it("with no team: Settings, Create a team (to /onboarding), Logout; no Team settings", () => {

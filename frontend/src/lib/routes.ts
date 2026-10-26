@@ -39,6 +39,14 @@ export function projectHubHref(projectId: string, tab?: ProjectHubTab): string {
   return tab ? `/projects/${projectId}/${tab}` : `/projects/${projectId}`;
 }
 
+/**
+ * The create-team form for a user who may already have a team. The `create`
+ * flag keeps /onboarding from sending a user with a team on to /home.
+ */
+export function newTeamHref(): string {
+  return "/onboarding?create=team";
+}
+
 export function settingsHref(): string {
   return "/settings";
 }

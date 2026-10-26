@@ -27,7 +27,8 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import OnboardingPage from "../../src/app/onboarding/page";
-import { getCurrentUser, getProjects, getTeams } from "../../src/lib/api";
+import { createTeam, getCurrentUser, getProjects, getTeams } from "../../src/lib/api";
+import { fireEvent } from "@testing-library/react";
 
 const USER = { id: "u-1", login: "lan", name: "Lan", avatarUrl: null } as User;
 const TEAM = { id: "t1", name: "Pandora", slug: "pandora", role: "ADMIN", createdAt: "x" } as Team;
@@ -37,7 +38,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getCurrentUser).mockResolvedValue(USER);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.history.replaceState(null, "", "/");
+});
 
 function setAccess(teams: Team[], shared: Project[]) {
   vi.mocked(getTeams).mockResolvedValue(teams);
@@ -90,5 +94,51 @@ describe("/onboarding", () => {
     render(<OnboardingPage />);
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
     expect(getTeams).not.toHaveBeenCalled();
+  });
+});
+
+describe("/onboarding?create=team", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/onboarding?create=team");
+  });
+
+  it("a user with a team gets the create form and is not sent to /home", async () => {
+    setAccess([TEAM], [SHARED]);
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    expect(screen.getByRole("heading", { name: "Create a new team" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Cancel" }).getAttribute("href")).toBe("/home");
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("creating calls the create-team API, remembers the team and opens its Home", async () => {
+    setAccess([TEAM], []);
+    vi.mocked(createTeam).mockResolvedValue({ ...TEAM, id: "t2", name: "Second", slug: "second" });
+    render(<OnboardingPage />);
+    fireEvent.change(await screen.findByLabelText("Team name"), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Team" }));
+    await waitFor(() =>
+      expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t2"),
+    );
+    expect(createTeam).toHaveBeenCalledWith({ name: "Second", slug: "second" });
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
+  });
+
+  it("a failed create shows the error and stays on the form", async () => {
+    setAccess([TEAM], []);
+    vi.mocked(createTeam).mockRejectedValue(new Error("slug taken"));
+    render(<OnboardingPage />);
+    fireEvent.change(await screen.findByLabelText("Team name"), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Team" }));
+    await screen.findByText("slug taken");
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("without the flag a user with a team is still redirected", async () => {
+    window.history.replaceState(null, "", "/onboarding?create=other");
+    setAccess([TEAM], []);
+    render(<OnboardingPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
   });
 });

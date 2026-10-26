@@ -100,7 +100,12 @@ export default function SettingsPage() {
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            setActiveSection(entry.target.id);
+            // At the top of the page the first section is current, even when
+            // a later section already sits inside the observed band (the
+            // first callback fires for it on load).
+            setActiveSection(
+              window.scrollY <= 0 ? SECTIONS[0]!.id : entry.target.id,
+            );
           }
         }
       },
@@ -151,12 +156,14 @@ export default function SettingsPage() {
             <a
               href="#account"
               className={`settings-side-nav-link${activeSection === "account" ? " settings-side-nav-link--active" : ""}`}
+              aria-current={activeSection === "account" ? "location" : undefined}
             >
               Account
             </a>
             <a
               href="#appearance"
               className={`settings-side-nav-link${activeSection === "appearance" ? " settings-side-nav-link--active" : ""}`}
+              aria-current={activeSection === "appearance" ? "location" : undefined}
             >
               Appearance
             </a>
@@ -164,12 +171,14 @@ export default function SettingsPage() {
             <a
               href="#github"
               className={`settings-side-nav-link${activeSection === "github" ? " settings-side-nav-link--active" : ""}`}
+              aria-current={activeSection === "github" ? "location" : undefined}
             >
               GitHub
             </a>
             <a
               href="#delegation"
               className={`settings-side-nav-link${activeSection === "delegation" ? " settings-side-nav-link--active" : ""}`}
+              aria-current={activeSection === "delegation" ? "location" : undefined}
             >
               Agent Permissions
             </a>
@@ -177,6 +186,7 @@ export default function SettingsPage() {
             <a
               href="#team"
               className={`settings-side-nav-link${activeSection === "team" ? " settings-side-nav-link--active" : ""}`}
+              aria-current={activeSection === "team" ? "location" : undefined}
             >
               Team settings
             </a>
