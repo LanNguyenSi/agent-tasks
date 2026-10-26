@@ -65,9 +65,11 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
  * navigation target (open-redirect guard). `raw` is the value as
  * `URLSearchParams.get` returns it (decoded once); a repeated parameter
  * (array), `null` or `undefined` is rejected. It returns `raw` unchanged when
- * it is `/tasks` or `/tasks?...` and its fully decoded form carries no `//`,
- * no backslash and no control character; otherwise `null`. Never returns the
- * decoded form, since decoding again would corrupt `%`-escapes in the query. */
+ * it is `/tasks` or `/tasks?...` and its form after one further
+ * `decodeURIComponent` carries no `//`, no backslash and no control character;
+ * otherwise `null`. The pattern is tested on the raw value on purpose, so the
+ * path cannot be reached through an escape. Never returns the decoded form,
+ * since decoding again would corrupt `%`-escapes in the query. */
 export function safeBackHref(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   if (!BACK_HREF_PATTERN.test(raw)) return null;
