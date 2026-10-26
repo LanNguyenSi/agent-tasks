@@ -54,8 +54,10 @@ export function apiTokensSettingsHref(): string {
   return teamSettingsHref("api-tokens");
 }
 
+/** SSO sub-page under team settings. The old `/settings/sso` URL redirects
+ * here (next.config.mjs redirects), query included. */
 export function ssoSettingsHref(): string {
-  return "/settings/sso";
+  return "/settings/team/sso";
 }
 
 /** Full-page task detail: `/tasks/<id>`. With `from` (an in-app list URL such

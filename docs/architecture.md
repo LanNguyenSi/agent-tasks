@@ -148,7 +148,7 @@ agent-tasks/
 | `/projects/[id]/workflow` | Workflow editor (states, transitions, agent instructions) |
 | `/settings` | Personal settings: account, appearance, GitHub connection, agent permissions |
 | `/settings/team` | Team settings: API tokens (Connect an agent, create, rename, revoke) and the Enterprise SSO entry |
-| `/settings/sso` | Team OIDC SSO connection |
+| `/settings/team/sso` | Team OIDC SSO connection; the old `/settings/sso` redirects here |
 | `/invite/[token]` | Accept a project share |
 | `/docs` | Interactive Swagger UI (served by backend) |
 

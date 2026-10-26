@@ -523,7 +523,7 @@ export async function discoverSso(email: string): Promise<SsoDiscoverResult | nu
 }
 
 // SSO admin endpoints are token-gated (AgentToken with sso:admin scope) and
-// called directly from /settings/sso with a user-supplied token — they are
+// called directly from /settings/team/sso with a user-supplied token — they are
 // intentionally NOT exposed through this session-authed api.ts client.
 
 // ── Projects ──────────────────────────────────────────────────────────────────

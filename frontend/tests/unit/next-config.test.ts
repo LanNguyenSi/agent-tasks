@@ -1,9 +1,10 @@
 /**
- * next.config.mjs -- the legacy `/teams` -> `/projects` redirect rule
- * (UI/IA stage 3). The rule object itself is pinned here; the query-string
- * passthrough Next applies to a destination without its own query
- * (`/teams?teamId=t1` -> `Location: /projects?teamId=t1`) is a property of
- * Next's redirect handling and is proven against `next start` with
+ * next.config.mjs -- the legacy-URL redirects of the UI/IA restructure
+ * (stage 3): `/teams` -> `/projects` and `/settings/sso` ->
+ * `/settings/team/sso`. The rule objects themselves are pinned here; the
+ * query-string passthrough Next applies to a destination without its own
+ * query (`/teams?teamId=t1` -> `Location: /projects?teamId=t1`) is a property
+ * of Next's redirect handling and is proven against `next start` with
  * `curl -sI` (see the task record). Importing the config follows the
  * pattern in csp.test.ts.
  */
@@ -23,7 +24,17 @@ describe("next.config.mjs redirects", () => {
     expect(rule).toMatchObject({ destination: "/projects", permanent: false });
   });
 
-  it("redirects /teams exactly, leaving /teams/<rest> (e.g. /teams/tokens) alone", async () => {
+  it("redirects the legacy /settings/sso URL to /settings/team/sso", async () => {
+    const redirects = (await nextConfig.redirects!()) as RedirectRule[];
+    const rule = redirects.find((r) => r.source === "/settings/sso");
+    expect(rule).toBeDefined();
+    expect(rule).toMatchObject({
+      destination: "/settings/team/sso",
+      permanent: false,
+    });
+  });
+
+  it("redirects /teams and /settings/sso exactly, leaving subpaths (e.g. /teams/tokens) alone", async () => {
     const redirects = (await nextConfig.redirects!()) as RedirectRule[];
     // A source without a trailing wildcard or :param captures matches the
     // path exactly; a rule that would also swallow /teams/tokens is a bug.
