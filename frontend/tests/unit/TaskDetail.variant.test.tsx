@@ -98,9 +98,9 @@ describe("TaskDetail — variant", () => {
   // The admin controls must render in the MODAL variant (the operator's
   // primary surface), gated by isProjectAdmin. These assert the COMPONENT
   // contract for the modal variant; the board page's threading of the admin
-  // role (the project's accessRole gates the effective-workflow fetch) is
-  // covered in DashboardNewTaskEntryPoints.test.tsx, so a silent revert of
-  // that wiring is not caught here.
+  // role into the modal is covered in DashboardNewTaskEntryPoints.test.tsx
+  // (the override control appears for admin roles only), so a silent revert
+  // of that wiring is not caught here.
   it("modal variant shows the admin status-override control when isProjectAdmin", () => {
     render(
       <TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin />,

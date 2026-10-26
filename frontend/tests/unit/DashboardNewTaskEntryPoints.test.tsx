@@ -379,4 +379,39 @@ describe("board admin workflow edges", () => {
       expect(mockGetEffectiveWorkflow).not.toHaveBeenCalled();
     },
   );
+
+  // The board threads the project's accessRole into TaskDetail as
+  // isProjectAdmin; the modal's status-override control is the visible
+  // result (TaskDetail.variant.test.tsx covers the component side).
+  describe("task modal admin override", () => {
+    async function openModal(role: string) {
+      mockGetEffectiveWorkflow.mockResolvedValue({
+        definition: { transitions: [{ from: "open", to: "in_progress" }] },
+      } as unknown as Awaited<ReturnType<typeof getEffectiveWorkflow>>);
+      mockGetProject.mockResolvedValue({ ...PROJECT, accessRole: role });
+      mockGetTasks.mockResolvedValue([TASK]);
+      mockGetTask.mockResolvedValue(TASK);
+      window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+      renderBoard();
+      await screen.findByRole("dialog");
+    }
+
+    it.each(["ADMIN", "PROJECT_ADMIN"])("shows the status-override control to a %s", async (role) => {
+      await openModal(role);
+      expect(
+        await screen.findByRole("combobox", { name: "Change task status (admin override)" }),
+      ).toBeInTheDocument();
+    });
+
+    it.each(["HUMAN_MEMBER", "PROJECT_CONTRIBUTOR", "PROJECT_VIEWER"])(
+      "does not show the status-override control to a %s",
+      async (role) => {
+        await openModal(role);
+        expect(await screen.findByRole("button", { name: "Change status" })).toBeDisabled();
+        expect(
+          screen.queryByRole("combobox", { name: "Change task status (admin override)" }),
+        ).toBeNull();
+      },
+    );
+  });
 });

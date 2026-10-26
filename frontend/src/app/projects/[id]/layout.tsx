@@ -13,10 +13,12 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
-import { getProject, type Project } from "../../../lib/api";
+import { ApiRequestError, getProject, type Project } from "../../../lib/api";
 import { boardHref, projectsHref } from "../../../lib/routes";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../components/projects/ProjectSubnav";
+import AlertBanner from "../../../components/ui/AlertBanner";
+import { Button } from "../../../components/ui/Button";
 
 const GOV_LABELS: Record<string, string> = {
   REQUIRES_DISTINCT_REVIEWER: "Dual-control",
@@ -32,17 +34,28 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
 
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
     void (async () => {
       try {
         const proj = await getProject(projectId);
         if (!cancelled) setProject(proj);
-      } catch {
-        // Inaccessible project: back to the Projects page. Not boardHref():
-        // its bare /dashboard resumes the last board, which may be this one.
-        if (!cancelled) router.replace(projectsHref());
+      } catch (err) {
+        if (cancelled) return;
+        // Missing or not accessible (404/403): back to the Projects page.
+        // Not boardHref(): its bare /dashboard resumes the last board, which
+        // may be this one. Any other failure (500, network, 401) is not
+        // proof the project is gone, so stay and show the error instead.
+        if (err instanceof ApiRequestError && (err.status === 403 || err.status === 404)) {
+          router.replace(projectsHref());
+        } else {
+          setLoadError((err as Error).message || "Could not load the project");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -50,7 +63,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [projectId, router]);
+  }, [projectId, router, reloadKey]);
 
   const govLabel = project?.governanceMode
     ? GOV_LABELS[project.governanceMode]
@@ -115,7 +128,27 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
       {/* The board keeps the full-width canvas its column breakpoints
           (.db-board, viewport media queries) are written for; the
           1200px content container would squeeze its five columns. */}
-      {segment === "board" ? children : <div className="proj-hub-content">{children}</div>}
+      {segment === "board" ? (
+        // The board runs its own project load and shows its own error banner
+        // with Retry, so a failed hub load never replaces it.
+        children
+      ) : loadError ? (
+        <div className="proj-hub-content">
+          <AlertBanner tone="danger" title="Could not load project">
+            {loadError}
+          </AlertBanner>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="db-retry-btn"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : (
+        <div className="proj-hub-content">{children}</div>
+      )}
     </>
   );
 }

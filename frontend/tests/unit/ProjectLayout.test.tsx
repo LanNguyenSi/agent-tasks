@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import type { Project } from "../../src/lib/api";
+import userEvent from "@testing-library/user-event";
+import { ApiRequestError, type Project } from "../../src/lib/api";
 
 const nav = vi.hoisted(() => ({
   router: { replace: vi.fn(), push: vi.fn() },
@@ -21,7 +22,10 @@ vi.mock("next/navigation", () => ({
   useSelectedLayoutSegment: () => nav.segment,
 }));
 
-vi.mock("../../src/lib/api", () => ({ getProject: vi.fn() }));
+vi.mock("../../src/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("../../src/lib/api")>("../../src/lib/api");
+  return { ...actual, getProject: vi.fn() };
+});
 
 import ProjectLayout from "../../src/app/projects/[id]/layout";
 import { getProject } from "../../src/lib/api";
@@ -43,10 +47,49 @@ beforeEach(() => {
 });
 
 describe("project hub layout", () => {
-  it("sends an inaccessible project to the Projects page", async () => {
-    mockGetProject.mockRejectedValue(new Error("Access denied"));
+  it.each([
+    [404, "not_found"],
+    [403, "forbidden"],
+  ])("sends a project that answers %i to the Projects page", async (status, code) => {
+    mockGetProject.mockRejectedValue(new ApiRequestError(code, "nope", status));
     renderLayout("board");
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/teams"));
+    expect(nav.router.replace).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a 500", new ApiRequestError("internal", "Server exploded", 500)],
+    ["a 401", new ApiRequestError("unauthorized", "Not signed in", 401)],
+    ["a network failure", new TypeError("Failed to fetch")],
+  ])("does not redirect on %s", async (_label, err) => {
+    mockGetProject.mockRejectedValue(err);
+    renderLayout("members");
+    expect(await screen.findByText("Could not load project")).toBeInTheDocument();
+    expect(nav.router.replace).not.toHaveBeenCalled();
+  });
+
+  it("shows a Retry on a non-board tab that reloads the project", async () => {
+    mockGetProject.mockRejectedValueOnce(new ApiRequestError("internal", "Server exploded", 500));
+    renderLayout("settings");
+    expect(await screen.findByText("Server exploded")).toBeInTheDocument();
+    expect(screen.queryByText("tab body")).not.toBeInTheDocument();
+    expect(screen.getByText("Server exploded").closest(".proj-hub-content")).not.toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Project One" })).toBeInTheDocument();
+    expect(screen.queryByText("Could not load project")).not.toBeInTheDocument();
+    expect(screen.getByText("tab body")).toBeInTheDocument();
+    expect(mockGetProject).toHaveBeenCalledTimes(2);
+    expect(nav.router.replace).not.toHaveBeenCalled();
+  });
+
+  it("renders the board child instead of the hub error on a failed load", async () => {
+    mockGetProject.mockRejectedValue(new ApiRequestError("internal", "Server exploded", 500));
+    renderLayout("board");
+    expect(await screen.findByText("tab body")).toBeInTheDocument();
+    await waitFor(() => expect(mockGetProject).toHaveBeenCalled());
+    expect(screen.queryByText("Could not load project")).not.toBeInTheDocument();
+    expect(nav.router.replace).not.toHaveBeenCalled();
   });
 
   it("renders the board outside the hub content container", async () => {
