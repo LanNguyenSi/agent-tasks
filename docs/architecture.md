@@ -138,7 +138,6 @@ agent-tasks/
 | `/onboarding` | First team creation; optional (a "Skip for now" link) when you already have shared projects |
 | `/home` | Signed-in start page: the team's tasks across projects; without a team, the projects shared with you |
 | `/projects` | Projects list (project management, GitHub sync); `?teamId=<id>` pre-selects a team |
-| `/dashboard` | Legacy: redirects to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/projects` |
 | `/tasks` | Task list |
 | `/tasks/[id]` | Task detail |
 | `/projects/[id]` | Legacy hub root: redirects to `/projects/<id>/board`, query kept |
@@ -152,4 +151,4 @@ agent-tasks/
 | `/invite/[token]` | Accept a project share |
 | `/docs` | Interactive Swagger UI (served by backend) |
 
-Legacy redirects: `/teams?teamId=<id>` goes to `/projects?teamId=<id>` (a `next.config.mjs` redirect, query string preserved), `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, `/teams/tokens` goes to `/settings/team`, and the old `/settings#api-tokens` and `/settings#sso` anchors are forwarded client-side to `/settings/team#api-tokens` and `/settings/team#sso`. `/dev/ui` is a developer component gallery.
+Legacy redirects: `/dashboard` goes to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/projects`; `/teams?teamId=<id>` goes to `/projects?teamId=<id>` and `/settings/sso` goes to `/settings/team/sso` (both `next.config.mjs` redirects, query string preserved); `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, `/teams/tokens` goes to `/settings/team`, and the old `/settings#api-tokens` and `/settings#sso` anchors are forwarded client-side to `/settings/team#api-tokens` and `/settings/team#sso`. `/dev/ui` is a developer component gallery.
