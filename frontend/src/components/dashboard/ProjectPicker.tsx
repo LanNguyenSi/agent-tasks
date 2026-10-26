@@ -1,9 +1,9 @@
 "use client";
 
-// Project picker: renders as the PageHeader H1 (a button with chevron that
-// opens a DropdownMenu of projects). The current project name is displayed
-// inline; the Settings / Members / Workflow links are exposed in the
-// companion overflow DropdownMenu rendered by the parent.
+// Project picker: the project name in the project hub band's breadcrumb
+// (a button with chevron that opens a DropdownMenu of projects). Choosing a
+// project keeps the current hub tab; the tabs themselves live in
+// ProjectSubnav.
 //
 // Geometry in .db-proj-switch and related classes in globals.css.
 
