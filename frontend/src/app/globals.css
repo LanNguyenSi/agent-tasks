@@ -6137,32 +6137,7 @@ a.proj-chip:hover {
   white-space: nowrap;
 }
 
-/* ── Overview page ────────────────────────────────────────────── */
-
-/* Status count strip */
-.proj-stat-row {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-4);
-}
-
-.proj-stat {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-base);
-}
-
-.proj-stat-count {
-  font-size: var(--text-md);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
+/* ── Project hub metadata (Settings > General card) ───────────── */
 
 /* Metadata key-value grid */
 .proj-overview-grid {
@@ -6190,13 +6165,6 @@ a.proj-chip:hover {
 .proj-meta-value {
   font-size: var(--text-sm);
   color: var(--text);
-}
-
-/* Quick-action link row below the metadata card */
-.proj-overview-actions {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
 /* ── Workflow editor v2 ────────────────────────────────────────── */

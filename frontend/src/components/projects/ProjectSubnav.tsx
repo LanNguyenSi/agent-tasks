@@ -14,13 +14,12 @@ interface ProjectSubnavProps {
 
 interface Tab {
   label: string;
-  /** Path segment after /projects/[id]. null = overview (the hub root). */
-  segment: ProjectHubTab | null;
+  /** Path segment after /projects/[id]. */
+  segment: ProjectHubTab;
 }
 
 const TABS: Tab[] = [
   { label: "Board", segment: "board" },
-  { label: "Overview", segment: null },
   { label: "Members", segment: "members" },
   { label: "Workflow", segment: "workflow" },
   { label: "Settings", segment: "settings" },
@@ -28,18 +27,15 @@ const TABS: Tab[] = [
 
 export default function ProjectSubnav({ projectId }: ProjectSubnavProps) {
   const pathname = usePathname();
-  const base = projectHubHref(projectId);
 
   return (
     <nav className="proj-subnav" aria-label="Project sections">
       {TABS.map((tab) => {
-        const href = projectHubHref(projectId, tab.segment ?? undefined);
-        // Overview is an exact match; other tabs (Board included) use prefix
-        // match so nested routes (e.g. /settings/something) stay highlighted.
-        const isActive =
-          tab.segment === null
-            ? pathname === base || pathname === `${base}/`
-            : pathname === href || pathname.startsWith(`${href}/`);
+        const href = projectHubHref(projectId, tab.segment);
+        // Prefix match so nested routes (e.g. /settings/something) stay
+        // highlighted. The hub root itself (/projects/[id]) has no tab: it
+        // redirects to the board before this row ever shows there.
+        const isActive = pathname === href || pathname.startsWith(`${href}/`);
         return (
           <Link
             key={tab.label}

@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 /**
- * ProjectSubnav: the project hub tab row, with Board as its first tab now
- * that the board lives at /projects/<id>/board. Pins tab order, each tab's
- * href, and which tab is marked current for a given pathname.
+ * ProjectSubnav: the project hub tab row — Board, Members, Workflow,
+ * Settings, the Overview tab having been dropped (the hub root redirects to
+ * the board). Pins tab order, each tab's href, and which tab is marked
+ * current for a given pathname.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
@@ -32,25 +33,25 @@ beforeEach(() => {
 });
 
 describe("ProjectSubnav", () => {
-  it("lists Board, Overview, Members, Workflow, Settings with their hub hrefs", () => {
+  it("lists Board, Members, Workflow, Settings with their hub hrefs and no Overview", () => {
     const tabs = renderAt("/projects/p1/board");
     expect(
       tabs.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")]),
     ).toEqual([
       ["Board", "/projects/p1/board"],
-      ["Overview", "/projects/p1"],
       ["Members", "/projects/p1/members"],
       ["Workflow", "/projects/p1/workflow"],
       ["Settings", "/projects/p1/settings"],
     ]);
+    expect(tabs.queryByText("Overview")).not.toBeInTheDocument();
   });
 
   it("marks only Board current on the board", () => {
     expect(currentTabs(renderAt("/projects/p1/board"))).toEqual(["Board"]);
   });
 
-  it("marks only Overview current on the hub root", () => {
-    expect(currentTabs(renderAt("/projects/p1"))).toEqual(["Overview"]);
+  it("marks no tab current on the hub root (it redirects to the board)", () => {
+    expect(currentTabs(renderAt("/projects/p1"))).toEqual([]);
   });
 
   it("keeps a tab current on its nested routes", () => {
