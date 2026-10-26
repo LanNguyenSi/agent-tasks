@@ -44,3 +44,41 @@ export function apiTokensSettingsHref(): string {
 export function ssoSettingsHref(): string {
   return "/settings/sso";
 }
+
+/** Full-page task detail: `/tasks/<id>`. With `from` (an in-app list URL such
+ * as `/tasks?scope=open`) the page links back to it: `from` is passed through
+ * `encodeURIComponent` so its own query survives as one parameter. The reader
+ * is `safeBackHref`, which must be the only consumer of `from`. Without `from`
+ * the result is the bare `/tasks/<id>` the old template produced. */
+export function taskHref(taskId: string, params: { from?: string } = {}): string {
+  return params.from
+    ? `/tasks/${taskId}?from=${encodeURIComponent(params.from)}`
+    : `/tasks/${taskId}`;
+}
+
+// Anchored at both ends: only `/tasks` itself or `/tasks?<query>` passes, so a
+// scheme, a host, `/tasks/..`, `/tasksX` or a fragment cannot match.
+const BACK_HREF_PATTERN = /^\/tasks(\?[^#]*)?$/;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/** Validates the `from` value `/tasks/[id]` receives before it is used as a
+ * navigation target (open-redirect guard). `raw` is the value as
+ * `URLSearchParams.get` returns it (decoded once); a repeated parameter
+ * (array), `null` or `undefined` is rejected. It returns `raw` unchanged when
+ * it is `/tasks` or `/tasks?...` and its fully decoded form carries no `//`,
+ * no backslash and no control character; otherwise `null`. Never returns the
+ * decoded form, since decoding again would corrupt `%`-escapes in the query. */
+export function safeBackHref(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  if (!BACK_HREF_PATTERN.test(raw)) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  if (decoded.includes("//")) return null;
+  if (decoded.includes("\\")) return null;
+  if (CONTROL_CHARS.test(decoded)) return null;
+  return raw;
+}
