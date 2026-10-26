@@ -1,11 +1,11 @@
 /**
- * The single current-team rule for the app pages (/home, /tasks, /teams).
+ * The single current-team rule for the app pages (/home, /tasks, /projects).
  *
  * One team is "current" per user. The precedence is:
  *
  *   1. the team named by `?teamId` in the page URL (explicit navigation wins);
  *   2. the team id remembered in localStorage under `agent-tasks:lastTeamId`
- *      (written by rememberTeam, same key the /teams switcher always used);
+ *      (written by rememberTeam, same key the Projects page switcher always used);
  *   3. the first team of the list;
  *   4. `null` when the user has no teams at all (callers redirect to
  *      /onboarding in that case).

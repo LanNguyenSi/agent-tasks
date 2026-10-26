@@ -2224,7 +2224,7 @@ input[type="checkbox"] {
   text-decoration: none;
 }
 
-/* Monospace table cell (e.g. the /teams repo column). */
+/* Monospace table cell (e.g. the projects list repo column). */
 .table-cell-mono {
   font-family: var(--font-mono, monospace);
 }
