@@ -469,7 +469,7 @@ export default function SettingsPage() {
                 <p className="settings-section-desc">
                   Configure OpenID Connect so members of your team can sign in with their
                   company identity provider (Okta, Azure AD, Google Workspace, Auth0,
-                  Keycloak, and others). Gated by an AgentToken with the{" "}
+                  Keycloak, and others). Gated by an API token with the{" "}
                   <code>sso:admin</code> scope -- not by your normal session -- so stolen
                   browser sessions cannot touch SSO config. Generate a token under{" "}
                   <a href="#api-tokens" className="settings-inline-link">
@@ -574,7 +574,7 @@ export default function SettingsPage() {
                     (() => {
                       const adminTitle = isTeamAdmin
                         ? undefined
-                        : "Only team admins can generate agent tokens";
+                        : "Only team admins can generate API tokens";
                       return (
                         <div className="settings-tokens-actions">
                           <Button
@@ -723,10 +723,10 @@ export default function SettingsPage() {
                     {tokens.map((token, i) => {
                       const renameTitle = isTeamAdmin
                         ? undefined
-                        : "Only team admins can rename agent tokens";
+                        : "Only team admins can rename API tokens";
                       const revokeTitle = isTeamAdmin
                         ? undefined
-                        : "Only team admins can revoke agent tokens";
+                        : "Only team admins can revoke API tokens";
                       return (
                         <div
                           key={token.id}
@@ -792,7 +792,7 @@ export default function SettingsPage() {
       <Modal
         open={showCreate && teams.length > 0}
         onClose={() => setShowCreate(false)}
-        title="Create Agent Token"
+        title="Create API Token"
       >
         <form onSubmit={(e) => void handleCreate(e)}>
           <div className="settings-create-token-form">
@@ -872,7 +872,7 @@ export default function SettingsPage() {
           setError(null);
           setRenameTarget(null);
         }}
-        title={renameTarget ? `Rename "${renameTarget.name}"` : "Rename Agent Token"}
+        title={renameTarget ? `Rename "${renameTarget.name}"` : "Rename API Token"}
       >
         <form onSubmit={(e) => void handleConfirmRename(e)}>
           <div className="settings-create-token-form">

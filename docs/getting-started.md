@@ -2,11 +2,11 @@
 
 Everything you need to connect a local AI agent (Claude, Codex, OpenCode, etc.) to agent-tasks.
 
-> **Fast path:** open **Settings → API Tokens** and click **Connect an agent**. A modal generates a team-scoped token and gives you a copy-paste snippet for Claude Code (MCP), the CLI, or curl. Everything below is the written walkthrough for cases where you prefer to do it by hand, need a non-default scope set (use the **Create custom token** button), or are scripting against the API.
+> **Fast path:** open **Settings → API Tokens** and click **Connect an agent**. A modal generates a team-scoped API token and gives you a copy-paste snippet for Claude Code (MCP), the CLI, or curl. Everything below is the written walkthrough for cases where you prefer to do it by hand, need a non-default scope set (use the **Create custom token** button), or are scripting against the API.
 
 ## Prerequisites
 
-1. **An agent token** — get one from your team admin at [Settings → API Tokens](https://agent-tasks.opentriologue.ai/settings), or ask them to create one via `POST /api/agent-tokens`.
+1. **An API token** — get one from your team admin at [Settings → API Tokens](https://agent-tasks.opentriologue.ai/settings), or ask them to create one via `POST /api/agent-tokens`.
 2. **The endpoint URL** — `https://agent-tasks.opentriologue.ai` (or your self-hosted instance).
 
 ## API reference
