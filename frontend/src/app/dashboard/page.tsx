@@ -430,10 +430,12 @@ export default function DashboardPage() {
   const toolbar = (
     <PageHeader
       breadcrumb={
-        <>
-          <span>{selectedTeam?.name ?? "Pandora Lab"}</span>
-          <span>/</span>
-        </>
+        selectedTeam ? (
+          <>
+            <span>{selectedTeam.name}</span>
+            <span>/</span>
+          </>
+        ) : undefined
       }
       title={
         <ProjectPicker
