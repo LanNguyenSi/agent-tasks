@@ -6,8 +6,15 @@
  * the forward entries (like `history.replaceState`), and `nav.back()` /
  * `nav.forward()` stand in for the browser buttons. Every component reading
  * `usePathname` / `useSearchParams` re-renders on a change; both ignore a
- * `#hash`. It does not model the real router's asynchronous transitions,
- * prefetching or scrolling: a navigation here is synchronous.
+ * `#hash`. It does not model prefetching or scrolling, and by default a
+ * navigation is synchronous.
+ *
+ * `nav.deferNavigations()` switches on the one asynchronous trait of the app
+ * router the pages depend on: a `router.push` / `router.replace` stays
+ * pending until `nav.settle()`, and a newer navigation dispatched before then
+ * discards the pending one (Next's action queue marks it discarded and runs
+ * the newer one), so only the newest pending navigation is applied.
+ * `FakeLink` stands in for `next/link`: a click is a `router.push(href)`.
  *
  * Usage (the factory import keeps the module instance shared with the test):
  *
@@ -17,13 +24,26 @@
  *   });
  *   import { nav, router } from "../setup/fakeNavigation";
  *
- * Call `nav.reset("/home")` in beforeEach; wrap `nav.back()` and friends in
- * `act(...)`.
+ * and, for link clicks,
+ *
+ *   vi.mock("next/link", async () => ({ default: (await import("../setup/fakeNavigation")).FakeLink }));
+ *
+ * Call `nav.reset("/home")` in beforeEach; wrap `nav.back()`, `nav.settle()`
+ * and friends in `act(...)`.
  */
-import { useMemo, useSyncExternalStore } from "react";
+import { createElement, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { vi } from "vitest";
 
-const state = { stack: ["/"], index: 0 };
+interface PendingNavigation {
+  kind: "push" | "replace";
+  url: string;
+}
+const state = {
+  stack: ["/"],
+  index: 0,
+  deferred: false,
+  pending: null as PendingNavigation | null,
+};
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -48,6 +68,23 @@ export const nav = {
   reset(url: string): void {
     state.stack = [url];
     state.index = 0;
+    state.deferred = false;
+    state.pending = null;
+  },
+  /** Hold every router navigation pending until `settle()`; a newer one
+   * discards the pending one. Cleared by `reset`. */
+  deferNavigations(): void {
+    state.deferred = true;
+  },
+  /** Apply the pending navigation, if any (the newest one dispatched). */
+  settle(): void {
+    const pending = state.pending;
+    state.pending = null;
+    if (pending) nav[pending.kind](pending.url);
+  },
+  /** The URL of the pending navigation, or null. */
+  get pending(): string | null {
+    return state.pending?.url ?? null;
   },
   push(url: string): void {
     state.stack = [...state.stack.slice(0, state.index + 1), url];
@@ -83,9 +120,19 @@ export const nav = {
   },
 };
 
+/** A router navigation: applied at once, or (deferred mode) held pending,
+ * replacing and so discarding any navigation still pending. */
+function navigate(kind: PendingNavigation["kind"], url: string): void {
+  if (state.deferred) {
+    state.pending = { kind, url };
+    return;
+  }
+  nav[kind](url);
+}
+
 export const router = {
-  push: vi.fn((url: string) => nav.push(url)),
-  replace: vi.fn((url: string) => nav.replace(url)),
+  push: vi.fn((url: string) => navigate("push", url)),
+  replace: vi.fn((url: string) => navigate("replace", url)),
   back: vi.fn(() => nav.back()),
   forward: vi.fn(() => nav.forward()),
 };
@@ -107,4 +154,32 @@ export function useSearchParams(): URLSearchParams {
     () => "",
   );
   return useMemo(() => new URLSearchParams(query), [query]);
+}
+
+/** Stand-in for `next/link`: an anchor whose click is a client navigation
+ * (`router.push(href)`), like the real Link's. */
+export function FakeLink({
+  href,
+  children,
+  onClick,
+  ...rest
+}: {
+  href: string;
+  children?: ReactNode;
+  onClick?: (e: { preventDefault(): void }) => void;
+  [attr: string]: unknown;
+}) {
+  return createElement(
+    "a",
+    {
+      ...rest,
+      href,
+      onClick: (e: { preventDefault(): void }) => {
+        onClick?.(e);
+        e.preventDefault();
+        router.push(href);
+      },
+    },
+    children,
+  );
 }

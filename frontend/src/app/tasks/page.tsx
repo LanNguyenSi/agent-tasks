@@ -200,15 +200,25 @@ function TasksPageInner() {
   // No team but shared projects: cross-project tasks need a team, so the page
   // explains that instead of redirecting to onboarding.
   const [noTeam, setNoTeam] = useState(false);
-  // Tagged with its team like the list (null: no error).
+  // Tagged with its team like the list (null: no error). Dismissing the
+  // banner keeps the error and only marks it dismissed: the failed load is
+  // still the outcome for this team, so the page does not fall back to its
+  // loading state while no request is in flight.
   const [fetchErrorState, setFetchErrorState] = useState<{
     teamId: string;
     message: string;
+    dismissed?: boolean;
   } | null>(null);
-  const fetchError =
-    fetchErrorState && fetchErrorState.teamId === selectedTeamId ? fetchErrorState.message : null;
+  const teamFetchError =
+    fetchErrorState && fetchErrorState.teamId === selectedTeamId ? fetchErrorState : null;
+  // The banner's message: the current team's error unless dismissed.
+  const fetchError = teamFetchError && !teamFetchError.dismissed ? teamFetchError.message : null;
   // The current team has neither a list nor an error yet.
-  const awaitingTeamPage = selectedTeamId !== null && teamPage === null && fetchError === null;
+  const awaitingTeamPage = selectedTeamId !== null && teamPage === null && teamFetchError === null;
+  // The count, the New task button and its C shortcut wait for the current
+  // team's list: before it exists the page would claim "0 tasks", and the
+  // create flow "No projects yet", for a team that has both.
+  const teamDataReady = teamPage !== null;
   const [isFetching, setIsFetching] = useState(false);
   // Incrementing retryToken forces the fetch effect to re-run without
   // changing any real filter params — used by the "Retry" button and to
@@ -394,13 +404,16 @@ function TasksPageInner() {
         e.preventDefault();
         searchInputRef.current?.focus();
       } else if (e.key === "c" || e.key === "C") {
+        // Like the New task button: no create flow before the current
+        // team's projects are known.
+        if (!teamDataReady) return;
         e.preventDefault();
         setNewTaskOpen(true);
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [newTaskOpen]);
+  }, [newTaskOpen, teamDataReady]);
 
   // Snap page back when the URL page overshoots the filtered set.
   useEffect(() => {
@@ -537,6 +550,15 @@ function TasksPageInner() {
     (searchQuery.trim() ? 1 : 0) +
     (mineSource === "url" ? 1 : 0);
 
+  // "<n> tasks" only once the current team's list exists; the filter count
+  // does not depend on it.
+  const summaryParts = [
+    teamDataReady ? `${totalCount} task${totalCount === 1 ? "" : "s"}` : null,
+    activeFilterCount > 0
+      ? `${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"}`
+      : null,
+  ].filter((part): part is string => part !== null);
+
   const scopeTabs = (Object.keys(SCOPE_TAB_LABELS) as Scope[]).map((s) => ({
     value: s,
     label: SCOPE_TAB_LABELS[s],
@@ -602,11 +624,9 @@ function TasksPageInner() {
       <PageHeader
         title={SCOPE_LABELS[scope]}
         summary={
-          <span className="num">
-            {totalCount} task{totalCount === 1 ? "" : "s"}
-            {activeFilterCount > 0 &&
-              ` · ${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"}`}
-          </span>
+          summaryParts.length > 0 ? (
+            <span className="num">{summaryParts.join(" · ")}</span>
+          ) : undefined
         }
       >
         {/* Search with "/" shortcut */}
@@ -643,7 +663,12 @@ function TasksPageInner() {
         )}
 
         {/* New task primary button — opens the in-place create flow */}
-        <Button size="sm" onClick={() => setNewTaskOpen(true)} keyHint="C">
+        <Button
+          size="sm"
+          onClick={() => setNewTaskOpen(true)}
+          keyHint="C"
+          disabled={!teamDataReady}
+        >
           <Icon name="plus" size={13} />
           New task
         </Button>
@@ -773,7 +798,9 @@ function TasksPageInner() {
           <AlertBanner
             tone="danger"
             title="Failed to load tasks"
-            onDismiss={() => setFetchErrorState(null)}
+            onDismiss={() =>
+              setFetchErrorState((s) => (s ? { ...s, dismissed: true } : s))
+            }
           >
             {fetchError}
             <div>

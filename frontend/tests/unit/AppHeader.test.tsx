@@ -51,7 +51,11 @@ describe("AppHeader nav", () => {
     render(<AppHeader user={USER} teams={[T1]} />);
     const links = within(nav()).getAllByRole("link");
     expect(links.map((a) => a.textContent)).toEqual(["Home", "Projects", "Tasks"]);
-    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/home", "/projects", "/tasks"]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/home?teamId=t1",
+      "/projects?teamId=t1",
+      "/tasks?teamId=t1",
+    ]);
     expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
     // Settings left the nav bar for the avatar menu (menu is closed here).
     expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
@@ -95,6 +99,79 @@ describe("AppHeader nav", () => {
     for (const a of Array.from(nav().children)) {
       expect(a.classList.contains("app-nav-link")).toBe(true);
     }
+  });
+});
+
+describe("AppHeader nav and brand links carry the team the header shows", () => {
+  /** [brand, Home, Projects, Tasks] hrefs. */
+  function hrefs(): (string | null)[] {
+    const brand = screen.getByRole("link", { name: "agent-tasks" });
+    return [brand, ...within(nav()).getAllByRole("link")].map((a) => a.getAttribute("href"));
+  }
+  const withTeam = (id: string) => [
+    `/home?teamId=${id}`,
+    `/home?teamId=${id}`,
+    `/projects?teamId=${id}`,
+    `/tasks?teamId=${id}`,
+  ];
+  const BARE = ["/home", "/home", "/projects", "/tasks"];
+
+  it("with one team: its id", () => {
+    render(<AppHeader user={USER} teams={[T1]} />);
+    expect(hrefs()).toEqual(withTeam("t1"));
+  });
+
+  it("with two teams: the team ?teamId names", () => {
+    navState.search = "teamId=t2";
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    expect(hrefs()).toEqual(withTeam("t2"));
+  });
+
+  it("with two teams and no ?teamId (a direct entry): the remembered team the header shows", () => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    expect(screen.getByRole("button", { name: /current team Team Two/ })).toBeInTheDocument();
+    expect(hrefs()).toEqual(withTeam("t2"));
+  });
+
+  it("with two teams, ?teamId naming none of them: the first team the header falls back to", () => {
+    navState.search = "teamId=ghost";
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    expect(hrefs()).toEqual(withTeam("t1"));
+  });
+
+  it("on a route outside the sections (a project board): the team the header shows", () => {
+    navState.pathname = "/projects/p1/board";
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    expect(hrefs()).toEqual(withTeam("t2"));
+  });
+
+  it("follow a pick at once, while ?teamId still names the old team", () => {
+    navState.pathname = "/settings";
+    navState.search = "teamId=t1";
+    render(<AppHeader user={USER} teams={[T1, T2]} />);
+    fireEvent.click(screen.getByRole("button", { name: /Switch team/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Team Two" }));
+    expect(hrefs()).toEqual(withTeam("t2"));
+  });
+
+  it("stay bare with 0 teams", () => {
+    render(<AppHeader user={USER} teams={[]} />);
+    expect(hrefs()).toEqual(BARE);
+  });
+
+  it("stay bare while the team list is unknown (not loaded, or failed)", () => {
+    const { rerender } = render(<AppHeader user={USER} />);
+    expect(hrefs()).toEqual(BARE);
+    rerender(<AppHeader user={USER} teams={null} />);
+    expect(hrefs()).toEqual(BARE);
+  });
+
+  it("stay bare while the team list is unknown even when ?teamId names a team", () => {
+    navState.search = "teamId=t1";
+    render(<AppHeader user={USER} teams={null} />);
+    expect(hrefs()).toEqual(BARE);
   });
 });
 

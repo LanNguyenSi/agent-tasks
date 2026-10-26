@@ -5,8 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout, type Team } from "../lib/api";
 import { rememberTeam } from "../lib/currentTeam";
-import { projectsHref, settingsHref, teamSettingsHref } from "../lib/routes";
-import { teamSwitchHref, useResolvedTeam } from "../lib/teamSwitch";
+import { settingsHref, teamSettingsHref } from "../lib/routes";
+import { sectionHref, teamSwitchHref, useResolvedTeam } from "../lib/teamSwitch";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
 
@@ -57,6 +57,11 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   // of the caller's teams. Picking it changes nothing; picking any other team,
   // including one shown only through the remembered-team fallback, switches.
   const urlTeam = teams?.find((t) => t.id === targetTeamId) ?? null;
+  // The nav and brand links carry the team the header shows, so the page
+  // they open already names its team and never writes it into the URL (that
+  // write is a navigation and would cancel a click on another section made
+  // while the page loads). Bare while the header knows no team.
+  const navTeamId = currentTeam?.id ?? null;
 
   // Opening the team menu puts focus on the checked (current) team. The
   // DropdownMenu focuses its first item in a zero-delay timeout from its own
@@ -84,7 +89,7 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   return (
     <header className="app-header">
       <div className="app-header-inner">
-        <Link href="/home" className="app-brand" aria-label="agent-tasks">
+        <Link href={sectionHref("home", navTeamId)} className="app-brand" aria-label="agent-tasks">
           <Icon name="board" size={15} />
           <span className="app-brand-text">agent-tasks</span>
         </Link>
@@ -139,21 +144,21 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
 
         <nav className="app-nav-links" aria-label="Main">
           <Link
-            href="/home"
+            href={sectionHref("home", navTeamId)}
             className="app-nav-link"
             aria-current={isHome ? "page" : undefined}
           >
             Home
           </Link>
           <Link
-            href={projectsHref()}
+            href={sectionHref("projects", navTeamId)}
             className="app-nav-link"
             aria-current={isProjects ? "page" : undefined}
           >
             Projects
           </Link>
           <Link
-            href="/tasks"
+            href={sectionHref("tasks", navTeamId)}
             className="app-nav-link"
             aria-current={isTasks ? "page" : undefined}
           >

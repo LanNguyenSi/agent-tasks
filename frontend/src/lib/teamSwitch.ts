@@ -12,12 +12,34 @@
  * entry). From then on the page and the header read the same `?teamId`, so
  * neither decides from the remembered team (localStorage), which another tab
  * can change at any time.
+ *
+ * The header's nav and brand links carry the team the header shows
+ * (`sectionHref`), so a page reached through them already names its team
+ * and does not write the URL; the write is left to entries that name no
+ * team (a typed URL, a bookmark, an external link, an in-app link without
+ * `?teamId`). This matters because the write is a navigation: in the app
+ * router a newer navigation discards one that is still pending, so a write
+ * made while the user's click on another section is still loading cancels
+ * that click.
  */
 
 import { useEffect, useMemo, useRef } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { rememberTeam, resolveCurrentTeam } from "./currentTeam";
 import { projectsHref, teamSettingsHref } from "./routes";
+
+export type NavSection = "home" | "projects" | "tasks";
+
+/**
+ * The root of a main-nav section (`/home`, `/projects`, `/tasks`), with
+ * `?teamId=` when a team is given. Without one (empty or absent) it is the
+ * bare root.
+ */
+export function sectionHref(section: NavSection, teamId?: string | null): string {
+  if (section === "projects") return projectsHref({ teamId: teamId ?? undefined });
+  const root = section === "home" ? "/home" : "/tasks";
+  return teamId ? `${root}?teamId=${teamId}` : root;
+}
 
 /**
  * Where a switch to `teamId` lands, given the current path: the root of the
@@ -27,13 +49,13 @@ import { projectsHref, teamSettingsHref } from "./routes";
  */
 export function teamSwitchHref(pathname: string, teamId: string): string | null {
   if (pathname === "/home" || pathname.startsWith("/home/")) {
-    return `/home?teamId=${teamId}`;
+    return sectionHref("home", teamId);
   }
   if (pathname === "/tasks" || pathname.startsWith("/tasks/")) {
-    return `/tasks?teamId=${teamId}`;
+    return sectionHref("tasks", teamId);
   }
   if (pathname === "/projects" || pathname.startsWith("/projects/")) {
-    return projectsHref({ teamId });
+    return sectionHref("projects", teamId);
   }
   if (pathname === "/settings/team" || pathname.startsWith("/settings/team/")) {
     return `${teamSettingsHref()}?teamId=${teamId}`;

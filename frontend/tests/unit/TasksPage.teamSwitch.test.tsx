@@ -116,6 +116,22 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function newTaskButton(): HTMLElement {
+  return screen.getByRole("button", { name: /New task/ });
+}
+
+/** The page header's summary ("<n> tasks · <m> filters"), or null. */
+function summaryText(): string | null {
+  return document.querySelector(".page-header-summary")?.textContent ?? null;
+}
+
+/** Press a page shortcut key the way the page listens for it. */
+function pressKey(key: string) {
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+}
+
 /** The project names the open create flow offers. */
 function offeredProjects(): string[] {
   return within(screen.getByRole("list", { name: "New task projects" }))
@@ -219,13 +235,16 @@ describe("/tasks: nothing of the team that was left shows under the new team", (
     expect(screen.queryByText("Alpha only task")).not.toBeInTheDocument();
     expect(screen.getAllByText("Loading tasks").length).toBeGreaterThan(0);
     expect(screen.queryByRole("option", { name: "Alpha project" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /New task/ }));
-    expect(offeredProjects()).toEqual([]);
+    // The create flow waits for Team Two's projects.
+    expect(newTaskButton()).toBeDisabled();
+    fireEvent.click(newTaskButton());
+    expect(screen.queryByRole("list", { name: "New task projects" })).not.toBeInTheDocument();
 
     await act(async () => {
       pendingB.resolve(result("Beta only task", "Beta project"));
     });
     expect((await screen.findAllByText("Beta only task")).length).toBeGreaterThan(0);
+    fireEvent.click(newTaskButton());
     expect(offeredProjects()).toEqual(["Beta project"]);
   });
 
@@ -245,8 +264,9 @@ describe("/tasks: nothing of the team that was left shows under the new team", (
     expect(screen.queryByText("Alpha only task")).not.toBeInTheDocument();
     expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Alpha project" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /New task/ }));
-    expect(offeredProjects()).toEqual([]);
+    expect(newTaskButton()).toBeDisabled();
+    fireEvent.click(newTaskButton());
+    expect(screen.queryByRole("list", { name: "New task projects" })).not.toBeInTheDocument();
     expect(headerTeam()).toBe("Team Two");
   });
 
@@ -318,5 +338,136 @@ describe("/tasks: nothing of the team that was left shows under the new team", (
 
     expect(screen.queryByText("Action failed")).not.toBeInTheDocument();
     expect(screen.queryByText("demote failed late")).not.toBeInTheDocument();
+  });
+});
+
+describe("/tasks: the count and New task wait for the current team's list", () => {
+  beforeEach(() => {
+    nav.reset("/tasks?teamId=t1");
+  });
+
+  it("while the list is pending: no task count, New task disabled, C opens nothing", async () => {
+    const pending = deferred<TeamTasksResult>();
+    vi.mocked(getTeamTasks).mockReturnValue(pending.promise);
+    render(<TasksPage />);
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("t1", expect.anything()));
+
+    expect(screen.queryByText(/\d+ tasks?$/)).not.toBeInTheDocument();
+    expect(summaryText()).toBeNull();
+    expect(newTaskButton()).toBeDisabled();
+    pressKey("c");
+    expect(screen.queryByRole("list", { name: "New task projects" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      pending.resolve(result("Alpha only task", "Alpha project"));
+    });
+    expect(await screen.findByText("1 task")).toBeInTheDocument();
+    expect(newTaskButton()).toBeEnabled();
+    pressKey("c");
+    expect(offeredProjects()).toEqual(["Alpha project"]);
+  });
+
+  it("while the list is pending the summary still counts the active filters, without a task count", async () => {
+    nav.reset("/tasks?teamId=t1&q=marker");
+    const pending = deferred<TeamTasksResult>();
+    vi.mocked(getTeamTasks).mockReturnValue(pending.promise);
+    render(<TasksPage />);
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalled());
+
+    expect(summaryText()).toBe("1 filter");
+
+    await act(async () => {
+      pending.resolve(result("Alpha only task"));
+    });
+    await waitFor(() => expect(summaryText()).toBe("1 task · 1 filter"));
+  });
+
+  it("after the list failed to load: no task count, New task disabled, C opens nothing", async () => {
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("team one is down"));
+    render(<TasksPage />);
+    expect(await screen.findByText("team one is down")).toBeInTheDocument();
+
+    expect(screen.queryByText(/\d+ tasks?$/)).not.toBeInTheDocument();
+    expect(summaryText()).toBeNull();
+    expect(newTaskButton()).toBeDisabled();
+    pressKey("C");
+    expect(screen.queryByRole("list", { name: "New task projects" })).not.toBeInTheDocument();
+  });
+
+  it("a failed refresh of a list already shown keeps its count and New task", async () => {
+    render(<TasksPage />);
+    expect(await screen.findByText("1 task")).toBeInTheDocument();
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("refresh failed"));
+
+    // The search box refetches the same team's list.
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search tasks" }), {
+      target: { value: "x" },
+    });
+    expect(await screen.findByText("refresh failed")).toBeInTheDocument();
+
+    expect(summaryText()).toBe("1 task · 1 filter");
+    expect(newTaskButton()).toBeEnabled();
+  });
+});
+
+describe("/tasks: dismissing a load error", () => {
+  it("without a list for the team shows no loading state and starts no request", async () => {
+    nav.reset("/tasks?teamId=t1");
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("team one is down"));
+    render(<TasksPage />);
+    expect(await screen.findByText("team one is down")).toBeInTheDocument();
+    const calls = vi.mocked(getTeamTasks).mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByText("team one is down")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument();
+    expect(document.querySelector(".tasks-table-region")).not.toHaveAttribute("aria-busy");
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(newTaskButton()).toBeDisabled();
+    expect(vi.mocked(getTeamTasks).mock.calls.length).toBe(calls);
+  });
+
+  it("with the team's list on screen keeps the rows and their count", async () => {
+    nav.reset("/tasks?teamId=t1");
+    render(<TasksPage />);
+    await screen.findAllByText("Alpha only task");
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("refresh failed"));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search tasks" }), {
+      target: { value: "x" },
+    });
+    expect(await screen.findByText("refresh failed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByText("refresh failed")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Alpha only task").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument();
+  });
+
+  it("a later failed load of the same team shows the banner again, and Retry loads", async () => {
+    nav.reset("/tasks?teamId=t1");
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("team one is down"));
+    render(<TasksPage />);
+    expect(await screen.findByText("team one is down")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("team one is down")).not.toBeInTheDocument();
+
+    // A new failure (here through a filter change) is a new outcome.
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("still down"));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search tasks" }), {
+      target: { value: "x" },
+    });
+    expect(await screen.findByText("still down")).toBeInTheDocument();
+
+    const retry = deferred<TeamTasksResult>();
+    vi.mocked(getTeamTasks).mockReturnValue(retry.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // A request is in flight now: the loading state is real.
+    expect(screen.getAllByText("Loading tasks").length).toBeGreaterThan(0);
+    await act(async () => {
+      retry.resolve(result("Alpha only task"));
+    });
+    expect((await screen.findAllByText("Alpha only task")).length).toBeGreaterThan(0);
   });
 });
