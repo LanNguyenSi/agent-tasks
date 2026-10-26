@@ -1,22 +1,37 @@
 "use client";
 
 // Hub layout for /projects/[id]/* routes.
-// Fetches the project once (name, slug, githubRepo, governanceMode) and renders:
-//   1. A compact project identity header (name H1, slug chip, repo chip, gov badge).
-//   2. ProjectSubnav tab row (Board | Overview | Members | Workflow | Settings).
-//   3. {children} wrapped in a content container (the board excepted, see below).
+// Fetches the project once (name, slug, githubRepo, governanceMode) and renders
+// one header band:
+//   1. The crumb `Projects / <project name> v`: the name is a picker over the
+//      current team's projects (the shared projects for a user without a
+//      team); choosing one opens the same tab of that project.
+//   2. A compact project identity row (name H1, slug chip, repo chip, gov badge).
+//   3. ProjectSubnav tab row (Board | Overview | Members | Workflow | Settings).
+//   4. {children} wrapped in a content container (the board excepted, see
+//      below); the board adds its toolbar directly below the band.
 //
-// Child pages no longer render their own project heading; this layout owns it.
+// Child pages render no project heading of their own; this layout owns the
+// page's only H1.
 // Geometry in .proj-hub-* / .proj-subnav-* in globals.css.
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
-import { ApiRequestError, getProject, type Project } from "../../../lib/api";
-import { boardHref, projectsHref } from "../../../lib/routes";
+import {
+  ApiRequestError,
+  getProject,
+  getProjects,
+  getTeams,
+  type Project,
+  type Team,
+} from "../../../lib/api";
+import { resolveCurrentTeam } from "../../../lib/currentTeam";
+import { projectHubHref, projectsHref, type ProjectHubTab } from "../../../lib/routes";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../components/projects/ProjectSubnav";
+import ProjectPicker, { type ProjectOption } from "../../../components/dashboard/ProjectPicker";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 
@@ -36,6 +51,9 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // The picker's list. Empty until it loads or when it fails: the picker then
+  // offers the current project alone (see `pickerProjects`).
+  const [siblings, setSiblings] = useState<ProjectOption[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,32 +83,77 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
     };
   }, [projectId, router, reloadKey]);
 
+  // Picker source. A member of the project's team lists that team's projects.
+  // Anyone else (a per-project share) lists their current team's projects, or,
+  // with no team at all, only the projects shared with them: the call without
+  // a teamId. Both listings carry the projects shared with the caller.
+  // Best effort: a failure leaves the picker with the current project only.
+  const projectTeamId = project?.teamId;
+  useEffect(() => {
+    if (!projectTeamId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const teams = await getTeams().catch((): Team[] => []);
+        const scopeTeamId = teams.some((t) => t.id === projectTeamId)
+          ? projectTeamId
+          : resolveCurrentTeam(teams, { urlTeamId: null })?.id;
+        const list = await getProjects(scopeTeamId);
+        if (!cancelled) {
+          setSiblings(
+            list.map((p) => ({ id: p.id, name: p.name, accessSource: p.accessSource })),
+          );
+        }
+      } catch {
+        if (!cancelled) setSiblings([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectTeamId]);
+
+  const pickerProjects: ProjectOption[] = project
+    ? siblings.some((p) => p.id === project.id)
+      ? siblings
+      : [{ id: project.id, name: project.name, accessSource: project.accessSource }, ...siblings]
+    : [];
+
+  // Choosing a project keeps the tab (board, members, ...); the hub root
+  // (Overview) has no segment.
+  function switchProject(nextId: string) {
+    router.push(projectHubHref(nextId, (segment as ProjectHubTab | null) ?? undefined));
+  }
+
   const govLabel = project?.governanceMode
     ? GOV_LABELS[project.governanceMode]
     : null;
 
-  // This project's board. Until the project is loaded, the bare /dashboard
-  // link (resumes the last board) keeps the row height stable.
-  const dashboardHref = project
-    ? boardHref({ teamId: project.teamId, projectId: project.id })
-    : boardHref();
+  // The Projects page of this project's team. Until the project is loaded the
+  // plain Projects link keeps the row height stable.
+  const crumbHref = project ? projectsHref({ teamId: project.teamId }) : projectsHref();
 
   return (
     <>
       <div className="proj-hub-header">
         <nav className="proj-hub-breadcrumb" aria-label="Breadcrumb">
-          <Link href={dashboardHref}>Dashboard</Link>
+          <Link href={crumbHref}>Projects</Link>
           {project && (
             <>
               <span aria-hidden="true">/</span>
               <span className="proj-hub-breadcrumb-current" aria-current="page">
-                {project.name}
+                <ProjectPicker
+                  projects={pickerProjects}
+                  selectedProjectId={project.id}
+                  onSelect={switchProject}
+                />
               </span>
             </>
           )}
         </nav>
         {loading ? (
           <div className="proj-hub-title-row">
+            <h1 className="sr-only">Project</h1>
             <Skeleton
               width={200}
               height="1.25rem"
@@ -105,7 +168,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
         ) : project ? (
           <div className="proj-hub-title-row">
             <h1 className="proj-hub-name">{project.name}</h1>
-            <span className="proj-chip">{project.slug}</span>
+            <span className="proj-chip"><span className="proj-chip-text">{project.slug}</span></span>
             {project.githubRepo && (
               <a
                 href={`https://github.com/${project.githubRepo}`}
@@ -113,14 +176,16 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
                 rel="noopener noreferrer"
                 className="proj-chip"
               >
-                {project.githubRepo}
+                <span className="proj-chip-text">{project.githubRepo}</span>
               </a>
             )}
             {govLabel && (
               <span className="proj-gov-badge">{govLabel}</span>
             )}
           </div>
-        ) : null}
+        ) : (
+          <h1 className="sr-only">Project</h1>
+        )}
       </div>
 
       <ProjectSubnav projectId={projectId} />
