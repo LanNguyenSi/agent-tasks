@@ -768,7 +768,8 @@ export const openApiSpec = {
             in: "query",
             required: false,
             schema: { type: "string", format: "uuid" },
-            description: "Optional for agents, required for humans.",
+            description:
+              "Optional. Humans in several teams must pass it; humans with no team get only the projects shared with them.",
           },
         ],
         responses: {
