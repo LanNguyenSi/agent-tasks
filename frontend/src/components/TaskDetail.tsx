@@ -211,6 +211,9 @@ export interface TaskDetailProps {
   teamId?: string;
   projectName?: string;
   projectId?: string;
+  /** Validated list URL the page was opened from; adds a "Tasks" breadcrumb
+   * crumb (page variant only). */
+  backHref?: string | null;
 }
 
 export default function TaskDetail({
@@ -237,6 +240,7 @@ export default function TaskDetail({
   teamId,
   projectName,
   projectId,
+  backHref,
 }: TaskDetailProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
@@ -729,6 +733,7 @@ export default function TaskDetail({
       teamId={teamId}
       projectName={projectName}
       projectId={projectId}
+      backHref={backHref}
       isEditing={isEditing}
       advanceBusy={advanceBusy}
       onStartEditing={startEditing}
@@ -1378,6 +1383,8 @@ export default function TaskDetail({
           actions={editFooter}
           headerActions={
             !isEditing ? (
+              // Deliberately no `from`: the modal is opened from the board, so
+              // the full page keeps its board fallback.
               <Link
                 href={`/tasks/${task.id}`}
                 className="modal-maximize"

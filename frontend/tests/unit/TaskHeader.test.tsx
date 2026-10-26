@@ -32,7 +32,7 @@
  *     10-character minimum.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import TaskHeader, { type StatusOverrideResult } from "../../src/components/task-detail/TaskHeader";
@@ -411,7 +411,7 @@ describe("TaskHeader breadcrumb board links", () => {
   // Pins the boardHref truth table at the breadcrumb call site: the team
   // crumb links to that team's Projects page, the project crumb to the
   // project's board, and no crumbs render without a teamId.
-  function renderWithCrumb(overrides: { teamId?: string; projectId?: string }) {
+  function renderWithCrumb(overrides: { teamId?: string; projectId?: string; backHref?: string | null }) {
     render(
       <TaskHeader
         task={makeTask({})}
@@ -421,6 +421,7 @@ describe("TaskHeader breadcrumb board links", () => {
         teamName="Example Team"
         projectId={overrides.projectId}
         projectName="Backend"
+        backHref={overrides.backHref}
         isEditing={false}
         advanceBusy={false}
         onStartEditing={vi.fn()}
@@ -462,5 +463,27 @@ describe("TaskHeader breadcrumb board links", () => {
   it("renders no breadcrumb without a teamId", () => {
     renderWithCrumb({ projectId: "p-9" });
     expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+  });
+
+  it("starts the breadcrumb with a Tasks crumb linking to the valid back URL", () => {
+    renderWithCrumb({ teamId: "t-9", projectId: "p-9", backHref: "/tasks?scope=open&q=a%20b" });
+    const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
+    const links = within(nav).getAllByRole("link");
+    expect(links[0]).toHaveTextContent("Tasks");
+    expect(links[0]).toHaveAttribute("href", "/tasks?scope=open&q=a%20b");
+    // The team and project crumbs keep pointing at the board.
+    expect(screen.getByRole("link", { name: "Backend" })).toHaveAttribute(
+      "href",
+      "/projects/p-9/board",
+    );
+  });
+
+  it("renders no Tasks crumb without a back URL (absent, null or empty)", () => {
+    for (const backHref of [undefined, null, ""]) {
+      cleanup();
+      renderWithCrumb({ teamId: "t-9", projectId: "p-9", backHref });
+      expect(screen.queryByRole("link", { name: "Tasks" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Backend" })).toBeInTheDocument();
+    }
   });
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
   getTeams,
@@ -14,6 +14,7 @@ import {
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
+import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
@@ -180,6 +181,7 @@ function StatTile({
 
 export default function HomeDashboardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [, setFirstProjectId] = useState<string | null>(null);
@@ -206,10 +208,15 @@ export default function HomeDashboardPage() {
       const teams = await getTeams();
       if (teams.length === 0) { router.replace("/onboarding"); return; }
 
-      const team = teams[0]!;
+      // Single current-team rule: ?teamId -> remembered team -> first team.
+      const urlTeamId = searchParams.get("teamId");
+      const team = resolveCurrentTeam(teams, { urlTeamId })!; // non-empty list
+      if (team.id === urlTeamId) rememberTeam(team.id);
       setSelectedTeam(team);
       setLoading(false);
     })();
+    // searchParams.get is stable within the render; we only bootstrap once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   useEffect(() => {

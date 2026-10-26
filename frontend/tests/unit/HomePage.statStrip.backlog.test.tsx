@@ -27,6 +27,7 @@ import type { User, Team, Task, TeamTasksProject, TeamTasksCounts } from "../../
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
+  useSearchParams: () => new URLSearchParams(""),
 }));
 
 vi.mock("../../src/lib/api", () => ({

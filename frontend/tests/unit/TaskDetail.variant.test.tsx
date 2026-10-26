@@ -6,7 +6,7 @@
  * maximize link to the page; the page renders no dialog and no maximize.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../src/lib/api", () => ({
@@ -93,6 +93,32 @@ describe("TaskDetail — variant", () => {
     expect(screen.queryByRole("link", { name: "Open as full page" })).toBeNull();
     // The shared detail body still renders (the task title is shown).
     expect(screen.getByText("Fix the thing")).toBeInTheDocument();
+  });
+
+  it("page variant passes backHref through as the first breadcrumb crumb", () => {
+    render(
+      <TaskDetail
+        variant="page"
+        task={makeTask({ id: "task-9" })}
+        {...baseProps}
+        teamId="team-1"
+        teamName="Pandora"
+        backHref="/tasks?scope=open"
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(nav).getAllByRole("link")[0]).toHaveAttribute("href", "/tasks?scope=open");
+    expect(within(nav).getAllByRole("link")[0]).toHaveTextContent("Tasks");
+  });
+
+  it("the modal maximize link never carries a from, even when a back URL is passed", () => {
+    render(
+      <TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} backHref="/tasks?scope=open" />,
+    );
+    expect(screen.getByRole("link", { name: "Open as full page" })).toHaveAttribute(
+      "href",
+      "/tasks/task-9",
+    );
   });
 
   // The admin controls must render in the MODAL variant (the operator's
