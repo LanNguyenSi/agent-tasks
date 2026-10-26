@@ -13,6 +13,7 @@ import {
   type User,
 } from "../../lib/api";
 import { boardHref } from "../../lib/routes";
+import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { KeyHint } from "../../components/ui/KeyHint";
@@ -242,8 +243,10 @@ function TasksPageInner() {
         const fetchedTeams = await getTeams();
         if (fetchedTeams.length === 0) { router.replace("/onboarding"); return; }
         setTeams(fetchedTeams);
-        const team =
-          fetchedTeams.find((t) => t.id === searchParams.get("teamId")) ?? fetchedTeams[0]!;
+        // Single current-team rule: ?teamId -> remembered team -> first team.
+        const urlTeamId = searchParams.get("teamId");
+        const team = resolveCurrentTeam(fetchedTeams, { urlTeamId })!; // non-empty list
+        if (team.id === urlTeamId) rememberTeam(team.id);
         setSelectedTeam(team);
         setLoading(false);
       } catch (err) {
@@ -255,10 +258,13 @@ function TasksPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // Keep selectedTeam in sync when the teamId param changes after bootstrap.
+  // Keep selectedTeam in sync when the teamId param changes after bootstrap
+  // (same current-team rule as the bootstrap above).
   useEffect(() => {
     if (teams.length === 0) return;
-    setSelectedTeam(teams.find((t) => t.id === teamIdParam) ?? teams[0]!);
+    const team = resolveCurrentTeam(teams, { urlTeamId: teamIdParam })!; // non-empty list
+    if (team.id === teamIdParam) rememberTeam(team.id);
+    setSelectedTeam(team);
   }, [teams, teamIdParam]);
 
   // Re-sync the search box when the URL query changes from outside.

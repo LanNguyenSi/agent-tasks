@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
   getTeams,
@@ -22,6 +22,7 @@ import {
   resolveInitialView,
   type TeamsViewMode,
 } from "../../lib/teamsPrefs";
+import { rememberTeam, resolveCurrentTeam } from "../../lib/currentTeam";
 import { boardHref, settingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
@@ -172,6 +173,7 @@ function ProjectRowActions({
 
 export default function TeamsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -230,12 +232,10 @@ export default function TeamsPage() {
       }
       setTeams(userTeams);
 
-      const lastTeamId =
-        typeof window !== "undefined"
-          ? window.localStorage.getItem("agent-tasks:lastTeamId")
-          : null;
-      const initialTeam =
-        userTeams.find((t) => t.id === lastTeamId) ?? userTeams[0]!;
+      // Single current-team rule: ?teamId -> remembered team -> first team.
+      const urlTeamId = searchParams.get("teamId");
+      const initialTeam = resolveCurrentTeam(userTeams, { urlTeamId })!; // non-empty list
+      if (initialTeam.id === urlTeamId) rememberTeam(initialTeam.id);
       setSelectedTeam(initialTeam);
       setLoading(false);
 
@@ -249,6 +249,8 @@ export default function TeamsPage() {
         setProjectsLoading(false);
       }
     })();
+    // searchParams.get is stable within the render; we only bootstrap once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // Read the persisted explicit choice once on the client (SSR-safe). Applying
@@ -303,8 +305,7 @@ export default function TeamsPage() {
     const team = teams.find((t) => t.id === teamId);
     if (!team) return;
     setSelectedTeam(team);
-    if (typeof window !== "undefined")
-      window.localStorage.setItem("agent-tasks:lastTeamId", teamId);
+    rememberTeam(teamId);
     void loadProjects(teamId);
   }
 
