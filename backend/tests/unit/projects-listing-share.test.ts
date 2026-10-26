@@ -26,7 +26,11 @@ vi.mock("../../src/services/team-access.js", () => ({
   hasProjectAccess: vi.fn(),
   getProjectMembership: vi.fn(),
   resolveTeamId: vi.fn().mockResolvedValue({ ok: true, teamId: "team-A" }),
-  resolveTeamIdErrorBody: vi.fn(),
+  resolveTeamIdErrorBody: vi.fn((r: { code: string; message: string; teamIds?: string[] }) => ({
+    error: r.code,
+    message: r.message,
+    ...(r.teamIds ? { teamIds: r.teamIds } : {}),
+  })),
 }));
 
 vi.mock("../../src/services/audit.js", () => ({
@@ -38,6 +42,7 @@ vi.mock("../../src/services/board-default.js", () => ({
 }));
 
 import { projectRouter } from "../../src/routes/projects.js";
+import { resolveTeamId } from "../../src/services/team-access.js";
 
 const HUMAN: Actor = { type: "human", userId: "u-1" };
 const AGENT: Actor = {
@@ -104,7 +109,7 @@ describe("GET /projects (listing with sharing)", () => {
     expect(callArgs.where.teamId).toBe("team-A");
   });
 
-  // F2 (review round-2, task a9dc7e58): findMany here has no `select`, so
+  // findMany here has no `select`, so
   // the raw project row — including enforcementMode — reaches the response
   // unfiltered. Pins the wire shape directly; a `select` added to this
   // query (mirroring GET /projects/available's) would drop the key
@@ -166,5 +171,111 @@ describe("GET /projects/available (listing with sharing)", () => {
     expect(owned?.accessSource).toBe("team");
     expect(shared?.accessSource).toBe("project");
     expect(owned?.displayName).toBe("Owned (owned)");
+  });
+});
+
+// Humans with zero team memberships but a per-project grant get the shared
+// projects instead of `400 no_teams`. The shared resolver keeps returning
+// `no_teams`; only the two list handlers translate it for humans.
+describe("GET /projects and /projects/available for a human with zero teams", () => {
+  const NO_TEAMS = {
+    ok: false,
+    status: 400,
+    code: "no_teams",
+    message: "User is not a member of any team",
+  } as const;
+  const shared = (id: string) => ({
+    id,
+    teamId: "team-B",
+    name: id,
+    slug: id,
+    description: null,
+    githubRepo: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  beforeEach(() => {
+    vi.mocked(resolveTeamId).mockReset();
+    vi.mocked(resolveTeamId).mockResolvedValue({ ok: true, teamId: "team-A" });
+  });
+
+  for (const path of ["/projects", "/projects/available"]) {
+    it(`${path}: returns exactly the shared projects with accessSource "project"`, async () => {
+      vi.mocked(resolveTeamId).mockResolvedValueOnce(NO_TEAMS);
+      prismaMocks.projectFindMany.mockResolvedValue([shared("p-1"), shared("p-2")]);
+
+      const res = await makeApp(HUMAN).request(path);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { projects: Array<{ id: string; accessSource: string }> };
+      expect(body.projects.map((p) => p.id)).toEqual(["p-1", "p-2"]);
+      expect(body.projects.every((p) => p.accessSource === "project")).toBe(true);
+    });
+
+    it(`${path}: query is restricted to the user's own project grants (no team projects)`, async () => {
+      vi.mocked(resolveTeamId).mockResolvedValueOnce(NO_TEAMS);
+      prismaMocks.projectFindMany.mockResolvedValue([]);
+
+      await makeApp(HUMAN).request(path);
+      const callArgs = prismaMocks.projectFindMany.mock.calls[0]?.[0] as { where: unknown };
+      // Exactly the grant filter: no OR with a team branch, no teamId key.
+      expect(callArgs.where).toEqual({ projectMembers: { some: { userId: "u-1" } } });
+    });
+
+    it(`${path}: zero teams and zero shared projects is 200 with an empty list`, async () => {
+      vi.mocked(resolveTeamId).mockResolvedValueOnce(NO_TEAMS);
+      prismaMocks.projectFindMany.mockResolvedValue([]);
+
+      const res = await makeApp(HUMAN).request(path);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ projects: [] });
+    });
+
+    it(`${path}: a human with several teams and no teamId still gets 400 multiple_teams`, async () => {
+      vi.mocked(resolveTeamId).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        code: "multiple_teams",
+        message: "User is a member of multiple teams; specify teamId query parameter",
+        teamIds: ["team-A", "team-B"],
+      });
+
+      const res = await makeApp(HUMAN).request(path);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "multiple_teams", teamIds: ["team-A", "team-B"] });
+      expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
+    });
+
+    it(`${path}: an explicit teamId the human is not in is still 403`, async () => {
+      vi.mocked(resolveTeamId).mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        code: "forbidden",
+        message: "Access denied to this team",
+      });
+
+      const res = await makeApp(HUMAN).request(`${path}?teamId=team-X`);
+      expect(res.status).toBe(403);
+      expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
+    });
+
+    it(`${path}: an agent never takes the zero-team path`, async () => {
+      vi.mocked(resolveTeamId).mockResolvedValueOnce(NO_TEAMS);
+
+      const res = await makeApp(AGENT).request(path);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "no_teams" });
+      expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a human with one team still gets that team plus shared projects", async () => {
+    prismaMocks.projectFindMany.mockResolvedValue([]);
+
+    await makeApp(HUMAN).request("/projects");
+    const callArgs = prismaMocks.projectFindMany.mock.calls[0]?.[0] as { where: unknown };
+    expect(callArgs.where).toEqual({
+      OR: [{ teamId: "team-A" }, { projectMembers: { some: { userId: "u-1" } } }],
+    });
   });
 });

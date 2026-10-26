@@ -15,6 +15,7 @@ import {
   resolveTeamId,
   resolveTeamIdErrorBody,
   getProjectMembership,
+  type ResolveTeamIdResult,
 } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import { listEligibleActors } from "../services/eligible-actors.js";
@@ -171,9 +172,50 @@ async function assertTeamMembership(actor: Actor, teamId: string): Promise<boole
 
 // ── List projects ─────────────────────────────────────────────────────────────
 
+/**
+ * Team scope for the two list endpoints. Wraps `resolveTeamId` and turns the
+ * human "no_teams" outcome into a shared-only scope (`teamId: null`): a
+ * human who has no team but was invited to individual projects still has a
+ * meaningful listing. `resolveTeamId` itself stays strict for every other
+ * caller. Agents never take the shared-only branch, and every other error
+ * (`multiple_teams`, `forbidden`) passes through unchanged.
+ */
+type ListingScope =
+  | { ok: true; teamId: string | null }
+  | Extract<ResolveTeamIdResult, { ok: false }>;
+
+async function resolveListingScope(
+  actor: Actor,
+  requestedTeamId: string | undefined,
+): Promise<ListingScope> {
+  const resolved = await resolveTeamId(actor, requestedTeamId);
+  if (resolved.ok) return resolved;
+  if (actor.type === "human" && resolved.code === "no_teams") {
+    return { ok: true, teamId: null };
+  }
+  return resolved;
+}
+
+/**
+ * Prisma `where` for the listings. Humans see their team's projects (when
+ * they have a resolved team) plus every project shared with them; a
+ * shared-only scope (`teamId === null`) lists the shared projects alone and
+ * never any team's projects. Agents see team-only; a null team for an agent
+ * cannot happen (`resolveListingScope` only produces it for humans) and fails
+ * closed instead of widening the query.
+ */
+function listingWhere(actor: Actor, teamId: string | null): Prisma.ProjectWhereInput {
+  if (actor.type === "human") {
+    const shared = { projectMembers: { some: { userId: actor.userId } } };
+    return teamId === null ? shared : { OR: [{ teamId }, shared] };
+  }
+  if (teamId === null) throw new Error("agent listing requires a resolved team");
+  return { teamId };
+}
+
 projectRouter.get("/projects", async (c) => {
   const actor = c.get("actor");
-  const resolved = await resolveTeamId(actor, c.req.query("teamId"));
+  const resolved = await resolveListingScope(actor, c.req.query("teamId"));
   if (!resolved.ok) {
     return c.json(
       resolveTeamIdErrorBody(resolved),
@@ -186,15 +228,7 @@ projectRouter.get("/projects", async (c) => {
   // their per-project access is exercised through specific project IDs,
   // not through this listing.
   const projects = await prisma.project.findMany({
-    where:
-      actor.type === "human"
-        ? {
-            OR: [
-              { teamId: resolved.teamId },
-              { projectMembers: { some: { userId: actor.userId } } },
-            ],
-          }
-        : { teamId: resolved.teamId },
+    where: listingWhere(actor, resolved.teamId),
     orderBy: { createdAt: "desc" },
   });
 
@@ -219,7 +253,7 @@ projectRouter.get("/projects", async (c) => {
 
 projectRouter.get("/projects/available", async (c) => {
   const actor = c.get("actor");
-  const resolved = await resolveTeamId(actor, c.req.query("teamId"));
+  const resolved = await resolveListingScope(actor, c.req.query("teamId"));
   if (!resolved.ok) {
     return c.json(
       resolveTeamIdErrorBody(resolved),
@@ -230,15 +264,7 @@ projectRouter.get("/projects/available", async (c) => {
   // Same access expansion as `/projects`: humans see team projects plus
   // shared projects.
   const projects = await prisma.project.findMany({
-    where:
-      actor.type === "human"
-        ? {
-            OR: [
-              { teamId: resolved.teamId },
-              { projectMembers: { some: { userId: actor.userId } } },
-            ],
-          }
-        : { teamId: resolved.teamId },
+    where: listingWhere(actor, resolved.teamId),
     orderBy: { name: "asc" },
     select: {
       id: true,
