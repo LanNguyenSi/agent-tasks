@@ -75,7 +75,7 @@ describe("TaskDetail — variant", () => {
     render(<TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} />);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     const maximize = screen.getByRole("link", { name: "Open as full page" });
-    expect(maximize).toHaveAttribute("href", "/tasks/task-9");
+    expect(maximize).toHaveAttribute("href", "/tasks/task-9?from=board");
   });
 
   it("hides the maximize link while editing so unsaved edits aren't dropped", async () => {
@@ -102,7 +102,6 @@ describe("TaskDetail — variant", () => {
         task={makeTask({ id: "task-9" })}
         {...baseProps}
         teamId="team-1"
-        teamName="Pandora"
         backHref="/tasks?scope=open"
       />,
     );
@@ -111,13 +110,13 @@ describe("TaskDetail — variant", () => {
     expect(within(nav).getAllByRole("link")[0]).toHaveTextContent("Tasks");
   });
 
-  it("the modal maximize link never carries a from, even when a back URL is passed", () => {
+  it("the modal maximize link carries from=board, never a list URL, even when a back URL is passed", () => {
     render(
       <TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} backHref="/tasks?scope=open" />,
     );
     expect(screen.getByRole("link", { name: "Open as full page" })).toHaveAttribute(
       "href",
-      "/tasks/task-9",
+      "/tasks/task-9?from=board",
     );
   });
 
@@ -127,19 +126,22 @@ describe("TaskDetail — variant", () => {
   // role into the modal is covered in DashboardNewTaskEntryPoints.test.tsx
   // (the override control appears for admin roles only), so a silent revert
   // of that wiring is not caught here.
-  it("modal variant shows the admin status-override control when isProjectAdmin", () => {
+  it("modal variant offers the admin status-override control from the More actions menu when isProjectAdmin", async () => {
     render(
       <TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin />,
     );
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Change status…" }));
     expect(
       screen.getByRole("combobox", { name: "Change task status (admin override)" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set status" })).toBeInTheDocument();
   });
 
-  it("modal variant shows the override disabled with a reason for a non-admin", () => {
+  it("modal variant shows the override disabled with a reason for a non-admin", async () => {
     render(<TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin={false} />);
-    const btn = screen.getByRole("button", { name: "Change status" });
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    const btn = await screen.findByRole("button", { name: "Change status (admins only)" });
     expect(btn).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Set status" })).toBeNull();
   });

@@ -325,6 +325,71 @@ describe("board bootstrap from the route's project", () => {
   });
 });
 
+describe("task modal and the URL", () => {
+  // The router mock does not touch the address bar; make replace do what the
+  // real router does so the effect's own reads of window.location see it.
+  beforeEach(() => {
+    routerMocks.replace.mockImplementation((url: string) => {
+      window.history.replaceState({}, "", url);
+    });
+    mockGetTasks.mockResolvedValue([TASK]);
+    mockGetTask.mockResolvedValue(TASK);
+  });
+
+  async function openCard() {
+    await userEvent.click(await screen.findByRole("button", { name: /Deep-linked task/ }));
+    await screen.findByRole("dialog");
+  }
+
+  it("adds ?taskId=<id> when a card opens, with router.replace", async () => {
+    await renderDashboardReady();
+    await openCard();
+    await waitFor(() =>
+      expect(routerMocks.replace).toHaveBeenCalledWith("/projects/p-1/board?taskId=k-1", {
+        scroll: false,
+      }),
+    );
+    expect(routerMocks.push).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("?taskId=k-1");
+  });
+
+  it("removes taskId when the modal closes and keeps other query parameters and the hash", async () => {
+    window.history.replaceState({}, "", "/projects/p-1/board?view=x#db-col-open");
+    await renderDashboardReady();
+    await openCard();
+    await waitFor(() => expect(window.location.search).toBe("?view=x&taskId=k-1"));
+    expect(window.location.hash).toBe("#db-col-open");
+
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(window.location.search).toBe("?view=x"));
+    expect(window.location.hash).toBe("#db-col-open");
+  });
+
+  it("arriving with ?taskId= and closing leaves no taskId, and a reload does not reopen the modal", async () => {
+    window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+    const first = renderBoard();
+    await screen.findByRole("dialog");
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(window.location.pathname).toBe("/projects/p-1/board");
+
+    first.unmount();
+    mockGetTask.mockClear();
+    await renderDashboardReady();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockGetTask).not.toHaveBeenCalled();
+  });
+
+  it("drops a ?taskId= that is not in the project from the URL", async () => {
+    window.history.replaceState({}, "", "/projects/p-1/board?taskId=other");
+    await renderDashboardReady();
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+});
+
 describe("board task poll", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -397,8 +462,10 @@ describe("board admin workflow edges", () => {
       await screen.findByRole("dialog");
     }
 
-    it.each(["ADMIN", "PROJECT_ADMIN"])("shows the status-override control to a %s", async (role) => {
+    it.each(["ADMIN", "PROJECT_ADMIN"])("offers the status-override control in the menu to a %s", async (role) => {
       await openModal(role);
+      await userEvent.click(await screen.findByRole("button", { name: "More actions" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Change status…" }));
       expect(
         await screen.findByRole("combobox", { name: "Change task status (admin override)" }),
       ).toBeInTheDocument();
@@ -408,7 +475,10 @@ describe("board admin workflow edges", () => {
       "does not show the status-override control to a %s",
       async (role) => {
         await openModal(role);
-        expect(await screen.findByRole("button", { name: "Change status" })).toBeDisabled();
+        await userEvent.click(await screen.findByRole("button", { name: "More actions" }));
+        expect(
+          await screen.findByRole("button", { name: "Change status (admins only)" }),
+        ).toBeDisabled();
         expect(
           screen.queryByRole("combobox", { name: "Change task status (admin override)" }),
         ).toBeNull();

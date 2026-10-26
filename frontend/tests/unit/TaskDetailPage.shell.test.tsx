@@ -97,3 +97,12 @@ describe("/tasks/[id] page frame", () => {
     expect(main.querySelector(".pshell-content > .td-page")).toBe(body);
   });
 });
+
+describe("/tasks/[id] document title", () => {
+  it("reads 'Task - agent-tasks' while loading and '<task title> - agent-tasks' once loaded", async () => {
+    render(<TaskDetailPage />);
+    expect(document.title).toBe("Task - agent-tasks");
+    await screen.findByText("task body");
+    expect(document.title).toBe("A task - agent-tasks");
+  });
+});

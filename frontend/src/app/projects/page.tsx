@@ -638,7 +638,8 @@ export default function ProjectsPage() {
         <>
           <div className="teams-header-row">
             <div>
-              <h1 className="teams-page-title">{selectedTeam.name}</h1>
+              <h1 className="teams-page-title">Projects</h1>
+              <h2 className="teams-project-count">{selectedTeam.name}</h2>
               <p className="teams-project-count">
                 {selectedTeam.projectCount ?? projects.length} projects
               </p>

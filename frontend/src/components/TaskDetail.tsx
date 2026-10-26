@@ -66,6 +66,8 @@ import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
 import { Icon } from "./ui/Icon";
 import { KeyHint } from "./ui/KeyHint";
+import { humanizeField } from "../lib/humanizeField";
+import { taskFromBoardHref } from "../lib/routes";
 import TaskHeader, { type AdvanceAction, type StatusOverrideResult } from "./task-detail/TaskHeader";
 import TaskMetaSidebar from "./task-detail/TaskMetaSidebar";
 import ReviewPanel from "./task-detail/ReviewPanel";
@@ -207,7 +209,6 @@ export interface TaskDetailProps {
    */
   variant?: "modal" | "page";
   // Breadcrumb data — supplied by the page context only
-  teamName?: string;
   teamId?: string;
   projectName?: string;
   projectId?: string;
@@ -236,7 +237,6 @@ export default function TaskDetail({
   onError,
   variant = "modal",
   initialEditing = false,
-  teamName,
   teamId,
   projectName,
   projectId,
@@ -743,7 +743,6 @@ export default function TaskDetail({
       task={task}
       user={user}
       variant={variant}
-      teamName={teamName}
       teamId={teamId}
       projectName={projectName}
       projectId={projectId}
@@ -984,7 +983,7 @@ export default function TaskDetail({
                 </div>
                 {conf.missing.length > 0 && (
                   <p className="td-conf-missing">
-                    Missing: {conf.missing.join(", ")}
+                    Missing: {conf.missing.map(humanizeField).join(", ")}
                   </p>
                 )}
               </div>
@@ -1394,10 +1393,10 @@ export default function TaskDetail({
           actions={editFooter}
           headerActions={
             !isEditing ? (
-              // Deliberately no `from`: the modal is opened from the board, so
-              // the full page keeps its board fallback.
+              // `from=board` (not a list URL, so there is no Tasks crumb) keeps
+              // Projects highlighted in the header and the board fallback.
               <Link
-                href={`/tasks/${task.id}`}
+                href={taskFromBoardHref(task.id)}
                 className="modal-maximize"
                 aria-label="Open as full page"
                 title="Open as full page"

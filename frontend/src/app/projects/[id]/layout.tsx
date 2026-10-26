@@ -32,6 +32,7 @@ import {
 } from "../../../lib/api";
 import { resolveCurrentTeam } from "../../../lib/currentTeam";
 import { projectHubHref, projectsHref, type ProjectHubTab } from "../../../lib/routes";
+import DocumentTitle from "../../../components/DocumentTitle";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../components/projects/ProjectSubnav";
 import ProjectPicker, { type ProjectOption } from "../../../components/dashboard/ProjectPicker";
@@ -40,6 +41,18 @@ import { Button } from "../../../components/ui/Button";
 import { PageShell } from "../../../components/ui/PageShell";
 import { BOARD_REGION_ID } from "../../../components/dashboard/boardRegion";
 import { GOVERNANCE_LABELS } from "../../../lib/governance";
+
+const HUB_TAB_TITLES: Record<ProjectHubTab, string> = {
+  board: "Board",
+  members: "Members",
+  workflow: "Workflow",
+  settings: "Settings",
+};
+
+// The hub root has no segment and redirects to the board.
+function hubTabTitle(segment: string | null): string {
+  return HUB_TAB_TITLES[(segment ?? "board") as ProjectHubTab] ?? "Project";
+}
 
 export default function ProjectLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ id: string }>();
@@ -135,6 +148,9 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
 
   const hubBand = (
     <>
+      <DocumentTitle
+        title={project ? `${project.name} · ${hubTabTitle(segment)}` : "Project"}
+      />
       <div className="proj-hub-header">
         <nav className="proj-hub-breadcrumb" aria-label="Breadcrumb">
           <Link href={crumbHref}>Projects</Link>

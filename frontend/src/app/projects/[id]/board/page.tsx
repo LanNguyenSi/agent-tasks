@@ -201,6 +201,25 @@ export default function ProjectBoardPage() {
     setActiveTaskId(id);
   }, []);
 
+  // The URL follows the modal: `?taskId=<id>` while a task is open, removed when
+  // it closes (router.replace, so open and close add no history entries and Back
+  // leaves the board instead of toggling the modal). Query and hash (the jump
+  // bar's `#db-col-...`) are otherwise kept. Runs after boot only, so the
+  // arrival `?taskId` is read once by the bootstrap and a reload after close
+  // finds none.
+  useEffect(() => {
+    if (loading) return;
+    const params = new URLSearchParams(window.location.search);
+    if ((params.get("taskId") ?? null) === activeTaskId) return;
+    if (activeTaskId) params.set("taskId", activeTaskId);
+    else params.delete("taskId");
+    const query = params.toString();
+    router.replace(
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+      { scroll: false },
+    );
+  }, [activeTaskId, loading, router]);
+
   useEffect(() => {
     if (!activeTaskId) {
       setActiveTaskDetail(null);
@@ -260,7 +279,8 @@ export default function ProjectBoardPage() {
 
   // The project comes from the route, not from a team: a user who reaches a
   // project through a per-project share alone (no team) gets the same board.
-  // The URL is left as it is (a `?taskId=` stays after the modal closes).
+  // A `?taskId=` on arrival opens that task; closing the modal removes it (see
+  // the URL sync above).
   useEffect(() => {
     void (async () => {
       try {

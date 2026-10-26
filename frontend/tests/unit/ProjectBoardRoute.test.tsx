@@ -93,6 +93,13 @@ describe("board route (hub layout + board page)", () => {
     expect(nav.router.replace).not.toHaveBeenCalled();
   });
 
+  it("titles the tab '<Project> · Board - agent-tasks'", async () => {
+    mockGetProject.mockResolvedValue(PROJECT);
+    document.title = "stale";
+    renderRoute();
+    await waitFor(() => expect(document.title).toBe("Project One · Board - agent-tasks"));
+  });
+
   it.each([
     ["a 500", new ApiRequestError("internal", "Server exploded", 500)],
     ["a 401", new ApiRequestError("unauthorized", "Not signed in", 401)],

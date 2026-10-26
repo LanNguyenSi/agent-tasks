@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout, type Team } from "../lib/api";
 import { rememberTeam } from "../lib/currentTeam";
-import { newTeamHref, settingsHref, teamSettingsHref } from "../lib/routes";
+import { FROM_BOARD, newTeamHref, settingsHref, teamSettingsHref } from "../lib/routes";
 import { sectionHref, teamSwitchHref, useResolvedTeam } from "../lib/teamSwitch";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
@@ -34,10 +34,14 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
 
   const isHome = pathname.startsWith("/home");
-  const isTasks = pathname.startsWith("/tasks");
+  // A task page opened from the board modal ("Open as full page") belongs to
+  // Projects, not to the Tasks list.
+  const fromBoard =
+    pathname.startsWith("/tasks/") && searchParams?.getAll("from").join(",") === FROM_BOARD;
+  const isTasks = pathname.startsWith("/tasks") && !fromBoard;
   // Projects is current on the list and on every project hub route below it
   // (`/projects/<id>/board`, members, settings, workflow).
-  const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
+  const isProjects = pathname === "/projects" || pathname.startsWith("/projects/") || fromBoard;
 
   // The current team follows the single current-team rule (?teamId, then the
   // remembered team, then the first team) through `useResolvedTeam`, the

@@ -99,13 +99,20 @@ function getReviewerLabel(task: Task): string {
   return "Assigned";
 }
 
-// Maps in_progress to the workflow-note text (what the next step is).
-const NEXT_STEP: Record<string, string> = {
-  open: "can be started",
-  in_progress: "can move to Review",
-  review: "awaits review decision",
-  done: "complete",
+// One full sentence per status of the default workflow: what the next step is.
+export const NEXT_STEP: Record<string, string> = {
+  backlog: "This task is a draft; promote it to Open to make it pickable.",
+  open: "This task can be started.",
+  in_progress: "This task can move to Review.",
+  review: "This task awaits a review decision.",
+  done: "This task is complete.",
 };
+
+/** Workflow note for a status; a custom state outside the default workflow
+ *  gets a neutral sentence instead of a raw status name. */
+export function nextStepSentence(status: string): string {
+  return NEXT_STEP[status] ?? "This task is in a custom workflow state.";
+}
 
 export default function TaskMetaSidebar({
   task,
@@ -131,7 +138,7 @@ export default function TaskMetaSidebar({
   // A payload without the flag (e.g. a list row) falls back to the built-in
   // default workflow's literal `review` state.
   const inReview = task.inReviewState ?? task.status === "review";
-  const nextStep = NEXT_STEP[task.status] ?? "in an unknown state";
+  const nextStep = nextStepSentence(task.status);
   const hasReviewClaim = Boolean(task.reviewClaimedByUserId || task.reviewClaimedByAgentId);
   // Admin reassign picker: hidden (not disabled) unless a human project admin
   // is looking, and never on a finished task.
@@ -487,7 +494,7 @@ export default function TaskMetaSidebar({
 
       <div className="td-aside-divider" />
       <p className="td-next-transition">
-        Workflow: this task {nextStep}.{" "}
+        Workflow: {nextStep}{" "}
         {task.status === "in_progress" && (
           <>
             Next:{" "}

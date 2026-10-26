@@ -7,7 +7,6 @@ import {
   getTask,
   getProject,
   getTasks,
-  getTeams,
   getEffectiveWorkflow,
   getTaskConfidenceDetail,
   isProjectAdminRole,
@@ -15,7 +14,6 @@ import {
   type User,
   type Task,
   type Project,
-  type Team,
   type WorkflowTransition,
   type TaskConfidenceDetail,
 } from "../../../lib/api";
@@ -24,6 +22,7 @@ import TaskDetail from "../../../components/TaskDetail";
 import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../../lib/confidence";
 import { boardHref, safeBackHref } from "../../../lib/routes";
 import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
+import { useDocumentTitle } from "../../../components/DocumentTitle";
 import { PageShell } from "../../../components/ui/PageShell";
 
 /**
@@ -36,7 +35,7 @@ import { PageShell } from "../../../components/ui/PageShell";
  *
  * Deep-linkable: the task id is enough to fetch the task, its project (for
  * template fields / confidence threshold / reviewer policy), the project's
- * tasks (for the dependency picker), and the team name for the breadcrumb.
+ * tasks (for the dependency picker), for the breadcrumb.
  */
 export default function TaskDetailPage() {
   const params = useParams<{ id: string }>();
@@ -53,7 +52,6 @@ export default function TaskDetailPage() {
   const [user, setUser] = useState<User | null>(null);
   const [task, setTask] = useState<Task | null>(null);
   const [project, setProject] = useState<Project | null>(null);
-  const [team, setTeam] = useState<Team | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   // Effective-workflow edges, fetched only for admins to constrain the status-
   // override dropdown to the transitions the backend will actually accept
@@ -77,18 +75,15 @@ export default function TaskDetailPage() {
           return;
         }
         const fetchedTask = await getTask(taskId);
-        const [fetchedProject, projectTasks, allTeams, confidenceDetail] = await Promise.all([
+        const [fetchedProject, projectTasks, confidenceDetail] = await Promise.all([
           getProject(fetchedTask.projectId),
           getTasks(fetchedTask.projectId),
-          getTeams(),
           getTaskConfidenceDetail(taskId).catch(() => null),
         ]);
         if (cancelled) return;
-        const matchedTeam = allTeams.find((t) => t.id === fetchedProject.teamId) ?? null;
         setUser(me);
         setTask(fetchedTask);
         setProject(fetchedProject);
-        setTeam(matchedTeam);
         setTasks(projectTasks);
         setImprovementPanel(confidenceDetail);
         setError(null);
@@ -116,6 +111,8 @@ export default function TaskDetailPage() {
       cancelled = true;
     };
   }, [taskId, router]);
+
+  useDocumentTitle(task?.title ?? "Task");
 
   function handleUpdate(updated: Task) {
     setTask(updated);
@@ -186,7 +183,6 @@ export default function TaskDetailPage() {
           onDelete={goToBoard}
           onClose={goToBoard}
           onError={(msg) => setError(msg)}
-          teamName={team?.name}
           teamId={project.teamId}
           projectName={project.name}
           projectId={project.id}

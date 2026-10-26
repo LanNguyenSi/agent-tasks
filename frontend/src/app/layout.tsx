@@ -190,7 +190,9 @@ void [
 ];
 
 export const metadata: Metadata = {
-  title: "agent-tasks",
+  // Pages and segment layouts set `title: "<Page>"`; the template adds the
+  // product name. Client-set titles use components/DocumentTitle.tsx.
+  title: { default: "agent-tasks", template: "%s - agent-tasks" },
   description: "Collaborative task platform for humans and agents",
   icons: {
     icon: "/icon.svg",
