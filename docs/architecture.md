@@ -138,10 +138,11 @@ agent-tasks/
 | `/onboarding` | First team creation |
 | `/home` | Signed-in start page: the team's tasks across projects |
 | `/teams` | Project management, GitHub sync |
-| `/dashboard` | Board + list view, task CRUD |
+| `/dashboard` | Legacy: redirects to `/projects/<id>/board` (its `projectId`, else the last board opened in the browser), else `/teams` |
 | `/tasks` | Task list |
 | `/tasks/[id]` | Task detail |
 | `/projects/[id]` | Project overview |
+| `/projects/[id]/board` | Board + list view, task CRUD |
 | `/projects/[id]/settings` | Project settings |
 | `/projects/[id]/members` | Project members |
 | `/projects/[id]/workflow` | Workflow editor (states, transitions, agent instructions) |

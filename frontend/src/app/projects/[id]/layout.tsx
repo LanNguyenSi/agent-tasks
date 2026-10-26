@@ -3,8 +3,8 @@
 // Hub layout for /projects/[id]/* routes.
 // Fetches the project once (name, slug, githubRepo, governanceMode) and renders:
 //   1. A compact project identity header (name H1, slug chip, repo chip, gov badge).
-//   2. ProjectSubnav tab row (Overview | Settings | Members | Workflow).
-//   3. {children} wrapped in a content container.
+//   2. ProjectSubnav tab row (Board | Overview | Members | Workflow | Settings).
+//   3. {children} wrapped in a content container (the board excepted, see below).
 //
 // Child pages no longer render their own project heading; this layout owns it.
 // Geometry in .proj-hub-* / .proj-subnav-* in globals.css.
@@ -12,9 +12,9 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { getProject, type Project } from "../../../lib/api";
-import { boardHref } from "../../../lib/routes";
+import { boardHref, projectsHref } from "../../../lib/routes";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../components/projects/ProjectSubnav";
 
@@ -28,6 +28,7 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const router = useRouter();
+  const segment = useSelectedLayoutSegment();
 
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,8 +40,9 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
         const proj = await getProject(projectId);
         if (!cancelled) setProject(proj);
       } catch {
-        // Redirect to dashboard if the project is inaccessible
-        if (!cancelled) router.replace(boardHref());
+        // Inaccessible project: back to the Projects page. Not boardHref():
+        // its bare /dashboard resumes the last board, which may be this one.
+        if (!cancelled) router.replace(projectsHref());
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -54,9 +56,8 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
     ? GOV_LABELS[project.governanceMode]
     : null;
 
-  // Back to the dashboard with the same team + project selected; the
-  // dashboard restores both from these URL params. Until the project is
-  // loaded, a plain /dashboard link keeps the row height stable.
+  // This project's board. Until the project is loaded, the bare /dashboard
+  // link (resumes the last board) keeps the row height stable.
   const dashboardHref = project
     ? boardHref({ teamId: project.teamId, projectId: project.id })
     : boardHref();
@@ -111,7 +112,10 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
 
       <ProjectSubnav projectId={projectId} />
 
-      <div className="proj-hub-content">{children}</div>
+      {/* The board keeps the full-width canvas its column breakpoints
+          (.db-board, viewport media queries) are written for; the
+          1200px content container would squeeze its five columns. */}
+      {segment === "board" ? children : <div className="proj-hub-content">{children}</div>}
     </>
   );
 }

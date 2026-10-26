@@ -1,25 +1,30 @@
 // Single owner of every in-app URL the UI/IA restructure (agent-tasks-ui-ia
-// stage 1) may relocate. Each builder must return a string byte-identical to
+// stage 1) may relocate. Each builder returned a string byte-identical to
 // the hand-built template it replaced, so a later task moves a route by
-// changing one function here instead of every call site. No encoding is
+// changing one function here instead of every call site (the board has
+// moved: see boardHref). No encoding is
 // applied: the old templates interpolated raw values (UUIDs today) and so do
 // these builders.
 
-export type ProjectHubTab = "members" | "settings" | "workflow";
+export type ProjectHubTab = "board" | "members" | "settings" | "workflow";
 
-/** Board URL: `/dashboard` plus `teamId`, `projectId`, `taskId` query
- * parameters in that order. Unset (absent or empty) parameters are omitted;
- * no `?` is added when none remain. */
+/** Board URL: the project's board tab, `/projects/<projectId>/board`, plus
+ * `?taskId=` when given; `teamId` is not part of it (the board is reached
+ * through its project alone). Without a `projectId` there is no board to
+ * name: with a `teamId` this is that team's Projects page, with neither it
+ * is the legacy `/dashboard`, which resumes the last board opened in this
+ * browser. A `taskId` without its project is dropped. Unset (absent or
+ * empty) parameters are omitted. */
 export function boardHref(params: {
   teamId?: string;
   projectId?: string;
   taskId?: string;
 } = {}): string {
-  const parts: string[] = [];
-  if (params.teamId) parts.push(`teamId=${params.teamId}`);
-  if (params.projectId) parts.push(`projectId=${params.projectId}`);
-  if (params.taskId) parts.push(`taskId=${params.taskId}`);
-  return parts.length > 0 ? `/dashboard?${parts.join("&")}` : "/dashboard";
+  if (params.projectId) {
+    const board = projectHubHref(params.projectId, "board");
+    return params.taskId ? `${board}?taskId=${params.taskId}` : board;
+  }
+  return params.teamId ? projectsHref({ teamId: params.teamId }) : "/dashboard";
 }
 
 /** Projects page: `/teams`, optionally pre-selecting a team. */
@@ -27,9 +32,10 @@ export function projectsHref(params: { teamId?: string } = {}): string {
   return params.teamId ? `/teams?teamId=${params.teamId}` : "/teams";
 }
 
-/** Project hub tab under `/projects/<id>`. */
-export function projectHubHref(projectId: string, tab: ProjectHubTab): string {
-  return `/projects/${projectId}/${tab}`;
+/** Project hub under `/projects/<id>`: a tab, or the hub root (Overview)
+ * when no tab is given. */
+export function projectHubHref(projectId: string, tab?: ProjectHubTab): string {
+  return tab ? `/projects/${projectId}/${tab}` : `/projects/${projectId}`;
 }
 
 export function settingsHref(): string {
