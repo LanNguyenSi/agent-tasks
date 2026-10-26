@@ -81,6 +81,16 @@ export function taskHref(taskId: string, params: { from?: string } = {}): string
     : `/tasks/${taskId}`;
 }
 
+/** The `from` value the board modal's "Open as full page" link carries. It is
+ * not a list URL, so `safeBackHref` rejects it (no Tasks crumb, the page keeps
+ * its board fallback); the header reads it to keep Projects highlighted. */
+export const FROM_BOARD = "board";
+
+/** Full-page task detail opened from the board modal: `/tasks/<id>?from=board`. */
+export function taskFromBoardHref(taskId: string): string {
+  return `/tasks/${taskId}?from=${FROM_BOARD}`;
+}
+
 // Anchored at both ends: only `/tasks` itself or `/tasks?<query>` passes, so a
 // scheme, a host, `/tasks/..`, `/tasksX` or a fragment cannot match.
 const BACK_HREF_PATTERN = /^\/tasks(\?[^#]*)?$/;

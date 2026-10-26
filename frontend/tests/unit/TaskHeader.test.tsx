@@ -229,6 +229,11 @@ describe("TaskHeader move to backlog (demote)", () => {
   });
 });
 
+async function openAdminStatusControl() {
+  await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Change status…" }));
+}
+
 describe("TaskHeader admin status override", () => {
   beforeEach(() => {
     // jsdom does not implement scrollIntoView; the Select listbox calls it
@@ -236,14 +241,27 @@ describe("TaskHeader admin status override", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it("non-admin sees the override control disabled with an inline reason", () => {
+  it("non-admin gets a disabled menu entry with the reason and no status picker", async () => {
     renderHeader(makeTask({ status: "open" }), vi.fn(), false, { isProjectAdmin: false });
-    expect(screen.getByRole("button", { name: "Change status" })).toBeDisabled();
-    expect(
-      screen.getByText("Only project admins can override task status"),
-    ).toBeInTheDocument();
-    // Not hidden: a non-admin still sees the control exists, just disabled.
+    // Nothing on the page until the menu is opened.
+    expect(screen.queryByText("Only project admins can override task status")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    const entry = await screen.findByRole("button", { name: /Change status \(admins only\)/ });
+    expect(entry).toBeDisabled();
+    // The reason is visible text inside the item, not only a title.
+    expect(within(entry).getByText("Only project admins can override task status")).toBeVisible();
+    expect(entry).not.toHaveAttribute("title");
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("admin: the picker is hidden until Change status is chosen in the menu, then focus moves to it", async () => {
+    renderHeader(makeTask({ status: "open" }), vi.fn(), false, { isProjectAdmin: true });
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    await openAdminStatusControl();
+    expect(screen.getByRole("combobox", { name: "Change task status (admin override)" })).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More actions" })).toHaveFocus();
   });
 
   it("admin sees an enabled status picker and confirming calls onOverrideStatus with the target", async () => {
@@ -253,8 +271,7 @@ describe("TaskHeader admin status override", () => {
       onOverrideStatus,
     });
 
-    expect(screen.queryByText("Only project admins can override task status")).not.toBeInTheDocument();
-
+    await openAdminStatusControl();
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Done" }));
     await userEvent.click(screen.getByRole("button", { name: "Set status" }));
@@ -274,6 +291,7 @@ describe("TaskHeader admin status override", () => {
       onOverrideStatus,
     });
 
+    await openAdminStatusControl();
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Review" }));
     await userEvent.click(screen.getByRole("button", { name: "Set status" }));
@@ -299,6 +317,7 @@ describe("TaskHeader admin status override", () => {
       onOverrideStatus,
     });
 
+    await openAdminStatusControl();
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Review" }));
     await userEvent.click(screen.getByRole("button", { name: "Set status" }));
@@ -331,6 +350,7 @@ describe("TaskHeader admin status override", () => {
       isProjectAdmin: true,
       statusOverrideTargets: ["review", "done"],
     });
+    await openAdminStatusControl();
     await userEvent.click(screen.getByRole("combobox"));
     expect(screen.getByRole("option", { name: "Review" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Done" })).toBeInTheDocument();
@@ -338,14 +358,15 @@ describe("TaskHeader admin status override", () => {
     expect(screen.queryByRole("option", { name: "In Progress" })).not.toBeInTheDocument();
   });
 
-  it("renders a note instead of an empty dropdown when the state has no outgoing edges", () => {
+  it("renders a note instead of an empty dropdown when the state has no outgoing edges", async () => {
     renderHeader(makeTask({ status: "done" }), vi.fn(), false, {
       isProjectAdmin: true,
       statusOverrideTargets: [],
     });
-    expect(
-      screen.getByText("No status changes are defined from this state in the workflow."),
-    ).toBeInTheDocument();
+    await openAdminStatusControl();
+    const hint = screen.getByText("No status changes are defined from this state in the workflow.");
+    expect(hint).toBeInTheDocument();
+    expect(hint).toHaveFocus();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Set status" })).not.toBeInTheDocument();
   });
@@ -364,6 +385,7 @@ describe("TaskHeader admin status override", () => {
       onOverrideStatus,
     });
 
+    await openAdminStatusControl();
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Done" }));
     await userEvent.click(screen.getByRole("button", { name: "Set status" }));
@@ -408,9 +430,9 @@ describe("backlog Promote/Discard", () => {
 });
 
 describe("TaskHeader breadcrumb board links", () => {
-  // Pins the boardHref truth table at the breadcrumb call site: the team
-  // crumb links to that team's Projects page, the project crumb to the
-  // project's board, and no crumbs render without a teamId.
+  // Pins the breadcrumb call site: "Projects" links to the team's Projects
+  // page, the project crumb to its board, the last item is the task title
+  // (aria-current="page"), and nothing renders without a teamId.
   function renderWithCrumb(overrides: { teamId?: string; projectId?: string; backHref?: string | null }) {
     render(
       <TaskHeader
@@ -418,7 +440,6 @@ describe("TaskHeader breadcrumb board links", () => {
         user={me}
         variant="page"
         teamId={overrides.teamId}
-        teamName="Example Team"
         projectId={overrides.projectId}
         projectName="Backend"
         backHref={overrides.backHref}
@@ -439,9 +460,19 @@ describe("TaskHeader breadcrumb board links", () => {
     );
   }
 
-  it("links the team crumb to the team's projects and the project crumb to its board", () => {
+  it("reads Projects / <project> / <task title> with aria-current on the title", () => {
     renderWithCrumb({ teamId: "t-9", projectId: "p-9" });
-    expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
+    const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(nav).getAllByRole("link").map((l) => l.textContent)).toEqual(["Projects", "Backend"]);
+    const current = nav.querySelector('[aria-current="page"]');
+    expect(current).toHaveTextContent("A task");
+    expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+    expect(nav.lastElementChild).toBe(current);
+  });
+
+  it("links Projects to the team's projects and the project crumb to its board", () => {
+    renderWithCrumb({ teamId: "t-9", projectId: "p-9" });
+    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute(
       "href",
       "/projects?teamId=t-9",
     );
@@ -451,9 +482,9 @@ describe("TaskHeader breadcrumb board links", () => {
     );
   });
 
-  it("links the team crumb to the team's projects when there is no project", () => {
+  it("links Projects to the team's projects when there is no project", () => {
     renderWithCrumb({ teamId: "t-9" });
-    expect(screen.getByRole("link", { name: "Example Team" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute(
       "href",
       "/projects?teamId=t-9",
     );
@@ -471,7 +502,7 @@ describe("TaskHeader breadcrumb board links", () => {
     const links = within(nav).getAllByRole("link");
     expect(links[0]).toHaveTextContent("Tasks");
     expect(links[0]).toHaveAttribute("href", "/tasks?scope=open&q=a%20b");
-    // The team and project crumbs keep pointing at the board.
+    // The project crumb keeps pointing at the board.
     expect(screen.getByRole("link", { name: "Backend" })).toHaveAttribute(
       "href",
       "/projects/p-9/board",

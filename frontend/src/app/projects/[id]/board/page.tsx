@@ -116,6 +116,10 @@ export default function ProjectBoardPage() {
 
   // Separate boot error (prevents board mount) from action error (toast only).
   const [loading, setLoading] = useState(true);
+  // True once a boot ran to the end (project loaded, tasks applied, arrival
+  // `?taskId` read). A redirect (/auth, projects) or a boot error leaves it
+  // false so the URL sync below never fights those navigations.
+  const [bootSucceeded, setBootSucceeded] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
 
   const [showNewTask, setShowNewTask] = useState(false);
@@ -201,6 +205,33 @@ export default function ProjectBoardPage() {
     setActiveTaskId(id);
   }, []);
 
+  // The URL follows the modal: `?taskId=<id>` while a task is open, removed when
+  // it closes. Open and close replace the current history entry, so Back
+  // leaves the board instead of toggling the modal. The native
+  // history.replaceState is used, not router.replace: Next adopts the new URL
+  // (usePathname and useSearchParams follow it) without fetching the route
+  // again, so the document head, and with it the tab title, is not
+  // re-rendered on every open and close. The `null` state lets Next copy its
+  // own entry state; passing history.state would mark the call as Next's own,
+  // and the router would keep the old URL and write it back later. Query and
+  // hash (the jump bar's `#db-col-...`) are otherwise kept. Runs after a
+  // successful boot only, so the arrival `?taskId` is read once by the
+  // bootstrap, a reload after close finds none, and a boot that redirected
+  // (signed out, project missing) or failed leaves its own navigation alone.
+  useEffect(() => {
+    if (loading || !bootSucceeded) return;
+    const params = new URLSearchParams(window.location.search);
+    if ((params.get("taskId") ?? null) === activeTaskId) return;
+    if (activeTaskId) params.set("taskId", activeTaskId);
+    else params.delete("taskId");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }, [activeTaskId, loading, bootSucceeded]);
+
   useEffect(() => {
     if (!activeTaskId) {
       setActiveTaskDetail(null);
@@ -260,8 +291,10 @@ export default function ProjectBoardPage() {
 
   // The project comes from the route, not from a team: a user who reaches a
   // project through a per-project share alone (no team) gets the same board.
-  // The URL is left as it is (a `?taskId=` stays after the modal closes).
+  // A `?taskId=` on arrival opens that task; closing the modal removes it (see
+  // the URL sync above).
   useEffect(() => {
+    setBootSucceeded(false);
     void (async () => {
       try {
         const me = await getCurrentUser();
@@ -300,6 +333,7 @@ export default function ProjectBoardPage() {
             ? requestedTaskId
             : null,
         );
+        setBootSucceeded(true);
       } catch (err) {
         setBootError((err as Error).message);
       } finally {

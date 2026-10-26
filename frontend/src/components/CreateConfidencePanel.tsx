@@ -2,16 +2,7 @@ import { useEffect, useRef } from "react";
 import type { CreateConfidence, EnforcementMode } from "../lib/api";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { Button } from "./ui/Button";
-
-/** camelCase templateData key -> human label, e.g. "acceptanceCriteria" ->
- *  "Acceptance Criteria". Keeps the missing-fields line readable without a
- *  brittle per-key map. */
-function humanizeField(key: string): string {
-  return key
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (c) => c.toUpperCase())
-    .trim();
-}
+import { humanizeField } from "../lib/humanizeField";
 
 // Defensive cap matching the spec's "top nextActions"; the backend already
 // dedupes + caps at 5 (deriveNextActions), this just guarantees the modal list

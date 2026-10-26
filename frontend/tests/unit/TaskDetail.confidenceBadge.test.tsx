@@ -189,3 +189,21 @@ describe("TaskDetail — Agent Template badge uses the EFFECTIVE (per-task-type)
     expect(screen.queryByText(/Below threshold/)).toBeNull();
   });
 });
+
+describe("TaskDetail: Missing line", () => {
+  it("shows human field labels, not raw camelCase keys", () => {
+    const { container } = render(
+      <TaskDetail
+        task={makeTask({ templateData: { goal: "x" } })}
+        {...baseProps}
+        confidenceThreshold={60}
+        taskTypeThresholds={null}
+      />,
+    );
+    const line = container.querySelector(".td-conf-missing");
+    expect(line).not.toBeNull();
+    expect(line?.textContent).toMatch(/^Missing: /);
+    expect(line?.textContent).not.toMatch(/[a-z][A-Z]/);
+    expect(line?.textContent).toMatch(/[A-Z][a-z]+ [A-Z][a-z]+/);
+  });
+});

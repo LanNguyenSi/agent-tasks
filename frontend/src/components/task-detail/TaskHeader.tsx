@@ -7,11 +7,11 @@
 // component only renders the action row (variant="modal").
 // In the PAGE context the full breadcrumb + H1 + action row render.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Task, User, TransitionRuleFailure } from "@/lib/api";
 import { normalizeStatus } from "@/lib/status";
-import { boardHref } from "@/lib/routes";
+import { boardHref, projectsHref } from "@/lib/routes";
 import { DEMOTE_LABEL, demoteBlockedHint } from "@/lib/backlogDemote";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { Icon } from "@/components/ui/Icon";
@@ -51,8 +51,6 @@ interface TaskHeaderProps {
   task: Task;
   user: User | null;
   variant: "modal" | "page";
-  /** Team display name (page context only) */
-  teamName?: string;
   /** Team id — used to build breadcrumb link */
   teamId?: string;
   /** Project display name (page context only) */
@@ -109,7 +107,6 @@ export default function TaskHeader({
   task,
   user,
   variant,
-  teamName,
   teamId,
   projectName,
   projectId,
@@ -132,6 +129,17 @@ export default function TaskHeader({
   const overflowRef = useRef<HTMLButtonElement>(null);
 
   // ── Admin status override ─────────────────────────────────────────────
+  // The control lives behind the "More actions" menu: `adminOpen` shows it.
+  const [adminOpen, setAdminOpen] = useState(false);
+  const adminRowRef = useRef<HTMLDivElement>(null);
+  const adminHintRef = useRef<HTMLSpanElement>(null);
+  // Opening the row moves focus to its first control: the status picker, or
+  // the "no status changes" hint when the workflow offers none.
+  useEffect(() => {
+    if (!adminOpen) return;
+    const picker = adminRowRef.current?.querySelector<HTMLElement>('[role="combobox"]');
+    (picker ?? adminHintRef.current)?.focus();
+  }, [adminOpen]);
   const [overrideTarget, setOverrideTarget] = useState("");
   const [overrideBusy, setOverrideBusy] = useState(false);
   const [blocked, setBlocked] = useState<
@@ -169,6 +177,15 @@ export default function TaskHeader({
     } finally {
       setOverrideBusy(false);
     }
+  }
+
+  function closeAdminRow() {
+    setAdminOpen(false);
+    setBlocked(null);
+    setShowForceForm(false);
+    setForceReason("");
+    setOverrideTarget("");
+    overflowRef.current?.focus();
   }
 
   function cancelForceForm() {
@@ -248,14 +265,10 @@ export default function TaskHeader({
               </span>
             </>
           )}
-          {teamName && (
-            <>
-              <Link href={boardHref({ teamId })}>{teamName}</Link>
-              <span className="td-breadcrumb-sep" aria-hidden="true">
-                /
-              </span>
-            </>
-          )}
+          <Link href={projectsHref({ teamId })}>Projects</Link>
+          <span className="td-breadcrumb-sep" aria-hidden="true">
+            /
+          </span>
           {projectName && projectId && (
             <>
               <Link href={boardUrl}>{projectName}</Link>
@@ -264,7 +277,7 @@ export default function TaskHeader({
               </span>
             </>
           )}
-          <span>Task</span>
+          <span aria-current="page">{task.title}</span>
         </nav>
       )}
 
@@ -386,6 +399,29 @@ export default function TaskHeader({
               onClose={() => setOverflowOpen(false)}
               align="end"
             >
+              {isProjectAdmin ? (
+                <button
+                  type="button"
+                  className="app-dropdown-item"
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    setAdminOpen(true);
+                  }}
+                >
+                  Change status…
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="app-dropdown-item app-dropdown-item-disabled"
+                  disabled
+                >
+                  Change status (admins only)
+                  <span className="app-dropdown-item-reason">
+                    Only project admins can override task status
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 className="app-dropdown-item app-dropdown-item-danger"
@@ -401,15 +437,14 @@ export default function TaskHeader({
         )}
       </div>
 
-      {/* Admin status override: visible to every human, disabled with a
-          reason for non-admins — surfacing the boundary is the point, not
-          hiding it. Never rendered mid-edit (mirrors the other controls above). */}
-      {!isEditing && (
-        <div className="td-admin-row">
+      {/* Admin status override: opened from the "More actions" menu (admins
+          only; non-admins see a disabled menu entry with the reason). Never
+          rendered mid-edit (mirrors the other controls above). */}
+      {!isEditing && isProjectAdmin && adminOpen && (
+        <div className="td-admin-row" ref={adminRowRef}>
           <span className="td-admin-row-kicker">Admin</span>
-          {isProjectAdmin ? (
-            noOutgoingEdges ? (
-              <span className="td-transition-hint">
+          {noOutgoingEdges ? (
+              <span className="td-transition-hint" ref={adminHintRef} tabIndex={-1}>
                 No status changes are defined from this state in the workflow.
               </span>
             ) : (
@@ -432,22 +467,10 @@ export default function TaskHeader({
                   Set status
                 </Button>
               </>
-            )
-          ) : (
-            <button
-              type="button"
-              className="td-btn-transition"
-              disabled
-              title="Only project admins can override task status"
-            >
-              Change status
-            </button>
-          )}
-          {!isProjectAdmin && (
-            <span className="td-transition-hint">
-              Only project admins can override task status
-            </span>
-          )}
+            )}
+          <Button size="sm" variant="ghost" onClick={closeAdminRow} disabled={overrideBusy}>
+            Close
+          </Button>
 
           {blocked && (
             <div className="td-admin-blocked">

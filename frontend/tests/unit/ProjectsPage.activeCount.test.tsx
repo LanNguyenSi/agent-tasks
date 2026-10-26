@@ -69,6 +69,19 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
+describe("/projects: heading", () => {
+  it("is the H1 'Projects' with the team name as the H2 below it", async () => {
+    vi.mocked(getTasks).mockResolvedValue([]);
+    render(<ProjectsPage />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Projects" })).toBeInTheDocument();
+    const teamHeading = screen.getByRole("heading", { level: 2, name: TEAM.name });
+    expect(teamHeading).toBeInTheDocument();
+    // Its own class (secondary text colour), not the muted count style.
+    expect(teamHeading).toHaveClass("teams-team-name");
+    expect(teamHeading).not.toHaveClass("teams-project-count");
+  });
+});
+
 describe("/projects: active task count", () => {
   it("counts open and in_progress only", async () => {
     vi.mocked(getTasks).mockResolvedValue(

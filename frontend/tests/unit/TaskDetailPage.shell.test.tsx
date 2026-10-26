@@ -13,6 +13,7 @@ const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
   useParams: () => ({ id: "task-1" }),
+  usePathname: () => "/tasks/task-1",
   useSearchParams: () => new URLSearchParams(""),
 }));
 
@@ -95,5 +96,14 @@ describe("/tasks/[id] page frame", () => {
     const body = await screen.findByText("task body");
     const main = expectWideFlushFrame();
     expect(main.querySelector(".pshell-content > .td-page")).toBe(body);
+  });
+});
+
+describe("/tasks/[id] document title", () => {
+  it("reads 'Task - agent-tasks' while loading and '<task title> - agent-tasks' once loaded", async () => {
+    render(<TaskDetailPage />);
+    expect(document.title).toBe("Task - agent-tasks");
+    await screen.findByText("task body");
+    expect(document.title).toBe("A task - agent-tasks");
   });
 });

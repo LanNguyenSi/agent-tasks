@@ -9,11 +9,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 
-const navState = vi.hoisted(() => ({ pathname: "/" }));
+const navState = vi.hoisted(() => ({ pathname: "/", search: "" }));
 vi.mock("next/navigation", () => ({
   usePathname: () => navState.pathname,
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(navState.search),
 }));
 
 import AppHeader from "../../src/components/AppHeader";
@@ -25,7 +25,10 @@ function navHref(name: string): string {
   return links[0].getAttribute("href") ?? "";
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  navState.search = "";
+});
 
 describe("AppHeader Projects nav", () => {
   it("links to /projects and is current on the list page (query not part of pathname)", () => {
@@ -54,5 +57,42 @@ describe("AppHeader Projects nav", () => {
     const link = screen.getAllByRole("link", { name: "Projects" })[0];
     expect(link.hasAttribute("aria-current")).toBe(false);
     expect(navHref("Projects")).not.toBe("/teams");
+  });
+});
+
+describe("AppHeader on /tasks/[id] opened from the board", () => {
+  function current(name: string): boolean {
+    return screen.getAllByRole("link", { name })[0].getAttribute("aria-current") === "page";
+  }
+
+  it("keeps Projects current and not Tasks for ?from=board", () => {
+    navState.pathname = "/tasks/t1";
+    navState.search = "from=board";
+    render(<AppHeader user={USER} />);
+    expect(current("Projects")).toBe(true);
+    expect(current("Tasks")).toBe(false);
+  });
+
+  it("keeps Tasks current for a bare visit and for a list-URL from", () => {
+    navState.pathname = "/tasks/t1";
+    for (const search of ["", "from=%2Ftasks%3Fscope%3Dopen"]) {
+      navState.search = search;
+      const { unmount } = render(<AppHeader user={USER} />);
+      expect(current("Tasks"), search).toBe(true);
+      expect(current("Projects"), search).toBe(false);
+      unmount();
+    }
+  });
+
+  it("ignores from=board on the /tasks list itself and on a repeated from", () => {
+    navState.pathname = "/tasks";
+    navState.search = "from=board";
+    const first = render(<AppHeader user={USER} />);
+    expect(current("Tasks")).toBe(true);
+    first.unmount();
+    navState.pathname = "/tasks/t1";
+    navState.search = "from=board&from=board";
+    render(<AppHeader user={USER} />);
+    expect(current("Tasks")).toBe(true);
   });
 });
