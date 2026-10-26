@@ -207,7 +207,7 @@ describe("home page: one scoped request per widget", () => {
     const opts = calls.map((c) => c[1]);
     expect(opts).toEqual(
       expect.arrayContaining([
-        { status: "backlog,open,in_progress,review", mine: true, limit: 10 },
+        { status: "open,in_progress,review", mine: true, limit: 10 },
         { status: "open,in_progress,review", priority: "CRITICAL,HIGH", limit: 10 },
         { status: "backlog", limit: 10 },
         { status: "open,in_progress", limit: 500 },
@@ -333,6 +333,10 @@ describe("home page: rows of a response that ignores a filter", () => {
       makeTask({ status: "done", title: "Finished one" }),
       makeTask({ status: "backlog", title: "A draft" }),
       makeTask({ status: "review", title: "Under review" }),
+      makeTask({ status: "open", title: "Someone else's", claimedByUserId: "someone-else" }),
+      makeTask({ status: "open", title: "Mine and open", claimedByUserId: ME }),
+      makeTask({ status: "backlog", title: "Urgent draft", priority: "HIGH" }),
+      makeTask({ status: "open", title: "Urgent and open", priority: "CRITICAL" }),
     ];
     mockGetTeamTasks.mockResolvedValue({
       tasks: all,
@@ -347,6 +351,10 @@ describe("home page: rows of a response that ignores a filter", () => {
     expect(within(widget("In Review")).queryByText("Under review")).not.toBeNull();
     expect(within(widget("In Review")).queryByText("Finished one")).toBeNull();
     expect(within(widget("Done · 14 days")).queryByText("Finished one")).not.toBeNull();
+    expect(within(widget("My Tasks")).queryByText("Mine and open")).not.toBeNull();
+    expect(within(widget("My Tasks")).queryByText("Someone else's")).toBeNull();
+    expect(within(widget("Priority (High / Critical)")).queryByText("Urgent and open")).not.toBeNull();
+    expect(within(widget("Priority (High / Critical)")).queryByText("Urgent draft")).toBeNull();
   });
 });
 

@@ -72,11 +72,12 @@ export interface WidgetRequest {
  * and not from whatever happens to be in one capped slice of the whole team
  * (the backend returns at most 500 rows per call, newest update first).
  * `counts` in every response is team-wide and independent of these filters.
- * Statuses follow the `/tasks` scope presets, except `mine`, which spans every
- * non-terminal status of the built-in workflow like the backend's `counts.mine`.
+ * Statuses follow the `/tasks` scope presets, so a widget lists the same rows
+ * its "N total" link opens. (The backend's `counts.mine` also counts claimed
+ * backlog and abandoned tasks, so that total can exceed the rows.)
  */
 export const WIDGET_REQUESTS: Record<WidgetKey, WidgetRequest> = {
-  mine: { status: "backlog,open,in_progress,review", mine: true, limit: WIDGET_LIMIT },
+  mine: { status: "open,in_progress,review", mine: true, limit: WIDGET_LIMIT },
   priority: { status: "open,in_progress,review", priority: "CRITICAL,HIGH", limit: WIDGET_LIMIT },
   backlog: { status: "backlog", limit: WIDGET_LIMIT },
   open: { status: ACTIVE_STATUS_PARAM, limit: ACTIVE_FETCH_LIMIT },
