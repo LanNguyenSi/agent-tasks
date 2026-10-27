@@ -166,14 +166,14 @@ export function safeRedirect(raw: string | null): string | null {
   // The router receives raw, where an encoded ? or # is a plain path
   // character, so the checks above (cut at the first decoded ? or #) do not
   // see the whole path the router resolves. Require raw to resolve to
-  // itself: same origin, and no dot segment or other normalisation.
+  // itself, with no dot segment or other normalisation.
   let resolved: URL;
   try {
     resolved = new URL(raw, "http://redirect.invalid");
   } catch {
     return null;
   }
-  if (resolved.origin !== "http://redirect.invalid") return null;
+  // A single leading / keeps the origin; any other shape fails the equality.
   if (resolved.pathname + resolved.search !== raw) return null;
   if (raw.startsWith("/invite/")) return raw;
   if (PROJECTS_REDIRECT.test(raw)) return raw;
