@@ -268,3 +268,9 @@ export async function projectGroundingContext(
   }), "utf8");
   return { bytes, digest: createHash("sha256").update(bytes).digest("hex") };
 }
+
+/** Whether `task` sits in a work state of its own workflow outside review: there only the claim and scope path can admit a grounding attempt. */
+export async function isInClaimPathState(db: Prisma.TransactionClient, task: GroundingTask): Promise<boolean> {
+  const { def } = await groundingWorkflow(db, task);
+  return isWorkState(def, task.status) && !isReviewState(def, task.status);
+}

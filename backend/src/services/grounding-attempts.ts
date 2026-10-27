@@ -12,7 +12,7 @@ import { verifyGroundingReceipt, GroundingReceiptVerificationError, type Groundi
 import {
   GROUNDING_POLICY, GroundingAccessError, NO_CLAIM_REFUSAL, tokenScopeMessage, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
   mismatch, projectGroundingContext, resolveGroundingTarget, unavailable,
-  resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState,
+  resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState, isInClaimPathState,
   type GroundingAuthority, type GroundingHeadProvider, type GroundingIntent, type GroundingTarget, type GroundingTask,
 } from "./grounding-context.js";
 
@@ -103,12 +103,14 @@ export class GroundingAttemptsService {
   /**
    * Pre-parse admission grants only one of the installed route capabilities:
    * the claim and scope check, or else merge eligibility. When merge
-   * eligibility refuses too (a forbidden, or a bad_state because the task is
-   * not in a review state, so the merge route does not apply), the caller
-   * gets the claim and scope refusal: the request's intent is not read yet,
-   * and naming a merge precondition would send an ordinary caller after a
-   * merge scope or gate it does not need. Any other merge-eligibility error
-   * (an ambiguous review workflow, an unavailable definition) is its own answer.
+   * eligibility refuses too, the caller gets the claim and scope refusal: the
+   * request's intent is not read yet, and naming a merge precondition would
+   * send an ordinary caller after a merge scope or gate it does not need. That
+   * holds for a forbidden, and for the merge route's bad_state on a task in a
+   * work state outside review (the claim path's own state, where the claim or
+   * scope is what refuses). Any other merge-eligibility error keeps its own
+   * answer: bad_state on the initial or a terminal state (no claim or scope
+   * would help there), an ambiguous review workflow, an unavailable definition.
    */
   async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {
@@ -120,7 +122,7 @@ export class GroundingAttemptsService {
         try { await resolveTaskMergeTarget(db, task, actor, this.authority); }
         catch (fallback) {
           if (fallback instanceof GroundingAccessError && fallback.code === "forbidden") throw error;
-          if (fallback instanceof GroundingAccessError && fallback.code === "bad_state" && !await isInReviewState(db, task)) throw error;
+          if (fallback instanceof GroundingAccessError && fallback.code === "bad_state" && await isInClaimPathState(db, task)) throw error;
           throw fallback;
         }
       }

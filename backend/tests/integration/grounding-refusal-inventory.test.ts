@@ -42,8 +42,9 @@
  * RE   services/grounding-context.ts:139                    TGA intent merge      message: self-merge blocked (work claimant, work state)
  * RF   services/grounding-completion.ts:122, LEGACY_LOCAL   TM                    message: self-merge blocked on an admin-migrated task
  * RA-RD, RG, RH  TGA admission precedence (grounding-attempts.ts authorizeRouteIssue): the claim / scope refusal of
- *      :80 / :85 wins over a merge-eligibility refusal and over its bad_state for a task outside a review state;
- *      any other merge-eligibility error (RH: an ambiguous review workflow) keeps its own answer
+ *      :80 / :85 wins over a merge-eligibility refusal and over the merge route's bad_state on a work state outside
+ *      review (RC); any other merge-eligibility error keeps its own answer (RH: an ambiguous review workflow; the
+ *      bad_state on open and done, pinned by grounding-v2-completion.test.ts "standalone retains ... denial")
  *
  * Deliberately bare or unreachable, not rows of this table:
  *  - PRC / PRM callers without access, and a missing task: the legacy handler's own answer via next()
@@ -60,7 +61,7 @@
  *  - A linked task of another project in a multi-task merge that the caller cannot write: bare from
  *    grounding-operations.ts:49, so the group's membership of a project the caller cannot see stays unobservable.
  *  - Other verbs, not behind these routes: grounding-direct-*.ts, grounding-creation.ts, grounding-migration.*,
- *    the receipt upload (grounding-attempts.ts:136 and :266) and direct attempt issue (:204).
+ *    the receipt upload (grounding-attempts.ts:138 and :268) and direct attempt issue (:206).
  */
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
@@ -279,7 +280,7 @@ const rows: Row[] = [
     run: async () => app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null, foreign.token)),
     expected: { status: 403, body: { error: "forbidden" } } },
   // TGA admission precedence (before the intent is read): the claim and scope check wins over a merge-eligibility
-  // refusal; a bad_state because the task is not in a review state counts as a refusal; any other merge-eligibility
+  // refusal, and over the merge route's bad_state on a work state outside review; any other merge-eligibility
   // error keeps its own answer.
   { id: "RA", label: "TGA finish on an in_progress task the agent did not claim, token without github:pr_merge: the claim refusal, not the merge scope",
     run: async () => { await data({ claimedByAgentId: null, claimedByUserId: null }); await scopes(["tasks:transition", "tasks:update", "tasks:claim"]); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null)); },

@@ -624,7 +624,10 @@ it.each(Object.keys(standaloneRefusals))("R1-H1 standalone retains %s denial bef
   if (["open", "in_progress", "done"].includes(denial)) await store.db.task.update({ where: { id: f.taskId }, data: { status: denial } });
   const a = app(); const before = await snapshot();
   const refusal = standaloneRefusals[denial]!;
-  expect((await a.fetch(request({ intent: "merge" }, "grounding-attempts", null))).status).toBe(refusal.status);
+  // On in_progress (a work state outside review) the attempt route answers the claim path's own refusal: this
+  // merge-only token lacks tasks:transition. On open and done the merge route's bad_state stays.
+  const attemptStatus = denial === "in_progress" ? 403 : refusal.status;
+  expect((await a.fetch(request({ intent: "merge" }, "grounding-attempts", null))).status).toBe(attemptStatus);
   const response = await a.fetch(request({}, "merge"));
   expect({ status: response.status, body: await response.json() }).toEqual({ status: refusal.status, body: refusal.body });
   expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
