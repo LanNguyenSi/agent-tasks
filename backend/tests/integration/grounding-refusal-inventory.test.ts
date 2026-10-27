@@ -2,51 +2,60 @@
  * Inventory of the Grounding `forbidden` refusals behind pull_requests_create
  * (PRC), pull_requests_merge (PRM), task_merge (TM), task_finish approve /
  * request_changes / work (TFA / TFR / TFW), task_abandon (TAB) and
- * task_grounding_attempt_create (TGA). Row id = the id in the inventory table
- * of the task's evidence; every row of the table-driven test below pins the
- * exact response body of one reachable messaged site. Every message is raised
- * only after the caller's access to the project was verified (route-level
- * canWrite / hasProjectAccess, the TGA admit step, or the operation access
- * step that precedes the decision), so none reveals more than the caller may see.
+ * task_grounding_attempt_create (TGA). The full table with the call path and
+ * proof per site is the task's site-inventory evidence; this is its compact
+ * form. Row id = inventory id: every row of the table-driven test below pins
+ * the exact response body of one reachable messaged site. Every message is
+ * raised only after the caller's access to the project was verified (the
+ * route's own canWrite / hasProjectAccess, the TGA admit step, or the
+ * operation-access step that precedes the decision), so none reveals more
+ * than the caller may see.
  *
- * id   site (file:line)                                   verbs               decision
- * I01  routes/grounding-github.ts:69                      PRC                 message: absent scopes / Agent token required
- * I02  routes/grounding-github.ts:115                     PRM                 message: absent scopes / Agent token required
- * I03  routes/grounding-task-completion.ts:98             TM TF* TAB          message: absent admission scope
- * I04  routes/grounding-task-completion.ts:103            TM TF* TAB          message: No write access to this project
- * I05  routes/grounding-task-completion.ts:153            TF*                 message: neither claim held
- * I06  services/grounding-context.ts:95 (:83/:84 builder) TM PRM              message: review lock missing / held by claimant
- * I07  services/grounding-context.ts:99                   TM PRM              message: transition role
- * I08  services/grounding-context.ts:100                  TM PRM              message: allowAgentPrMerge consent
- * I09  services/grounding-completion.ts:122               TM PRM TF+autoMerge message: self-merge blocked
- * I10  services/grounding-completion-gates.ts:28          TM PRM TF+autoMerge message: foreign deliverable
- * I11  services/grounding-context.ts:124                  TFA                 message: review claim required
- * I12  services/grounding-context.ts:126                  TFA                 message: review approval gate
- * I13  services/grounding-context.ts:142                  TFW TFA             message: transition role
- * I14  services/grounding-completion.ts:129 (two branches) TFR                message: review claim / approval gate
- * I15  services/grounding-completion-gates.ts:26          TFR                 message: transition role
- * I16  services/grounding-completion.ts:160               TAB                 message: neither claim held
- * I17  services/grounding-completion.ts:183               TM PRM TF TAB       message: active attempt belongs to another caller
- * I18  services/grounding-operations.ts:46                TM PRM TF TAB       message: Idempotency-Key used by another caller
- * I19  services/grounding-github-merge.ts:106             PRM                 message: Idempotency-Key used by another caller
- * I20  services/grounding-merge-provider.ts:17 / :19      TF+autoMerge        message: github:pr_merge scope / consent
- * I21  services/grounding-github-create.ts:46             PRC                 message: allowAgentPrCreate consent
- * I22  services/grounding-github-create.ts:50             PRC (replay)        message: allowAgentPrCreate consent
- * I23  services/grounding-github-create.ts:38             PRC (replay)        message: Idempotency-Key used by another caller
- * I24  services/grounding-attempts.ts:81 (scope)          TGA                 message: absent scope
- * I25  services/grounding-attempts.ts:85                  TGA                 message: neither claim held
- * I26  services/grounding-context.ts:100 via TGA          TGA                 message: allowAgentPrMerge consent (surfaced by routes/grounding.ts onError)
- * I27  services/grounding-attempts.ts:76                  TGA                 deliberately bare: no access, one 403 whatever the task's state (pinned below)
+ * id   site (backend/src/...:line)                          verbs                 decision
+ * I01  routes/grounding-github.ts:69                        PRC                   message: absent scopes / Agent token required
+ * I02  routes/grounding-github.ts:115                       PRM                   message: absent scopes / Agent token required
+ * I03  routes/grounding-task-completion.ts:98               TM TF* TAB            message: absent admission scope
+ * I04  routes/grounding-task-completion.ts:103              TM TF* TAB            message: No write access to this project
+ * I05  routes/grounding-task-completion.ts:153              TF*                   message: neither claim held
+ * I06  services/grounding-context.ts:101 (builder :88-92)   TM PRM                message: review lock missing / held by claimant
+ * I07  services/grounding-context.ts:105                    TM PRM                message: transition role
+ * I08  services/grounding-context.ts:106                    TM PRM                message: allowAgentPrMerge consent
+ * I09  services/grounding-completion.ts:122                 TM PRM TF+autoMerge   message: self-merge blocked
+ * I10  services/grounding-completion-gates.ts:28            TM PRM TF+autoMerge   message: foreign deliverable
+ * I11  services/grounding-context.ts:130                    TFA                   message: review claim required
+ * I12  services/grounding-context.ts:133                    TFA                   message: review approval gate
+ * I13  services/grounding-context.ts:149                    TFW TFA               message: transition role
+ * I14  services/grounding-completion.ts:131 and :133        TFR                   message: review claim / approval gate
+ * I15  services/grounding-completion-gates.ts:26            TFR                   message: transition role
+ * I16  services/grounding-completion.ts:165                 TAB                   message: neither claim held
+ * I17  services/grounding-completion.ts:188                 TM PRM TF TAB         message: active attempt belongs to another caller
+ * I18  services/grounding-operations.ts:46                  TM PRM TF TAB         message: Idempotency-Key used by another caller
+ * I19  services/grounding-github-merge.ts:106               PRM                   message: Idempotency-Key used by another caller
+ * I20  services/grounding-merge-provider.ts:17 and :19      TF+autoMerge          message: github:pr_merge scope / merge consent
+ * I21  services/grounding-github-create.ts:46               PRC                   message: allowAgentPrCreate consent
+ * I22  services/grounding-github-create.ts:50               PRC replay            message: allowAgentPrCreate consent
+ * I23  services/grounding-github-create.ts:38               PRC replay            message: Idempotency-Key used by another caller
+ * I24  services/grounding-attempts.ts:80                    TGA                   message: absent scope
+ * I25  services/grounding-attempts.ts:85                    TGA                   message: neither claim held
+ * I26  services/grounding-context.ts:106 via TGA            TGA                   message: merge consent (routes/grounding.ts error handler carries it)
+ * I27  services/grounding-attempts.ts:76                    TGA                   deliberately bare: no access, one 403 whatever the task's state
  *
- * Deliberately bare, not rows of this table (see the inventory for the proof of each):
- *  - PRC / PRM no-access and missing-task answers are the legacy handler's own (next()); pinned by
- *    grounding-github-routes.test.ts "legacy no-access ... byte-identical" cases.
- *  - Sites reachable only when access, the token or a claim changes between the route's own check and the
- *    locked decision (grounding-github.ts:158, grounding-context.ts:73/:74/:114/:116/:129, grounding-operations.ts:49,
- *    grounding-direct-authority.ts:15, grounding-route-effects.ts:85, grounding-github-create.ts:42, grounding-attempts.ts:81 canWrite),
- *    and sites unreachable from these routes (direct-route descriptors, override reasons, creator_abandon / reopen / release actions).
- *  - A linked task of another project in a multi-task merge group that the caller cannot write: bare, so the
- *    group's membership of a project the caller cannot see stays unobservable.
+ * Deliberately bare or unreachable, not rows of this table:
+ *  - PRC / PRM callers without access, and a missing task: the legacy handler's own answer via next()
+ *    (grounding-github.ts:81-82 and :129-130); pinned by grounding-github-routes.test.ts.
+ *  - Reachable only when access, the token or a claim changes between the route's own check and the locked
+ *    decision (TOCTOU): grounding-github.ts:158, grounding-github-create.ts:42, grounding-operations.ts:49,
+ *    grounding-attempts.ts:81, grounding-route-effects.ts:85, grounding-direct-authority.ts:15,
+ *    grounding-context.ts:73, :74 and :136 (the last pinned by the unit test in grounding-context.test.ts).
+ *  - Unreachable from these routes because an earlier identical predicate refuses first or no route builds the
+ *    request: grounding-context.ts:99, :120, :122, :139, grounding-completion.ts:91 (route scope check first),
+ *    :78, :93, :103, :106 (direct-route descriptors and override reasons exist only on the direct routes),
+ *    :146, :156, :160 (creator_abandon, reopen, release are built by no route), grounding-github-create.ts:15,
+ *    grounding-merge-provider.ts:17 on PRM and TM (decide checks the scope first).
+ *  - A linked task of another project in a multi-task merge that the caller cannot write: bare from
+ *    grounding-operations.ts:49, so the group's membership of a project the caller cannot see stays unobservable.
+ *  - Other verbs, not behind these routes: grounding-direct-*.ts, grounding-creation.ts, grounding-migration.*,
+ *    the receipt upload (grounding-attempts.ts:122 and :252) and direct attempt issue (:190).
  */
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
