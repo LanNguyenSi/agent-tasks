@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  authHref,
   boardHref,
   projectsHref,
   projectHubHref,
@@ -158,6 +159,28 @@ describe("taskHref", () => {
     const from = "/tasks?scope=open&status=open%2Creview&q=a%20b";
     const query = taskHref("t-1", { from }).split("?")[1]!;
     expect(safeBackHref(new URLSearchParams(query).get("from"))).toBe(from);
+  });
+});
+
+describe("authHref", () => {
+  it("encodes the location into one redirect parameter", () => {
+    expect(authHref("/projects/p1/board?taskId=t1")).toBe(
+      "/auth?redirect=%2Fprojects%2Fp1%2Fboard%3FtaskId%3Dt1",
+    );
+  });
+
+  it("round-trips a multi-parameter query: searchParams.get returns the location whole", () => {
+    const location = "/projects/p1/board?taskId=t1&view=list";
+    expect(new URL(authHref(location), "http://h").searchParams.get("redirect")).toBe(
+      location,
+    );
+  });
+
+  it("round-trips a location without a query too", () => {
+    const location = "/projects/p1";
+    expect(new URL(authHref(location), "http://h").searchParams.get("redirect")).toBe(
+      location,
+    );
   });
 });
 

@@ -2,7 +2,8 @@
 /**
  * The real /projects/[id]/board route is the hub layout wrapping the board
  * page, and both load the project. A project that answers 404/403 lands on
- * the Projects page; any other failure (500, network) must keep the user on
+ * the Projects page, a 401 lands on sign-in with the board's path and query
+ * as the way back; any other failure (500, network) must keep the user on
  * the board's own "Could not load tasks" banner with Retry, with no
  * navigation from either component.
  */
@@ -147,9 +148,24 @@ describe("board route (hub layout + board page)", () => {
     }
   });
 
+  it("sends a 401 from the project load to sign-in with the board path and query as the way back", async () => {
+    window.history.replaceState({}, "", "/projects/p-1/board?taskId=k-1");
+    mockGetProject.mockRejectedValue(
+      new ApiRequestError("unauthorized", "Invalid or expired token", 401),
+    );
+    renderRoute();
+
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalled());
+    // The layout and the board both react; both go to the same sign-in URL.
+    expect(redirectTargets()).toEqual([
+      "/auth?redirect=%2Fprojects%2Fp-1%2Fboard%3FtaskId%3Dk-1",
+    ]);
+    expect(nav.router.push).not.toHaveBeenCalled();
+    expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
+  });
+
   it.each([
     ["a 500", new ApiRequestError("internal", "Server exploded", 500)],
-    ["a 401", new ApiRequestError("unauthorized", "Not signed in", 401)],
     ["a network failure", new TypeError("Failed to fetch")],
   ])("keeps the board's error banner with Retry and does not navigate on %s", async (_label, err) => {
     mockGetProject.mockRejectedValue(err);
