@@ -19,6 +19,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("../../src/lib/api", () => ({
   logout: vi.fn(() => Promise.resolve()),
+  createTeam: vi.fn(),
 }));
 
 import AppHeader from "../../src/components/AppHeader";
@@ -213,13 +214,16 @@ describe("AppHeader team switcher", () => {
     expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false"]);
   });
 
-  it("ends the team menu with a + New team link to the create form", () => {
+  it("ends the team menu with a + New team entry that opens the dialog, not a page", () => {
     render(<AppHeader user={USER} teams={[T1, T2]} />);
     fireEvent.click(screen.getByRole("button", { name: "Switch team, current team Team One" }));
-    const link = within(screen.getByRole("menu", { name: "Teams" })).getByRole("menuitem", {
+    const item = within(screen.getByRole("menu", { name: "Teams" })).getByRole("menuitem", {
       name: "+ New team",
     });
-    expect(link.getAttribute("href")).toBe("/onboarding?create=team");
+    expect(item.getAttribute("href")).toBeNull();
+    fireEvent.click(item);
+    expect(screen.getByRole("dialog", { name: "New team" })).toBeInTheDocument();
+    expect(routerMocks.push).not.toHaveBeenCalled();
   });
 
   it("follows the current-team rule: ?teamId, then the remembered team, then the first", () => {
@@ -385,7 +389,7 @@ describe("AppHeader avatar menu", () => {
     expect(entries(menu)).toEqual([
       ["Settings", "/settings"],
       ["Team settings", "/settings/team?teamId=t1"],
-      ["New team", "/onboarding?create=team"],
+      ["New team", null],
       ["Logout", null],
     ]);
   });

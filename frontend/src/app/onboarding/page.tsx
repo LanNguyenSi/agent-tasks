@@ -3,15 +3,12 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getCurrentUser, createTeam, logout, type User } from "../../lib/api";
+import { getCurrentUser, logout, type User } from "../../lib/api";
 import { getAccessContext } from "../../lib/access";
-import { rememberTeam } from "../../lib/currentTeam";
-import { sectionHref } from "../../lib/teamSwitch";
-import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
-import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import { AuthShell } from "../../components/AuthShell";
+import CreateTeamForm from "../../components/CreateTeamForm";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -20,16 +17,6 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<"loading" | "create-team" | "redirect">("loading");
   // A team-less user who already has shared projects may skip team creation.
   const [canSkip, setCanSkip] = useState(false);
-  // `?create=team`: a user who already has a team opens the form on purpose
-  // (the "New team" entries in the header), so the has-a-team redirect is off.
-  const [createMode, setCreateMode] = useState(false);
-
-  // Create team form
-  const [teamName, setTeamName] = useState("");
-  const [teamSlug, setTeamSlug] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [slugTouched, setSlugTouched] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -42,11 +29,7 @@ export default function OnboardingPage() {
       const ctx = await getAccessContext();
       setLoading(false);
 
-      const wantsCreate =
-        new URLSearchParams(window.location.search).get("create") === "team";
-      setCreateMode(wantsCreate);
-
-      if (ctx.teams.length > 0 && !wantsCreate) {
+      if (ctx.teams.length > 0) {
         // Already has teams, send them straight to home. Only this branch
         // redirects: a user without teams stays here (the form, plus a skip
         // link when they have shared projects), so /home <-> /onboarding
@@ -60,49 +43,14 @@ export default function OnboardingPage() {
     })();
   }, [router]);
 
-  // Auto-generate slug from name.
-  function handleNameChange(name: string) {
-    setTeamName(name);
-    // Don't clobber a slug the user has hand-edited.
-    if (!slugTouched) {
-      setTeamSlug(
-        name
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, "")
-          .replace(/\s+/g, "-")
-          .slice(0, 50),
-      );
-    }
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!teamName.trim() || !teamSlug.trim()) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const team = await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
-      // Switch to the new team: remember it and open its Home.
-      rememberTeam(team.id);
-      router.replace(sectionHref("home", team.id));
-    } catch (err) {
-      setError((err as Error).message);
-      setCreating(false);
-    }
-  }
-
   if (loading || step === "loading" || step === "redirect") {
     return <FullPageLoader label="Loading..." />;
   }
 
   return (
     <AuthShell
-      heading={createMode ? "Create a new team" : "Create your first team"}
-      subtitle={
-        createMode
-          ? "Your other teams stay as they are."
-          : "You will be up and running in under a minute."
-      }
+      heading="Create your first team"
+      subtitle="You will be up and running in under a minute."
     >
       {/* Sign-out link: ghost Button aligned to the right, above the card */}
       <div className="auth-signout-row">
@@ -119,7 +67,7 @@ export default function OnboardingPage() {
       </div>
 
       <div className="auth-form-grid">
-        {user && !createMode && (
+        {user && (
           <div className="auth-welcome-header">
             {user.avatarUrl && (
               // eslint-disable-next-line @next/next/no-img-element -- external avatar URL, not a static asset
@@ -138,63 +86,9 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        <form onSubmit={(e) => void handleCreate(e)} className="auth-form-grid">
-          <FormField label="Team name">
-            <input
-              type="text"
-              autoComplete="organization"
-              value={teamName}
-              onChange={(e) => handleNameChange(e.target.value)}
-              placeholder="My Team"
-              required
-            />
-          </FormField>
+        <CreateTeamForm />
 
-          <FormField
-            label="Slug"
-            hint={
-              "Used in URLs. Lowercase, hyphens only." +
-              (!slugTouched ? " Auto-generated from the name." : "")
-            }
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              value={teamSlug}
-              onChange={(e) => {
-                setSlugTouched(true);
-                setTeamSlug(e.target.value);
-              }}
-              placeholder="my-team"
-              pattern="[a-z0-9-]+"
-              required
-              className="auth-slug-input"
-            />
-          </FormField>
-
-          {error && (
-            <AlertBanner tone="danger" title="Failed to create team">
-              {error}
-            </AlertBanner>
-          )}
-
-          <Button
-            type="submit"
-            disabled={creating || !teamName || !teamSlug}
-            loading={creating}
-            className="auth-btn-full"
-          >
-            Create Team
-          </Button>
-        </form>
-
-        {createMode && (
-          <p className="auth-muted-line">
-            <Link href="/home">Cancel</Link>
-          </p>
-        )}
-
-        {canSkip && !createMode && (
+        {canSkip && (
           <p className="auth-muted-line">
             <Link href="/home">Skip for now</Link>
             {" "}(you can create a team later from Home).
