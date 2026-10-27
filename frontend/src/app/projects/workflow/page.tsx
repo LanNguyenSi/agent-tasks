@@ -2,18 +2,19 @@
 
 /**
  * Legacy redirect: /projects/workflow?projectId=<id>
- * → /projects/<id>/workflow (hub layout route, stage F2).
+ * → /projects/<id>/workflow (hub layout route).
  *
  * Reads the projectId query parameter and issues a client-side
  * router.replace to the canonical hub URL. Missing or invalid IDs
  * show an EmptyState with a "Go to projects" action instead of
- * a broken page.
+ * a broken page. Both states render in the standard page frame.
  */
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import EmptyState from "../../../components/ui/EmptyState";
 import { Button } from "../../../components/ui/Button";
+import { PageShell } from "../../../components/ui/PageShell";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import { projectsHref } from "../../../lib/routes";
 
@@ -37,7 +38,7 @@ export default function WorkflowRedirectPage() {
 
   if (invalid) {
     return (
-      <main className="wf-redirect-shell">
+      <PageShell>
         <EmptyState
           icon="box"
           title="Missing project ID"
@@ -48,13 +49,13 @@ export default function WorkflowRedirectPage() {
             </Button>
           }
         />
-      </main>
+      </PageShell>
     );
   }
 
   // Show a brief loading state while the redirect fires.
   return (
-    <main className="wf-redirect-shell">
+    <PageShell busy>
       <div role="status" aria-busy="true">
         <span className="sr-only">Redirecting to workflow editor…</span>
         <div className="wf-redirect-loading">
@@ -62,6 +63,6 @@ export default function WorkflowRedirectPage() {
           <Skeleton height="3.5rem" radius="var(--radius-lg)" />
         </div>
       </div>
-    </main>
+    </PageShell>
   );
 }

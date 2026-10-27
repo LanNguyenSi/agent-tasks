@@ -196,12 +196,7 @@ export default function ProjectSettingsPage() {
 
   if (loading) {
     return (
-      <div
-        role="status"
-        aria-busy="true"
-        // eslint-disable-next-line no-restricted-syntax
-        style={{ maxWidth: 760 }} /* dynamic: max-width constraint */
-      >
+      <div role="status" aria-busy="true" className="proj-settings-measure">
         <span className="sr-only">Loading settings</span>
         {/* eslint-disable-next-line no-restricted-syntax */}
         <Skeleton height="12rem" radius="var(--radius-lg)" style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing between skeleton blocks */ />
@@ -213,8 +208,7 @@ export default function ProjectSettingsPage() {
   }
 
   return (
-    // eslint-disable-next-line no-restricted-syntax
-    <div style={{ maxWidth: 760 }}> {/* dynamic: max-width constraint */}
+    <div className="proj-settings-measure">
       {error && (
         <div
           // eslint-disable-next-line no-restricted-syntax
