@@ -36,7 +36,11 @@ html[data-theme="light"] {
   /* Text */
   --text: #e8eaee;
   --text-secondary: #a6acb8;
-  --muted: #6d7480;
+  /* #848b98 clears 4.5:1 (WCAG 1.4.3 AA) on every dark surface above, down to
+     --surface-active (4.65); it is 5.81 on --bg against --text-secondary's
+     8.74, so it stays the dimmer step. The earlier #6d7480 was 4.23 on --bg
+     and fell to 3.39 on --surface-active. A unit test pins the ratios. */
+  --muted: #848b98;
 
   /* Accent (one) */
   --primary: #5e6ad2;
@@ -4282,6 +4286,17 @@ html[data-theme="light"] {
 /* Retry button spacing inside AlertBanner */
 .tasks-retry-btn {
   margin-top: var(--space-2);
+}
+
+/* Dismissed load error with no list for the team: compact inline retry
+   inside the table region, so the region is never blank. */
+.tasks-load-failed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 /* Pagination row below the table */

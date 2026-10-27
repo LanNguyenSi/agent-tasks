@@ -24,7 +24,7 @@ const OPTIONS: OptionDef[] = [
         Dual-control. <code>review → done</code> requires a different user or
         agent than the task&apos;s claimant to hold the review lock (via{" "}
         <code>POST /tasks/:id/review/claim</code>). Self-merge attempts are
-        blocked upstream. Team admins can still bypass with a forced transition.
+        blocked upstream. Project admins can still bypass with a forced transition.
       </>
     ),
   },

@@ -211,7 +211,8 @@ function TasksPageInner() {
   // Tagged with its team like the list (null: no error). Dismissing the
   // banner keeps the error and only marks it dismissed: the failed load is
   // still the outcome for this team, so the page does not fall back to its
-  // loading state while no request is in flight.
+  // loading state while no request is in flight. With no list for the team
+  // the region then shows a compact inline retry instead of nothing.
   const [fetchErrorState, setFetchErrorState] = useState<{
     teamId: string;
     message: string;
@@ -223,6 +224,12 @@ function TasksPageInner() {
   const fetchError = teamFetchError && !teamFetchError.dismissed ? teamFetchError.message : null;
   // The current team has neither a list nor an error yet.
   const awaitingTeamPage = selectedTeamId !== null && teamPage === null && teamFetchError === null;
+  // A dismissed error with no list for the team: the region offers a compact
+  // inline retry instead of showing nothing. The loading state returns only
+  // with the next load of this team (this retry, a switch back, or the poll),
+  // never from the dismissal itself.
+  const dismissedErrorNoList =
+    teamPage === null && teamFetchError != null && teamFetchError.dismissed === true;
   // The count, the New task button and its C shortcut wait for the current
   // team's list: before it exists the page would claim "0 tasks", and the
   // create flow "No projects yet", for a team that has both.
@@ -396,6 +403,14 @@ function TasksPageInner() {
     selectedTeam, scope, recency, page, pageSize, sort.column, sort.direction,
     projectIdFilter, mineOnly, searchQuery, statusKey, priorityKey, retryToken,
   ]);
+
+  // Retry the current team's list: the shared Retry path of the error
+  // banner and the inline message. Clearing the error re-arms the loading
+  // state; bumping retryToken starts a fresh request.
+  function retryFetch(): void {
+    setFetchErrorState(null);
+    setRetryToken((t) => t + 1);
+  }
 
   // "/" focuses the search input, "C" opens the create flow (the New-task
   // button advertises the shortcut via its KeyHint chip).
@@ -833,15 +848,7 @@ function TasksPageInner() {
           >
             {fetchError}
             <div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="tasks-retry-btn"
-                onClick={() => {
-                  setFetchErrorState(null);
-                  setRetryToken((t) => t + 1);
-                }}
-              >
+              <Button variant="ghost" size="sm" className="tasks-retry-btn" onClick={retryFetch}>
                 Retry
               </Button>
             </div>
@@ -850,13 +857,21 @@ function TasksPageInner() {
 
         {/* Results: table or empty state, dimmed while fetching. Until the
             current team's list has arrived (first load, or after a team
-            change) the region shows the loading state, and after a failed
-            load of that team only the error banner above. */}
+            change) the region shows the loading state; after a failed load
+            of that team it shows the error banner above, and once that
+            banner is dismissed a compact inline retry. */}
         <div
           className="tasks-table-region"
           aria-busy={isFetching || awaitingTeamPage || undefined}
         >
-          {awaitingTeamPage ? (
+          {dismissedErrorNoList ? (
+            <div className="tasks-load-failed" role="status">
+              <span className="tasks-load-failed-text">{"Couldn't load tasks"}</span>
+              <Button variant="secondary" size="sm" onClick={retryFetch}>
+                Retry
+              </Button>
+            </div>
+          ) : awaitingTeamPage ? (
             <SkeletonList rows={8} rowHeight="3rem" label="Loading tasks" />
           ) : teamPage === null ? null : totalCount === 0 && !isFetching ? (
             <EmptyState
