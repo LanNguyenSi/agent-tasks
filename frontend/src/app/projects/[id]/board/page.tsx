@@ -45,7 +45,7 @@ import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
 import { DEFAULT_CREATE_STATUS } from "../../../../lib/status";
 import { recordRecentProject } from "../../../../lib/recentProjects";
-import { projectsHref } from "../../../../lib/routes";
+import { authHref, projectsHref } from "../../../../lib/routes";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -308,6 +308,14 @@ export default function ProjectBoardPage() {
         try {
           project = await getProject(projectId);
         } catch (err) {
+          // Expired or invalid session (401): sign in with the board's own
+          // location (path and query) as the way back, like the hub layout;
+          // the last-board entry stays, the project may be there again after
+          // a fresh sign-in.
+          if (err instanceof ApiRequestError && err.status === 401) {
+            router.replace(authHref(window.location.pathname + window.location.search));
+            return;
+          }
           // Missing or not accessible: same fallback as the hub layout, and
           // forget the stale last-board entry so /dashboard stops resuming it.
           // Any other failure (500, network) is a boot error with a Retry.
