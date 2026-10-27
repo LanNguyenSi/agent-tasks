@@ -8,7 +8,9 @@
 // flight. The page therefore owns the reveals (React state only: no storage,
 // URL or log), each tagged with the team it was created in, and renders a
 // reveal either inside that team's section or, after a switch, as a banner
-// naming the team it belongs to.
+// naming the team it belongs to. Every create gets its own reveal (several
+// can be open at once, also for one team) and every reveal names its token,
+// so two secrets are never mistaken for each other.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import AlertBanner from "../ui/AlertBanner";
@@ -20,44 +22,48 @@ import { CopyableCode } from "../ui/CopyableCode";
 export const REVEAL_MASK_DELAY_MS = 30_000;
 
 export interface TokenReveal {
+  /** One per create: concurrent creates, even for one team, never share it. */
+  id: string;
   teamId: string;
   teamName: string;
+  /** The name the user gave the token, so a reveal says which secret it is. */
+  tokenName: string;
   rawToken: string;
   masked: boolean;
 }
 
 export interface TokenReveals {
+  /** Newest reveal first (by the time its response arrived). */
   reveals: TokenReveal[];
-  /** Show a new token's secret; a newer one for the same team replaces it. */
-  show: (teamId: string, teamName: string, rawToken: string) => void;
-  dismiss: (teamId: string) => void;
-  /** Show the masked secret again (no new mask timer, as before). */
-  unmask: (teamId: string) => void;
+  /** Show a created token's secret as its own reveal; nothing is replaced. */
+  show: (teamId: string, teamName: string, tokenName: string, rawToken: string) => void;
+  dismiss: (id: string) => void;
+  /** Show the masked secret again (and drop any mask timer, as before). */
+  unmask: (id: string) => void;
   /** Restart the mask timer (after the secret was copied). */
-  startMask: (teamId: string) => void;
+  startMask: (id: string) => void;
 }
 
 export function useTokenReveals(): TokenReveals {
   const [reveals, setReveals] = useState<TokenReveal[]>([]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const alive = useRef(true);
+  const seq = useRef(0);
 
-  const clearTimer = useCallback((teamId: string) => {
-    const t = timers.current.get(teamId);
+  const clearTimer = useCallback((id: string) => {
+    const t = timers.current.get(id);
     if (t) clearTimeout(t);
-    timers.current.delete(teamId);
+    timers.current.delete(id);
   }, []);
 
   const startMask = useCallback(
-    (teamId: string) => {
-      clearTimer(teamId);
+    (id: string) => {
+      clearTimer(id);
       timers.current.set(
-        teamId,
+        id,
         setTimeout(() => {
-          timers.current.delete(teamId);
-          setReveals((prev) =>
-            prev.map((r) => (r.teamId === teamId ? { ...r, masked: true } : r)),
-          );
+          timers.current.delete(id);
+          setReveals((prev) => prev.map((r) => (r.id === id ? { ...r, masked: true } : r)));
         }, REVEAL_MASK_DELAY_MS),
       );
     },
@@ -65,33 +71,30 @@ export function useTokenReveals(): TokenReveals {
   );
 
   const show = useCallback(
-    (teamId: string, teamName: string, rawToken: string) => {
+    (teamId: string, teamName: string, tokenName: string, rawToken: string) => {
       // A create that resolves after the page is gone must not keep a secret
       // (or a timer) alive.
       if (!alive.current) return;
-      setReveals((prev) => [
-        ...prev.filter((r) => r.teamId !== teamId),
-        { teamId, teamName, rawToken, masked: false },
-      ]);
-      startMask(teamId);
+      seq.current += 1;
+      const id = `reveal-${seq.current}`;
+      setReveals((prev) => [{ id, teamId, teamName, tokenName, rawToken, masked: false }, ...prev]);
+      startMask(id);
     },
     [startMask],
   );
 
   const dismiss = useCallback(
-    (teamId: string) => {
-      clearTimer(teamId);
-      setReveals((prev) => prev.filter((r) => r.teamId !== teamId));
+    (id: string) => {
+      clearTimer(id);
+      setReveals((prev) => prev.filter((r) => r.id !== id));
     },
     [clearTimer],
   );
 
   const unmask = useCallback(
-    (teamId: string) => {
-      clearTimer(teamId);
-      setReveals((prev) =>
-        prev.map((r) => (r.teamId === teamId ? { ...r, masked: false } : r)),
-      );
+    (id: string) => {
+      clearTimer(id);
+      setReveals((prev) => prev.map((r) => (r.id === id ? { ...r, masked: false } : r)));
     },
     [clearTimer],
   );
@@ -120,14 +123,14 @@ interface TokenRevealBannerProps {
 }
 
 export function TokenRevealBanner({ reveal, api, foreign = false }: TokenRevealBannerProps) {
-  const { teamId } = reveal;
+  const { id } = reveal;
   return (
     <AlertBanner
       tone="success"
       title={
         foreign
-          ? `Token created for ${reveal.teamName} (shown once)`
-          : "Token created (shown once)"
+          ? `Token "${reveal.tokenName}" created for ${reveal.teamName} (shown once)`
+          : `Token "${reveal.tokenName}" created (shown once)`
       }
     >
       {foreign && (
@@ -141,13 +144,13 @@ export function TokenRevealBanner({ reveal, api, foreign = false }: TokenRevealB
       <CopyableCode
         value={reveal.rawToken}
         masked={reveal.masked}
-        onCopy={() => api.startMask(teamId)}
+        onCopy={() => api.startMask(id)}
       />
       {reveal.masked && (
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => api.unmask(teamId)}
+          onClick={() => api.unmask(id)}
           className="settings-token-reveal"
         >
           Reveal
@@ -156,7 +159,7 @@ export function TokenRevealBanner({ reveal, api, foreign = false }: TokenRevealB
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => api.dismiss(teamId)}
+        onClick={() => api.dismiss(id)}
         className="settings-token-reveal"
       >
         Dismiss

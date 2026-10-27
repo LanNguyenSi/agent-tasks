@@ -78,10 +78,14 @@ export default function TeamSettingsPage() {
     },
     [],
   );
-  // A token created for the team now on screen, while its section was gone,
-  // is not in the list loaded since: load it again.
-  const handleCreatedAway = useCallback((createdTeamId: string) => {
-    if (createdTeamId === teamIdRef.current) setRetryToken((n) => n + 1);
+  // Tokens created for the team now on screen while its section was gone (a
+  // switch away and back). A list loaded before the create answered does not
+  // have them: they are appended to it, so nothing is reloaded and an open
+  // dialog in the section stays open. Cleared with the list, whenever a load
+  // for the team starts.
+  const [addedTokens, setAddedTokens] = useState<AgentToken[]>([]);
+  const handleCreatedAway = useCallback((createdTeamId: string, token: AgentToken) => {
+    if (createdTeamId === teamIdRef.current) setAddedTokens((prev) => [...prev, token]);
   }, []);
 
   useEffect(() => {
@@ -106,6 +110,7 @@ export default function TeamSettingsPage() {
     let cancelled = false;
     setLoadedTokens(null);
     setTokenError(null);
+    setAddedTokens([]);
     getAgentTokens(teamId)
       .then((tokens) => {
         if (!cancelled) setLoadedTokens({ teamId, tokens });
@@ -123,6 +128,9 @@ export default function TeamSettingsPage() {
   }, [teamId, retryToken]);
 
   const foreignReveals = reveals.reveals.filter((r) => r.teamId !== teamId);
+  // The current team's reveals show in its section; while that section is not
+  // there (list loading or failed) they show in its place, never nowhere.
+  const currentReveals = reveals.reveals.filter((r) => r.teamId === teamId);
 
   const tokensForTeam =
     loadedTokens && loadedTokens.teamId === teamId ? loadedTokens.tokens : null;
@@ -219,7 +227,7 @@ export default function TeamSettingsPage() {
               </AlertBanner>
             ))}
             {foreignReveals.map((r) => (
-              <TokenRevealBanner key={r.teamId} reveal={r} api={reveals} foreign />
+              <TokenRevealBanner key={r.id} reveal={r} api={reveals} foreign />
             ))}
 
             {!team ? (
@@ -240,6 +248,7 @@ export default function TeamSettingsPage() {
                 reveals={reveals}
                 onCreateFailed={handleCreateFailed}
                 onCreatedAway={handleCreatedAway}
+                addedTokens={addedTokens}
               />
             ) : (
               <Card>
@@ -248,6 +257,9 @@ export default function TeamSettingsPage() {
                   <p className="settings-section-desc">
                     API tokens for <strong>{team.name}</strong>
                   </p>
+                  {currentReveals.map((r) => (
+                    <TokenRevealBanner key={r.id} reveal={r} api={reveals} />
+                  ))}
                   {errorForTeam ? (
                     <>
                       <AlertBanner tone="danger" title="Could not load API tokens">

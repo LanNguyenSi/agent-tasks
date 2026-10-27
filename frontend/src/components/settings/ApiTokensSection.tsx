@@ -50,6 +50,7 @@ const FALLBACK_SCOPES = [
 const SENSITIVE_SCOPES = new Set(["sso:admin", "github:pr_merge"]);
 
 type TokenRecord = AgentToken;
+const NO_TOKENS: TokenRecord[] = [];
 
 interface ApiTokensSectionProps {
   /** All teams of the caller (drives the empty state and the admin check). */
@@ -71,9 +72,22 @@ interface ApiTokensSectionProps {
   onCreateFailed: (teamId: string, teamName: string, message: string) => void;
   /**
    * A create finished after this section was unmounted and succeeded: the
-   * reveal is already held by the page; the page may reload that team's list.
+   * reveal is already held by the page; the page hands the new token to the
+   * section of that team (if it is on screen) through `addedTokens`.
    */
-  onCreatedAway: (teamId: string) => void;
+  onCreatedAway: (teamId: string, token: TokenRecord) => void;
+  /**
+   * Tokens created for `selectedTeamId` while its section was gone. They are
+   * appended to the list (once each), so the section is not reloaded and an
+   * open dialog survives.
+   */
+  addedTokens?: TokenRecord[];
+}
+
+function mergeById(base: TokenRecord[], extra: TokenRecord[]): TokenRecord[] {
+  const known = new Set(base.map((t) => t.id));
+  const fresh = extra.filter((t) => !known.has(t.id));
+  return fresh.length ? [...base, ...fresh] : base;
 }
 
 export default function ApiTokensSection({
@@ -83,8 +97,20 @@ export default function ApiTokensSection({
   reveals,
   onCreateFailed,
   onCreatedAway,
+  addedTokens = NO_TOKENS,
 }: ApiTokensSectionProps) {
-  const [tokens, setTokens] = useState<TokenRecord[]>(initialTokens);
+  const [tokens, setTokens] = useState<TokenRecord[]>(() =>
+    mergeById(initialTokens, addedTokens),
+  );
+  // Added tokens already in the list: a token revoked here must not come back
+  // when a later one is added.
+  const appliedAdded = useRef(new Set(addedTokens.map((t) => t.id)));
+  useEffect(() => {
+    const fresh = addedTokens.filter((t) => !appliedAdded.current.has(t.id));
+    if (fresh.length === 0) return;
+    fresh.forEach((t) => appliedAdded.current.add(t.id));
+    setTokens((prev) => mergeById(prev, fresh));
+  }, [addedTokens]);
   // False once this section is gone: a create that finishes later must report
   // to the page, not to state nobody renders any more.
   const mountedRef = useRef(true);
@@ -114,7 +140,7 @@ export default function ApiTokensSection({
   const [renaming, setRenaming] = useState(false);
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
-  const reveal = reveals.reveals.find((r) => r.teamId === selectedTeamId);
+  const teamReveals = reveals.reveals.filter((r) => r.teamId === selectedTeamId);
 
   const docsUrl = `${API_BASE}/docs`;
   const openApiUrl = `${API_BASE}/api/openapi.json`;
@@ -145,9 +171,9 @@ export default function ApiTokensSection({
         name: tokenName.trim(),
         scopes: selectedScopes,
       });
-      reveals.show(createdFor.id, createdFor.name, result.rawToken);
+      reveals.show(createdFor.id, createdFor.name, result.token.name, result.rawToken);
       if (!mountedRef.current) {
-        onCreatedAway(createdFor.id);
+        onCreatedAway(createdFor.id, result.token);
         return;
       }
       setTokens((prev) => [...prev, result.token]);
@@ -286,7 +312,9 @@ export default function ApiTokensSection({
             </AlertBanner>
           )}
 
-          {reveal && <TokenRevealBanner reveal={reveal} api={reveals} />}
+          {teamReveals.map((r) => (
+            <TokenRevealBanner key={r.id} reveal={r} api={reveals} />
+          ))}
 
           {teams.length === 0 ? (
             <EmptyState
