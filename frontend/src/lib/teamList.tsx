@@ -201,9 +201,10 @@ export function useOptionalTeamList(): TeamListValue | null {
  *
  * `userReady`: the page's session check answered with a user. Without a
  * session the page only redirects to /auth: it resolves no team, writes
- * nothing into the URL and asks for nothing.
+ * nothing into the URL and asks for nothing. Required, so every page states
+ * its gate.
  */
-export function usePageTeams(userReady = true): {
+export function usePageTeams(userReady: boolean): {
   teams: Team[];
   status: TeamListStatus;
   error: Error | null;
