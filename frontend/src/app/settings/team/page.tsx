@@ -18,9 +18,9 @@ import { useCurrentTeam } from "../../../lib/teamSwitch";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
-import { FullPageLoader } from "../../../components/ui/FullPageLoader";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { PageShell } from "../../../components/ui/PageShell";
+import { SkeletonList } from "../../../components/ui/Skeleton";
 import ApiTokensSection from "../../../components/settings/ApiTokensSection";
 
 // Section ids for the sticky side-nav anchors.
@@ -126,23 +126,29 @@ export default function TeamSettingsPage() {
     return () => observer.disconnect();
   }, [loading]);
 
+  // The same band in both states, so the title does not move when the
+  // sections arrive.
+  const header = (
+    <PageHeader
+      breadcrumb={
+        <a href={settingsHref()} className="settings-breadcrumb">
+          Settings
+        </a>
+      }
+      title="Team settings"
+    />
+  );
+
   if (loading) {
-    return <FullPageLoader label="Loading team settings…" />;
+    return (
+      <PageShell busy header={header}>
+        <SkeletonList rows={3} rowHeight="8rem" label="Loading team settings…" />
+      </PageShell>
+    );
   }
 
   return (
-    <PageShell
-      header={
-        <PageHeader
-          breadcrumb={
-            <a href={settingsHref()} className="settings-breadcrumb">
-              Settings
-            </a>
-          }
-          title="Team settings"
-        />
-      }
-    >
+    <PageShell header={header}>
       <div className="settings-layout">
         {/* Sticky side-nav: hidden under 1000px via CSS */}
         <aside className="settings-side-nav" aria-label="Team settings sections">

@@ -19,9 +19,9 @@ import { teamSettingsHref } from "../../lib/routes";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
-import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageShell } from "../../components/ui/PageShell";
+import { SkeletonList } from "../../components/ui/Skeleton";
 import ThemePreferenceField from "../../components/ThemePreferenceField";
 import { formatRelativeTime } from "../../components/settings/formatRelativeTime";
 
@@ -137,7 +137,13 @@ export default function SettingsPage() {
   }
 
   if (loading) {
-    return <FullPageLoader label="Loading settings…" />;
+    // The real band and column while loading, so the title does not move
+    // when the sections arrive.
+    return (
+      <PageShell busy header={<PageHeader title="Settings" />}>
+        <SkeletonList rows={4} rowHeight="8rem" label="Loading settings…" />
+      </PageShell>
+    );
   }
 
   const isDelegationDirty = user

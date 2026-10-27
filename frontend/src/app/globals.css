@@ -86,6 +86,11 @@ html[data-theme="light"] {
   --text-xl: 1.25rem;      /* 20px */
   --text-2xl: 1.5rem;      /* 24px */
 
+  /* Section heading (h2 / card section title) on every page: one size and
+     weight so Home widgets, settings sections and hub tabs read the same. */
+  --heading-section-size: var(--text-md);
+  --heading-section-weight: 600;
+
   /* Spacing scale (4px base, 8px rhythm) */
   --space-1: 4px;
   --space-2: 8px;
@@ -3856,8 +3861,8 @@ html[data-theme="light"] {
 }
 
 .home-projects-title {
-  font-size: var(--text-sm);
-  font-weight: 600;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   color: var(--text-secondary);
 }
 
@@ -3943,8 +3948,8 @@ html[data-theme="light"] {
 .home-widget-title {
   flex: 1;
   min-width: 0;
-  font-size: var(--text-base);
-  font-weight: 600;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4358,8 +4363,8 @@ html[data-theme="light"] {
 .td-breadcrumb {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
+  gap: var(--space-1);
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
@@ -4592,8 +4597,8 @@ html[data-theme="light"] {
 }
 
 .td-section-title {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   letter-spacing: -0.006em;
 }
 
@@ -6310,8 +6315,8 @@ a.proj-chip:hover {
 
 /* Section heading + description inside settings cards */
 .proj-section-head {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   color: var(--text);
   margin: 0 0 var(--space-1);
 }
@@ -6771,8 +6776,8 @@ a.proj-chip:hover {
 }
 
 .wf-table-title {
-  font-size: var(--text-base);
-  font-weight: 700;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   margin: 0;
 }
 
@@ -6960,8 +6965,8 @@ a.proj-chip:hover {
 }
 
 .wf-gate-ref-title {
-  font-size: var(--text-base);
-  font-weight: 700;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   margin-bottom: var(--space-2);
 }
 
@@ -7011,6 +7016,11 @@ a.proj-chip:hover {
   text-align: left;
   width: 100%;
   display: block;
+}
+
+/* Project settings: the form column measure (cards and loading skeleton). */
+.proj-settings-measure {
+  max-width: 760px;
 }
 
 /* Redirect page loading state */
@@ -7079,13 +7089,6 @@ a.proj-chip:hover {
 .wf-reset-confirm-text {
   font-size: var(--text-xs);
   color: var(--muted);
-}
-
-/* Redirect / missing-id page */
-.wf-redirect-shell {
-  padding: var(--space-8) var(--space-5);
-  max-width: 480px;
-  margin: 0 auto;
 }
 
 /* ── Settings v2 ──────────────────────────────────────────────────────────── */
@@ -7173,8 +7176,8 @@ a.proj-chip:hover {
 
 /* Section heading inside a card: one step above body text. */
 .settings-section-heading {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   color: var(--text);
   margin: 0 0 var(--space-2) 0;
 }
@@ -8190,8 +8193,8 @@ a.proj-chip:hover {
 /* Section headings inside member cards */
 .mem-section-heading {
   margin-top: 0;
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-size: var(--heading-section-size);
+  font-weight: var(--heading-section-weight);
   margin-bottom: var(--space-3);
 }
 
