@@ -23,6 +23,10 @@ interface NewTaskFlowProps {
   onClose: () => void;
   /** Picker options: the team-accessible projects the page already loaded. */
   projects: { id: string; name: string }[];
+  /** The page's current team, when it has one: the empty-state "Go to
+   * projects" link carries it as `?teamId=` so /projects opens that team
+   * instead of resolving and rewriting its URL. Without one the link is bare. */
+  teamId?: string | null;
   /** Called after a task is created so the page can refresh its list. */
   onTaskCreated: (task: Task) => void;
   /** Called when the user clicks "Edit task" in the post-create panel. */
@@ -33,6 +37,7 @@ export default function NewTaskFlow({
   open,
   onClose,
   projects,
+  teamId,
   onTaskCreated,
   onEditTask,
 }: NewTaskFlowProps) {
@@ -134,7 +139,7 @@ export default function NewTaskFlow({
           title="No projects yet"
           description="Tasks live in a project. Create one from the projects page first."
           action={
-            <Button size="sm" href={projectsHref()}>
+            <Button size="sm" href={projectsHref({ teamId: teamId ?? undefined })}>
               Go to projects
             </Button>
           }

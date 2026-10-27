@@ -7,7 +7,7 @@
 // so the redirect is a client effect).
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
   updateDelegationSettings,
@@ -16,6 +16,8 @@ import {
   type GithubTokenHealth,
 } from "../../lib/api";
 import { teamSettingsHref } from "../../lib/routes";
+import { usePageTeams } from "../../lib/teamList";
+import { useResolvedTeam } from "../../lib/teamSwitch";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -42,10 +44,20 @@ const TEAM_SETTINGS_HASHES: Record<string, "api-tokens" | "sso"> = {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<string>("account");
   const [error, setError] = useState<string | null>(null);
+
+  // The team the "Open team settings" link carries: the shell resolves it
+  // exactly like the header (URL ?teamId, then the remembered team, then the
+  // first team) from the one shell team list, so /settings/team opens that
+  // team and writes nothing into its own URL. Resolved, never written here:
+  // personal settings are not team-scoped (`useResolvedTeam`, not
+  // `useCurrentTeam`). Bare while no team resolves (no teams, list failed).
+  const { teams } = usePageTeams(user !== null);
+  const navTeam = useResolvedTeam(teams, searchParams?.get("teamId") ?? null);
 
   const [delegation, setDelegation] = useState({
     allowAgentPrCreate: false,
@@ -379,7 +391,7 @@ export default function SettingsPage() {
                 <p className="settings-section-desc">
                   API tokens and Enterprise SSO are managed per team.
                 </p>
-                <Button href={teamSettingsHref()} variant="secondary">
+                <Button href={teamSettingsHref(undefined, navTeam?.id)} variant="secondary">
                   Open team settings
                 </Button>
               </section>

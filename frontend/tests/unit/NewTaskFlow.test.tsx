@@ -126,6 +126,22 @@ describe("NewTaskFlow", () => {
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
   });
 
+  it("empty-state Projects link carries the team it is given", () => {
+    renderFlow([], { teamId: "t-9" });
+    expect(screen.getByRole("link", { name: "Go to projects" })).toHaveAttribute(
+      "href",
+      "/projects?teamId=t-9",
+    );
+  });
+
+  it("empty-state Projects link stays bare for a null team (no team known)", () => {
+    renderFlow([], { teamId: null });
+    expect(screen.getByRole("link", { name: "Go to projects" })).toHaveAttribute(
+      "href",
+      "/projects",
+    );
+  });
+
   it("resets selection and step on reopen", async () => {
     mockGetProject.mockResolvedValue(makeProject("p-2", "Beta"));
     const { rerender } = renderFlow();

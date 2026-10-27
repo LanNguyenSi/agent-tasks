@@ -303,7 +303,9 @@ export default function ConnectAgentModal({
           )}
           <AlertBanner tone="warning">
             This token is shown once. It has been saved to{" "}
-            <a href={apiTokensSettingsHref()} className="connect-agent-link">
+            {/* The modal is created for a concrete team, so the link to the
+                section where the token can be revoked carries it. */}
+            <a href={apiTokensSettingsHref(teamId)} className="connect-agent-link">
               Team settings &rarr; API Tokens
             </a>{" "}
             where you can revoke it later -- but you cannot view the value again.

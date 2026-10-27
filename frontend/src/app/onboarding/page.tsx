@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, logout, type User } from "../../lib/api";
 import { getAccessContext, retrySharedProjects } from "../../lib/access";
+import { resolveCurrentTeam } from "../../lib/currentTeam";
+import { sectionHref } from "../../lib/teamSwitch";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
@@ -38,9 +40,15 @@ export default function OnboardingPage() {
         // Already has teams, send them straight to home. Only this branch
         // redirects: a user without teams stays here (the form, plus a skip
         // link when they have shared projects), so /home <-> /onboarding
-        // cannot loop.
+        // cannot loop. The redirect carries the current team under the same
+        // rule /home applies on entry (remembered team, then first team,
+        // resolveCurrentTeam), so /home opens it and writes nothing into
+        // the URL. The team-less branches know no team: their skip link
+        // stays bare.
         setStep("redirect");
-        router.replace("/home");
+        router.replace(
+          sectionHref("home", resolveCurrentTeam(ctx.teams, { urlTeamId: null })?.id ?? null),
+        );
       } else {
         setCanSkip(ctx.sharedProjects.length > 0);
         setSharedError(ctx.sharedProjectsError === true);

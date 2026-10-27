@@ -155,9 +155,11 @@ describe("ConnectAgentModal", () => {
     await user.click(screen.getByTestId("connect-generate-btn"));
     await screen.findByTestId("connect-snippet");
 
+    // The modal knows its team (required prop), so the link carries it:
+    // /settings/team opens that team instead of resolving and rewriting.
     expect(
       screen.getByRole("link", { name: /team settings.*api tokens/i }),
-    ).toHaveAttribute("href", "/settings/team#api-tokens");
+    ).toHaveAttribute("href", "/settings/team?teamId=team-1#api-tokens");
   });
 
   it("swaps the snippet when switching tabs but keeps the same token and does not re-mint", async () => {
