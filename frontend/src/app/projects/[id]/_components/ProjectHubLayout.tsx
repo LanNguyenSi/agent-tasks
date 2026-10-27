@@ -36,7 +36,7 @@ import {
   type Team,
 } from "../../../../lib/api";
 import { resolveCurrentTeam } from "../../../../lib/currentTeam";
-import { projectHubHref, projectsHref, type ProjectHubTab } from "../../../../lib/routes";
+import { authHref, projectHubHref, projectsHref, type ProjectHubTab } from "../../../../lib/routes";
 import DocumentTitle from "../../../../components/DocumentTitle";
 import { Skeleton } from "../../../../components/ui/Skeleton";
 import ProjectSubnav from "../../../../components/projects/ProjectSubnav";
@@ -83,11 +83,15 @@ export default function ProjectHubLayout({ children }: { children: ReactNode }) 
         if (!cancelled) setProject(proj);
       } catch (err) {
         if (cancelled) return;
-        // Missing or not accessible (404/403): back to the Projects page.
-        // Not boardHref(): its bare /dashboard resumes the last board, which
-        // may be this one. Any other failure (500, network, 401) is not
-        // proof the project is gone, so stay and show the error instead.
-        if (err instanceof ApiRequestError && (err.status === 403 || err.status === 404)) {
+        // Expired or invalid session (401): sign in, with the current
+        // location (path and query) as the way back.
+        if (err instanceof ApiRequestError && err.status === 401) {
+          router.replace(authHref(window.location.pathname + window.location.search));
+        } else if (err instanceof ApiRequestError && (err.status === 403 || err.status === 404)) {
+          // Missing or not accessible (404/403): back to the Projects page.
+          // Not boardHref(): its bare /dashboard resumes the last board, which
+          // may be this one. Any other failure (500, network) is not proof the
+          // project is gone, so stay and show the error instead.
           router.replace(projectsHref());
         } else {
           setLoadError((err as Error).message || "Could not load the project");

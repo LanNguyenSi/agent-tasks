@@ -3,7 +3,8 @@
  * Project hub layout (app/projects/[id]/layout.tsx): an inaccessible
  * project falls back to the Projects page (never to the bare /dashboard,
  * which resumes the last board and could loop back to the same project),
- * and the board tab renders in the wide, flush content slot while the
+ * a 401 goes to sign-in with the current location as the way back, and the
+ * board tab renders in the wide, flush content slot while the
  * other tabs sit in the centred 1200px column (the band follows the tab's
  * --page-column through the <main> variant class); every tab renders the hub band and
  * body inside exactly one <main>. The band's crumb is `Projects / <project picker>`:
@@ -60,6 +61,7 @@ function renderLayout(segment: string | null) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.history.replaceState({}, "", "/projects/p-1");
   mockGetProject.mockResolvedValue({ id: "p-1", teamId: "t-1", name: "Project One", slug: "one" } as Project);
   mockGetTeams.mockResolvedValue([team("t-1")]);
   mockGetProjects.mockResolvedValue([proj("p-1", "Project One"), proj("p-2", "Project Two")]);
@@ -76,9 +78,23 @@ describe("project hub layout", () => {
     expect(nav.router.replace).toHaveBeenCalledTimes(1);
   });
 
+  it("sends a project that answers 401 to sign-in with the path and query as the way back", async () => {
+    window.history.replaceState({}, "", "/projects/p-1/members?tab=activity");
+    mockGetProject.mockRejectedValue(
+      new ApiRequestError("unauthorized", "Invalid or expired token", 401),
+    );
+    renderLayout("members");
+    await waitFor(() =>
+      expect(nav.router.replace).toHaveBeenCalledWith(
+        "/auth?redirect=/projects/p-1/members?tab=activity",
+      ),
+    );
+    expect(nav.router.replace).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Could not load project")).not.toBeInTheDocument();
+  });
+
   it.each([
     ["a 500", new ApiRequestError("internal", "Server exploded", 500)],
-    ["a 401", new ApiRequestError("unauthorized", "Not signed in", 401)],
     ["a network failure", new TypeError("Failed to fetch")],
   ])("does not redirect on %s", async (_label, err) => {
     mockGetProject.mockRejectedValue(err);

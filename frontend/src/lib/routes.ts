@@ -39,6 +39,17 @@ export function projectHubHref(projectId: string, tab?: ProjectHubTab): string {
   return tab ? `/projects/${projectId}/${tab}` : `/projects/${projectId}`;
 }
 
+/** Sign-in URL with a way back: `/auth?redirect=<location>`, the same raw
+ * relative form the /invite/[token] landing (the other user of `?redirect=`)
+ * passes: `location` is the current in-app location, path plus query joined
+ * as the browser has them (e.g. `/projects/p1/board?taskId=t1`), with no
+ * encoding applied. It is the form /auth's `safeRedirect` parses (the value
+ * must start with one `/`, not `//`; its current allowlist only carries
+ * `/invite/` landings through to the post-sign-in bounce). */
+export function authHref(location: string): string {
+  return `/auth?redirect=${location}`;
+}
+
 export function settingsHref(): string {
   return "/settings";
 }
