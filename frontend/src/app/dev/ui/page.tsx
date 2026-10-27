@@ -26,6 +26,7 @@ import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
 import Select from "@/components/ui/Select";
 import Modal from "@/components/ui/Modal";
+import { ViewAllLink } from "@/components/ui/ViewAllLink";
 
 // ── Icon names ───────────────────────────────────────────────────
 
@@ -361,6 +362,19 @@ export default function UIGalleryPage() {
           <div style={{ flex: "1 1 220px" }}>
             <EmptyState message="Legacy message prop still works." dashed />
           </div>
+        </div>
+      </section>
+
+      {/* ── B2: ViewAllLink ─────────────────────────────────── */}
+      <section className="dev-section">
+        <h2 className="dev-section-heading">
+          ViewAllLink (quiet header link, 28px target, named by aria-label)
+        </h2>
+        <div className="dev-row">
+          <ViewAllLink href="/dev/ui" aria-label="View all Backlog tasks" />
+          <ViewAllLink href="/dev/ui" aria-label="View all projects">
+            All projects
+          </ViewAllLink>
         </div>
       </section>
 

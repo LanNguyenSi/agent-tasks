@@ -232,10 +232,14 @@ describe("home page — widget plumbing", () => {
     expect(title.textContent).toBe("Backlog");
     expect(title.closest("a")).toBeNull();
 
-    // Check more-link href
-    const moreLink = backlogWidget.querySelector(".home-widget-more") as HTMLAnchorElement;
-    expect(moreLink).not.toBeNull();
-    expect(moreLink.href).toContain("status=backlog");
+    // The header's View all link carries the scope href (moreHrefOverride):
+    // named with the widget title, pointing at the backlog status filter.
+    const viewAll = backlogWidget.querySelector(
+      ".home-widget-header .view-all-link",
+    ) as HTMLAnchorElement;
+    expect(viewAll).not.toBeNull();
+    expect(viewAll.getAttribute("aria-label")).toBe("View all Backlog");
+    expect(viewAll.href).toContain("status=backlog");
   });
 
   it("(b) Done widget shows link to scope=done&recency=older when olderCount > 0", async () => {
@@ -273,6 +277,18 @@ describe("home page — widget plumbing", () => {
     expect(olderLink).not.toBeNull();
     expect(olderLink?.href).toContain("scope=done");
     expect(olderLink?.href).toContain("recency=older");
+
+    // The header's View all link stays in the recent window even while the
+    // older-done link shows (exact href the old "N total →" link had), named
+    // with the widget title. The older-done link above is the only thing that
+    // differs from the plain Done render, and it must not leak into the
+    // header link.
+    const viewAll = doneWidget.querySelector(
+      ".home-widget-header .view-all-link",
+    ) as HTMLAnchorElement;
+    expect(viewAll).not.toBeNull();
+    expect(viewAll).toHaveAccessibleName("View all Done \u00b7 14 days");
+    expect(viewAll.getAttribute("href")).toBe("/tasks?teamId=team-1&scope=done&recency=recent");
   });
 
   it("(c) Empty state action buttons render with correct hrefs when mine and open slices are empty", async () => {
