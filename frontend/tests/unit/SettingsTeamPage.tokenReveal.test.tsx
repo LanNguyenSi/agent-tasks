@@ -10,6 +10,7 @@
  * in-memory history (tests/setup/fakeNavigation.ts), as in the header-sync
  * tests.
  */
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, within, act } from "@testing-library/react";
 import type { AgentToken, Team, User } from "../../src/lib/api";
@@ -275,6 +276,25 @@ describe("token reveal: normal path (no team switch)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
       expect(vi.getTimerCount()).toBe(0);
     });
+  });
+});
+
+describe("token reveal: under React StrictMode (effects run twice)", () => {
+  it("the section still counts as mounted: the secret shows in it, the token is listed and the form closes", async () => {
+    mockCreate.mockResolvedValue({ token: token("tok-new", "ci-new"), rawToken: SECRET_A });
+    render(
+      <StrictMode>
+        <AppHeader user={{ login: "lan", avatarUrl: null }} teams={TEAMS} />
+        <TeamSettingsPage />
+      </StrictMode>,
+    );
+    await screen.findByText("alpha-bot");
+
+    submitCreate("ci-new");
+
+    expect(await screen.findByText(SECRET_A)).toBeInTheDocument();
+    expect(screen.getByText("ci-new")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 

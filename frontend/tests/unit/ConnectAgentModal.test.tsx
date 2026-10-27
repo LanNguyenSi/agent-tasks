@@ -571,6 +571,39 @@ describe("ConnectAgentModal: a result the dialog cannot show", () => {
     expect(created).toHaveBeenCalledTimes(1);
   });
 
+  // The team is fixed when the request starts. A teamId prop that changes
+  // before the response arrives must not retag the secret.
+  it("the hand-over names the team of the request even if the teamId prop changed since", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValueOnce(pending.promise);
+    const unseen = vi.fn();
+    const view = render(dialog({ teamId: "team-1", onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    view.rerender(dialog({ teamId: "team-2", onSecretUnseen: unseen }));
+    view.unmount();
+
+    await act(async () => {
+      pending.resolve(makeTokenResult(SECRET));
+    });
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(expect.objectContaining({ teamId: "team-1" }));
+  });
+
+  it("a secret shown, then handed over after the teamId prop changed, still names the team of the request", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ teamId: "team-1", onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+    view.rerender(dialog({ teamId: "team-2", onSecretUnseen: unseen }));
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(expect.objectContaining({ teamId: "team-1" }));
+  });
+
   it("copied and masked, then unmounted: the secret is handed over marked masked", async () => {
     mockCreate.mockResolvedValue(makeTokenResult(SECRET));
     const unseen = vi.fn();
