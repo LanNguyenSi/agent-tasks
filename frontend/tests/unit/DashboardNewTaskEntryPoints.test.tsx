@@ -23,6 +23,7 @@
  * component-level test can't observe the actual wiring.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { expectDocumentTitle } from "./helpers/documentTitle";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiRequestError, type User, type Team, type Project, type Task } from "../../src/lib/api";
@@ -371,7 +372,7 @@ describe("task modal and the URL", () => {
     expect(routerMocks.push).not.toHaveBeenCalled();
     expect(pushStateSpy).not.toHaveBeenCalled();
     expect(window.history.length).toBe(entries);
-    expect(document.title).toBe("Project One · Board - agent-tasks");
+    await expectDocumentTitle("Project One · Board - agent-tasks");
   });
 
   it("removes taskId when the modal closes and keeps other query parameters and the hash", async () => {
