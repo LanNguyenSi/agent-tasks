@@ -3,8 +3,9 @@
 // API tokens section of Team settings: the token list, the Connect an agent
 // flow, and the create / rename / revoke modals. Owns the token list and every
 // modal's state; the team itself (list + selected id) is owned by the page so
-// the rest of the page follows it. Moved out of the old combined /settings
-// page: token behaviour is unchanged.
+// the rest of the page follows it. The one-time reveal of a created token is
+// owned by the page (TokenReveal.tsx), because this section remounts when the
+// team changes while a create request is still in flight.
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -26,6 +27,7 @@ import FormField from "../ui/FormField";
 import Modal from "../ui/Modal";
 import ConnectAgentModal from "../ConnectAgentModal";
 import { formatRelativeTime } from "./formatRelativeTime";
+import { TokenRevealBanner, type TokenReveals } from "./TokenReveal";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -48,10 +50,7 @@ const FALLBACK_SCOPES = [
 const SENSITIVE_SCOPES = new Set(["sso:admin", "github:pr_merge"]);
 
 type TokenRecord = AgentToken;
-
-// One-time token reveal: mask after a delay so an abandoned tab does not
-// leave the secret on screen indefinitely.
-const REVEAL_MASK_DELAY_MS = 30_000;
+const NO_TOKENS: TokenRecord[] = [];
 
 interface ApiTokensSectionProps {
   /** All teams of the caller (drives the empty state and the admin check). */
@@ -63,17 +62,64 @@ interface ApiTokensSectionProps {
   selectedTeamId: string;
   /** Tokens of `selectedTeamId`, loaded by the page before first render. */
   initialTokens: TokenRecord[];
+  /** The page's one-time token reveals (survive a remount of this section). */
+  reveals: TokenReveals;
+  /**
+   * A create finished after this section was unmounted (the team changed while
+   * the request was in flight) and failed: the page shows the error, naming
+   * the team the create was for.
+   */
+  onCreateFailed: (teamId: string, teamName: string, message: string) => void;
+  /**
+   * A create finished after this section was unmounted and succeeded: the
+   * reveal is already held by the page; the page hands the new token to the
+   * section of that team (if it is on screen) through `addedTokens`.
+   */
+  onCreatedAway: (teamId: string, token: TokenRecord) => void;
+  /**
+   * Tokens created for `selectedTeamId` while its section was gone. They are
+   * appended to the list (once each), so the section is not reloaded and an
+   * open dialog survives.
+   */
+  addedTokens?: TokenRecord[];
+}
+
+function mergeById(base: TokenRecord[], extra: TokenRecord[]): TokenRecord[] {
+  const known = new Set(base.map((t) => t.id));
+  const fresh = extra.filter((t) => !known.has(t.id));
+  return fresh.length ? [...base, ...fresh] : base;
 }
 
 export default function ApiTokensSection({
   teams,
   selectedTeamId,
   initialTokens,
+  reveals,
+  onCreateFailed,
+  onCreatedAway,
+  addedTokens = NO_TOKENS,
 }: ApiTokensSectionProps) {
-  const [tokens, setTokens] = useState<TokenRecord[]>(initialTokens);
-  const [newToken, setNewToken] = useState<string | null>(null);
-  const [tokenMasked, setTokenMasked] = useState(false);
-  const maskTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tokens, setTokens] = useState<TokenRecord[]>(() =>
+    mergeById(initialTokens, addedTokens),
+  );
+  // Added tokens already in the list: a token revoked here must not come back
+  // when a later one is added.
+  const appliedAdded = useRef(new Set(addedTokens.map((t) => t.id)));
+  useEffect(() => {
+    const fresh = addedTokens.filter((t) => !appliedAdded.current.has(t.id));
+    if (fresh.length === 0) return;
+    fresh.forEach((t) => appliedAdded.current.add(t.id));
+    setTokens((prev) => mergeById(prev, fresh));
+  }, [addedTokens]);
+  // False once this section is gone: a create that finishes later must report
+  // to the page, not to state nobody renders any more.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const [showConnect, setShowConnect] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -93,6 +139,9 @@ export default function ApiTokensSection({
   const [renameValue, setRenameValue] = useState("");
   const [renaming, setRenaming] = useState(false);
 
+  const selectedTeam = teams.find((t) => t.id === selectedTeamId);
+  const teamReveals = reveals.reveals.filter((r) => r.teamId === selectedTeamId);
+
   const docsUrl = `${API_BASE}/docs`;
   const openApiUrl = `${API_BASE}/api/openapi.json`;
   const mcpPackage = "@agent-tasks/mcp-server";
@@ -111,22 +160,31 @@ export default function ApiTokensSection({
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!tokenName.trim() || !selectedTeamId) return;
+    // The team is fixed when the request starts: the response belongs to it
+    // whatever the page shows by the time it arrives.
+    const createdFor = { id: selectedTeamId, name: selectedTeam?.name ?? selectedTeamId };
     setCreating(true);
     setError(null);
     try {
       const result = await createAgentToken({
-        teamId: selectedTeamId,
+        teamId: createdFor.id,
         name: tokenName.trim(),
         scopes: selectedScopes,
       });
-      setNewToken(result.rawToken);
+      reveals.show(createdFor.id, createdFor.name, result.token.name, result.rawToken);
+      if (!mountedRef.current) {
+        onCreatedAway(createdFor.id, result.token);
+        return;
+      }
       setTokens((prev) => [...prev, result.token]);
       setShowCreate(false);
       setTokenName("");
     } catch (err) {
-      setError((err as Error).message);
+      const message = err instanceof Error ? err.message : "Failed to create token.";
+      if (mountedRef.current) setError(message);
+      else onCreateFailed(createdFor.id, createdFor.name, message);
     } finally {
-      setCreating(false);
+      if (mountedRef.current) setCreating(false);
     }
   }
 
@@ -161,45 +219,6 @@ export default function ApiTokensSection({
     }
   }
 
-  function revealNewToken() {
-    if (maskTimerRef.current) {
-      clearTimeout(maskTimerRef.current);
-      maskTimerRef.current = null;
-    }
-    setTokenMasked(false);
-  }
-
-  function startNewTokenMask() {
-    if (maskTimerRef.current) clearTimeout(maskTimerRef.current);
-    maskTimerRef.current = setTimeout(() => {
-      setTokenMasked(true);
-      maskTimerRef.current = null;
-    }, REVEAL_MASK_DELAY_MS);
-  }
-
-  useEffect(() => {
-    if (!newToken) {
-      setTokenMasked(false);
-      if (maskTimerRef.current) {
-        clearTimeout(maskTimerRef.current);
-        maskTimerRef.current = null;
-      }
-      return;
-    }
-    setTokenMasked(false);
-    maskTimerRef.current = setTimeout(() => {
-      setTokenMasked(true);
-      maskTimerRef.current = null;
-    }, REVEAL_MASK_DELAY_MS);
-    return () => {
-      if (maskTimerRef.current) {
-        clearTimeout(maskTimerRef.current);
-        maskTimerRef.current = null;
-      }
-    };
-  }, [newToken]);
-
-  const selectedTeam = teams.find((t) => t.id === selectedTeamId);
   // Single source of truth for the three duplicated "is the caller a team
   // admin for the selected team" checks below (connect/create buttons, the
   // empty-state action, and each token row's rename/revoke gating).
@@ -293,33 +312,9 @@ export default function ApiTokensSection({
             </AlertBanner>
           )}
 
-          {newToken && (
-            <AlertBanner tone="success" title="Token created (shown once)">
-              <CopyableCode
-                value={newToken}
-                masked={tokenMasked}
-                onCopy={startNewTokenMask}
-              />
-              {tokenMasked && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={revealNewToken}
-                  className="settings-token-reveal"
-                >
-                  Reveal
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setNewToken(null)}
-                className="settings-token-reveal"
-              >
-                Dismiss
-              </Button>
-            </AlertBanner>
-          )}
+          {teamReveals.map((r) => (
+            <TokenRevealBanner key={r.id} reveal={r} api={reveals} />
+          ))}
 
           {teams.length === 0 ? (
             <EmptyState
