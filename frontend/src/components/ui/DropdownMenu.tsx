@@ -12,6 +12,8 @@
 //   - An item with aria-disabled="true" is never activated: the panel
 //     swallows clicks and Enter/Space on it (a role="menuitem" one stays
 //     focusable, see getFocusableItems).
+//   - While open, the panel isolates keydown: no key typed inside it reaches
+//     the page (window-level shortcuts stay silent), see handleKeyDown.
 
 import { type CSSProperties, type ReactNode, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
@@ -93,8 +95,20 @@ export default function DropdownMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Keydown isolation while the menu is open, for every caller. The panel is
+  // portaled to document.body, but React events bubble through the portal
+  // along the React tree, and stopping the synthetic event here also stops the
+  // underlying native event before it reaches window/document -- so a page's
+  // window-level shortcuts ("/" and "C" on /tasks) never fire on a key typed
+  // inside the open menu (previously only the /tasks row menu did this with a
+  // per-caller wrapper; the account menu, the team menu and the project picker
+  // leaked their keys to the page). It does not swallow the panel's own
+  // handling: stopPropagation only halts further bubbling, and Escape never
+  // gets here at all -- usePopover consumes it in a document capture-phase
+  // listener (which runs before this bubble handler) and closes the menu.
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      e.stopPropagation();
       if (!panelRef.current) return;
       const items = getFocusableItems(panelRef.current);
       if (!items.length) return;

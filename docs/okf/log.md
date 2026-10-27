@@ -888,3 +888,7 @@ Re-verified after the change that removes `--accept-data-loss` from `Dockerfile.
 ## 2026-10-27 (deploy.md: arm64 Prisma engine in the backend image)
 
 Re-verified `deploy.md` after `backend/Dockerfile` installs openssl in the build stage and `backend/prisma/schema.prisma` adds the `linux-arm64-openssl-3.0.x` binary target. The doc cites `backend/Dockerfile` by path only and makes no claim about engine targets or the host platform; the prod-stage claims (openssl installed, `node_modules/.prisma` copied from the build stage) and the backend docker smoke paragraph still match `backend/Dockerfile` and `tools/backend-docker-smoke.sh`. The doc was re-stamped.
+
+## 2026-10-27 (frontend.md: /tasks focus recovery and dropdown key isolation)
+
+Re-verified `frontend.md` after `frontend/src/app/tasks/page.tsx`, `tasks/_components/columns.tsx` and `components/ui/DropdownMenu.tsx` changed: a row action that removes its row hands focus to the neighbouring row's trigger (or the results region) from an effect after the commit, the load banner's dismiss and Retry keep focus on mounted elements, and every DropdownMenu stops keydown propagation while open. The doc's `/tasks` row-actions and two-list-views claims still hold; it cites none of the edited lines by number. The doc was re-stamped.
