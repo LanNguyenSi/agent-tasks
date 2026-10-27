@@ -46,4 +46,14 @@ describe("FullPageLoader", () => {
     // The band is decorative: nothing in it is exposed to assistive tech.
     expect(band()).toHaveAttribute("aria-hidden", "true");
   });
+
+  it("shell: skeleton sizes match the loaded band (24px title line, 32px buttons) so it does not change height on load", () => {
+    render(<FullPageLoader variant="shell" headerActions={2} />);
+    const band = screen.getByRole("main").querySelector(":scope > .page-header") as HTMLElement;
+    const title = band.querySelector(".page-header-left > .skeleton") as HTMLElement;
+    expect(title.style.height).toBe("24px");
+    const buttons = band.querySelectorAll<HTMLElement>(".page-header-actions > .skeleton");
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((b) => expect(b.style.height).toBe("32px"));
+  });
 });
