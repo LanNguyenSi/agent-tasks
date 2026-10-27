@@ -36,7 +36,11 @@ html[data-theme="light"] {
   /* Text */
   --text: #e8eaee;
   --text-secondary: #a6acb8;
-  --muted: #6d7480;
+  /* #848b98 clears 4.5:1 (WCAG 1.4.3 AA) on every dark surface above, down to
+     --surface-active (4.65); it is 5.81 on --bg against --text-secondary's
+     8.74, so it stays the dimmer step. The earlier #6d7480 was 4.23 on --bg
+     and fell to 3.39 on --surface-active. A unit test pins the ratios. */
+  --muted: #848b98;
 
   /* Accent (one) */
   --primary: #5e6ad2;
