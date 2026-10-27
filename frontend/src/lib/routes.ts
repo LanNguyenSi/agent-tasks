@@ -3,8 +3,9 @@
 // the hand-built template it replaced, so a later task moves a route by
 // changing one function here instead of every call site (the board has
 // moved: see boardHref). No encoding is
-// applied: the old templates interpolated raw values (UUIDs today) and so do
-// these builders.
+// applied (authHref is the one builder that encodes, see its comment): the
+// old templates interpolated raw values (UUIDs today) and so do these
+// builders.
 
 export type ProjectHubTab = "board" | "members" | "settings" | "workflow";
 
@@ -39,15 +40,14 @@ export function projectHubHref(projectId: string, tab?: ProjectHubTab): string {
   return tab ? `/projects/${projectId}/${tab}` : `/projects/${projectId}`;
 }
 
-/** Sign-in URL with a way back: `/auth?redirect=<location>`, the same raw
- * relative form the /invite/[token] landing (the other user of `?redirect=`)
- * passes: `location` is the current in-app location, path plus query joined
- * as the browser has them (e.g. `/projects/p1/board?taskId=t1`), with no
- * encoding applied. It is the form /auth's `safeRedirect` parses (the value
- * must start with one `/`, not `//`; its current allowlist only carries
- * `/invite/` landings through to the post-sign-in bounce). */
+/** Sign-in URL with a way back: `/auth?redirect=<location>`, where
+ * `location` is the current in-app location, path plus query joined as the
+ * browser has them (e.g. `/projects/p1/board?taskId=t1`). The value is
+ * `encodeURIComponent`-encoded so its own `&`/`=`/`?` survive as one
+ * parameter and `searchParams.get("redirect")` returns it whole; /auth's
+ * `safeRedirect` parses the decoded form. */
 export function authHref(location: string): string {
-  return `/auth?redirect=${location}`;
+  return `/auth?redirect=${encodeURIComponent(location)}`;
 }
 
 export function settingsHref(): string {
@@ -121,4 +121,47 @@ export function safeBackHref(raw: unknown): string | null {
   if (decoded.includes("\\")) return null;
   if (CONTROL_CHARS.test(decoded)) return null;
   return raw;
+}
+
+// Control chars, DEL, whitespace, backslash: never legal in a redirect
+// value; checked raw and once more after one decodeURIComponent.
+const REDIRECT_BAD_CHARS = /[\u0000-\u001f\u007f\s\\]/;
+// Project-hub location: a non-empty project id segment, optional path,
+// optional query, no fragment. Anchored at both ends.
+const PROJECTS_REDIRECT = /^\/projects\/[^/?#]+(\/[^?#]*)?(\?[^#]*)?$/;
+
+/**
+ * Validate a ?redirect= parameter coming back from a deep link
+ * (e.g. /invite/[token], or a project location after a 401). raw is
+ * searchParams.get("redirect") (decoded once); allowlist same-origin paths
+ * under known features so an attacker cannot craft an auth URL that bounces
+ * an authenticated session to an external origin. The allowlist carries
+ * /invite/ landings and project-hub locations (/projects/<id>, path and
+ * query) through to the bounce; extend deliberately when new feature
+ * deep-links need it. Returns raw unchanged or null. Rules, in order:
+ * null/empty no; a bad char in raw no; one decodeURIComponent (a throw no;
+ * a bad char, a // prefix or a // in the decoded path part no); raw must
+ * start with exactly one /; no . or .. segment in the decoded path; then
+ * only the two allowed prefixes. Anchored checks only, never includes().
+ * Lives here (not in the auth page) because Next rejects extra exports
+ * from a page file; the page imports this.
+ */
+export function safeRedirect(raw: string | null): string | null {
+  if (!raw) return null;
+  if (REDIRECT_BAD_CHARS.test(raw)) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  if (REDIRECT_BAD_CHARS.test(decoded)) return null;
+  if (decoded.startsWith("//")) return null;
+  const decodedPath = decoded.split(/[?#]/)[0];
+  if (decodedPath.includes("//")) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  if (decodedPath.split("/").some((s) => s === "." || s === "..")) return null;
+  if (raw.startsWith("/invite/")) return raw;
+  if (PROJECTS_REDIRECT.test(raw)) return raw;
+  return null;
 }

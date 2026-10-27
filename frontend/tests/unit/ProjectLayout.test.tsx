@@ -86,7 +86,7 @@ describe("project hub layout", () => {
     renderLayout("members");
     await waitFor(() =>
       expect(nav.router.replace).toHaveBeenCalledWith(
-        "/auth?redirect=/projects/p-1/members?tab=activity",
+        "/auth?redirect=%2Fprojects%2Fp-1%2Fmembers%3Ftab%3Dactivity",
       ),
     );
     expect(nav.router.replace).toHaveBeenCalledTimes(1);

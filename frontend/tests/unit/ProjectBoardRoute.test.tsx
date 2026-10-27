@@ -157,7 +157,9 @@ describe("board route (hub layout + board page)", () => {
 
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalled());
     // The layout and the board both react; both go to the same sign-in URL.
-    expect(redirectTargets()).toEqual(["/auth?redirect=/projects/p-1/board?taskId=k-1"]);
+    expect(redirectTargets()).toEqual([
+      "/auth?redirect=%2Fprojects%2Fp-1%2Fboard%3FtaskId%3Dk-1",
+    ]);
     expect(nav.router.push).not.toHaveBeenCalled();
     expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
   });

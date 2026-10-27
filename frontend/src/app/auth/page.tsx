@@ -15,24 +15,9 @@ import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import { AuthShell } from "../../components/AuthShell";
 import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { safeRedirect } from "../../lib/routes";
 
 type Mode = "login" | "register";
-
-/**
- * Validate a ?redirect= parameter coming back from a deep link
- * (e.g. /invite/[token]). Allowlist same-origin paths under known
- * features so an attacker cannot craft an auth URL that bounces an
- * authenticated session to an external origin. The current allowlist
- * covers only invite landings; extend deliberately when new feature
- * deep-links need it.
- */
-function safeRedirect(raw: string | null): string | null {
-  if (!raw) return null;
-  if (!raw.startsWith("/")) return null;
-  if (raw.startsWith("//")) return null;
-  if (raw.startsWith("/invite/")) return raw;
-  return null;
-}
 
 /**
  * Wraps the inner client component in a Suspense boundary because
@@ -116,7 +101,13 @@ function AuthPageInner() {
     void (async () => {
       const me = await getCurrentUser();
       if (me) {
-        if (redirectTarget) {
+        // Loop guard: an already signed-in user must not be bounced straight
+        // to a /projects/ way back (the 401 that sent them here may well
+        // answer 401 again: /me can work while getProject does not, and the
+        // trip would repeat). Only an actual submit below may use it. An
+        // /invite/ landing keeps the immediate bounce: reaching the invite
+        // is the point of the visit and cannot loop.
+        if (redirectTarget && redirectTarget.startsWith("/invite/")) {
           router.replace(redirectTarget);
           return;
         }
