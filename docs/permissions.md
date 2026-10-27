@@ -39,6 +39,8 @@ A project admin can invite a user to a single project with a share invite. The i
 
 When a route or a workflow edge checks a team role, `PROJECT_ADMIN` satisfies Admin, HumanMember and Reviewer, `PROJECT_CONTRIBUTOR` satisfies HumanMember and Reviewer, and `PROJECT_VIEWER` satisfies none of them. Team roles must match exactly: a team Admin does not satisfy an edge that requires HumanMember or Reviewer. The mapping lives in `hasProjectRole` and `requireProjectWrite` in [`backend/src/services/team-access.ts`](../backend/src/services/team-access.ts).
 
+`GET /api/projects/:id` tells a client what the caller may do on the project. `accessSource` and `accessRole` name the grant the caller is known by, team role first: a team Reviewer who is also a `PROJECT_ADMIN` reports `accessRole: "REVIEWER"`. `canAdmin` is the admin answer, computed with `isProjectAdmin`, the check every admin-gated route enforces (workflow edits, force transitions, invites, project settings, admin release and reassign of claims; minting a `PROJECT_ADMIN` invite also needs the team Admin role): true for a team Admin and for a `PROJECT_ADMIN` whether or not they are also a team member, false for the other roles and for agents. Clients gate admin controls on `canAdmin`, not on `accessRole`.
+
 ## Audit trail
 
 These workflow mutations are written to the audit log and can be read with `GET /api/projects/:id/audit`:

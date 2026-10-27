@@ -3,7 +3,7 @@ type: invariant
 title: "Signals: recipients, pull inbox, acknowledgement and webhook push delivery"
 description: "A Signal row is the durable notification and the pull inbox is authoritative; recipients are fixed per signal type, done paths acknowledge pending asks before they emit outcome signals, and a project's notification webhook gets a best-effort push copy of each new row behind an egress guard."
 tags: [signals, notifications, webhook, pickup, egress]
-timestamp: 2026-10-26T07:36:06Z
+timestamp: 2026-10-27T13:30:32Z
 sources:
   - backend/prisma/schema.prisma
   - backend/src/services/signal.ts

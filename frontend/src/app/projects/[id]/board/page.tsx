@@ -9,7 +9,7 @@ import {
   getTasks,
   getTask,
   getEffectiveWorkflow,
-  isProjectAdminRole,
+  projectCanAdmin,
   isProjectWriteRole,
   ApiRequestError,
   type User,
@@ -142,19 +142,21 @@ export default function ProjectBoardPage() {
 
   const templateFields = selectedProject?.taskTemplate?.fields ?? null;
 
-  // GET /projects/:id carries the caller's `accessRole`, which gates the admin
-  // status-override / claim-release controls in the task modal, exactly as the
-  // full /tasks/[id] page does. Admins also get the effective-workflow edges
+  // GET /projects/:id carries the caller's `canAdmin` (with `accessRole` as the
+  // fallback for older backends), which gates the admin status-override /
+  // claim-release controls in the task modal, exactly as the full /tasks/[id]
+  // page does. Admins also get the effective-workflow edges
   // so the status-override dropdown only offers valid targets.
   // Failure-tolerant: the dropdown falls back to the base states.
   const selectedProjectAccessRole = selectedProject?.accessRole;
+  const isProjectAdmin = projectCanAdmin(selectedProject);
   const [workflowTransitions, setWorkflowTransitions] = useState<
     WorkflowTransition[] | null
   >(null);
 
   useEffect(() => {
     setWorkflowTransitions(null);
-    if (!selectedProjectId || !isProjectAdminRole(selectedProjectAccessRole)) return;
+    if (!selectedProjectId || !isProjectAdmin) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -167,9 +169,8 @@ export default function ProjectBoardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedProjectId, selectedProjectAccessRole]);
+  }, [selectedProjectId, isProjectAdmin]);
 
-  const isProjectAdmin = isProjectAdminRole(selectedProjectAccessRole);
   const isProjectWrite = isProjectWriteRole(selectedProjectAccessRole);
   // Agent tokens are created by team admins only: a per-project share or a
   // known non-admin team role does not see the "Connect an agent" link. An
