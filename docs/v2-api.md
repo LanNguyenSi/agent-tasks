@@ -38,7 +38,7 @@ POST  /api/agent-tokens/:id/revoke
 GET  /api/projects/available       # Agent discovery (recommended)
 GET  /api/projects?teamId=         # Full project list
 GET  /api/projects/by-slug/:slug
-GET  /api/projects/:id
+GET  /api/projects/:id           # Project plus the caller's `accessSource`, `accessRole` (team role first) and `canAdmin` (the project-admin check the workflow, force-transition, invite and settings write routes enforce; false for agents)
 DELETE /api/projects/:id           # Humans only
 GET  /api/projects/:id/effective-gates   # Gates and task-creation requirements in force
 

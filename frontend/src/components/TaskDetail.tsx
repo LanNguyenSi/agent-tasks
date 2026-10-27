@@ -161,8 +161,9 @@ export interface TaskDetailProps {
   enforcementMode: EnforcementMode | null;
   requireDistinctReviewer?: boolean;
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN
-   * (derived from `project.accessRole`, which — unlike `team?.role` —
-   * also covers per-project-only admins). Gates the status-override and
+   * (derived from `projectCanAdmin(project)`, which, unlike `team?.role`
+   * or `accessRole`, also covers per-project-only admins and team members
+   * holding a PROJECT_ADMIN grant). Gates the status-override and
    * admin claim-release controls in TaskHeader / TaskMetaSidebar, and is
    * threaded through as `canManageAll` to TaskAttachmentsSection /
    * TaskArtifactsSection to gate the delete affordance on attachments and
