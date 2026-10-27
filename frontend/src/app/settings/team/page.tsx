@@ -34,11 +34,13 @@ const SECTIONS = [
 
 export default function TeamSettingsPage() {
   const router = useRouter();
-  // The shell's team list (one lookup for the header and the pages), not a
-  // copy of this page's own. `teamsHeld`: ?teamId names a team that list
-  // lacks and its one refresh is pending.
-  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams();
   const [userReady, setUserReady] = useState(false);
+  // The shell's team list (one lookup for the header and the pages), not a
+  // copy of this page's own; empty until the session check answered, so
+  // without a session no team resolves and nothing is requested or written
+  // into the URL. `teamsHeld`: ?teamId names a team that list lacks and its
+  // one refresh is pending.
+  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams(userReady);
   const [activeSection, setActiveSection] = useState<string>("api-tokens");
 
   // The current team is derived from the URL, the same input the header

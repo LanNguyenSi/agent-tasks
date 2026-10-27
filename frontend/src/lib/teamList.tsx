@@ -20,6 +20,11 @@
  * team the refresh may be about to bring). A failed refresh keeps the list
  * that was already there.
  *
+ * A first lookup that failed leaves the list in `error`. A team-scoped page
+ * that mounts in that state retries it once (`usePageTeams`), so the next
+ * navigation recovers like each page's own lookup did; a persistent failure
+ * costs one request per page mount, never a loop.
+ *
  * Actions that change membership in the app call `refreshTeams()`.
  */
 
@@ -171,7 +176,11 @@ export function useTeamList(): TeamListValue {
   return value;
 }
 
-/** Like `useTeamList`, but `null` outside a provider (the onboarding form). */
+/**
+ * Like `useTeamList`, but `null` outside any provider (isolated component
+ * tests). The onboarding page does render inside the shell's provider, which
+ * is disabled there, so `refreshTeams` is a no-op on it.
+ */
 export function useOptionalTeamList(): TeamListValue | null {
   return useContext(TeamListContext);
 }
@@ -179,15 +188,22 @@ export function useOptionalTeamList(): TeamListValue | null {
 /**
  * What a team-scoped page reads instead of fetching teams itself.
  *
- * - `teams`: the shell's list (`[]` while there is none yet);
- * - `status`: `loading` / `ready` / `error` of the shell's lookup;
+ * - `teams`: the shell's list (`[]` while there is none yet, and until the
+ *   page's session check answered: `userReady` false);
+ * - `status`: `loading` / `ready` / `error` of the shell's lookup (`loading`
+ *   until `userReady`, and while the one retry of a failed list is in flight);
  * - `held`: `?teamId` names a team the list lacks and the one refresh for it
  *   is still to start or in flight. The page passes `held` to
  *   `useCurrentTeam`, which then holds back the URL write of the fallback.
  *
- * Also asks the provider to refresh for a missing `?teamId`.
+ * Also asks the provider to refresh for a missing `?teamId`, and retries a
+ * list that is in `error` when the page mounts (at most once per mount).
+ *
+ * `userReady`: the page's session check answered with a user. Without a
+ * session the page only redirects to /auth: it resolves no team, writes
+ * nothing into the URL and asks for nothing.
  */
-export function usePageTeams(): {
+export function usePageTeams(userReady = true): {
   teams: Team[];
   status: TeamListStatus;
   error: Error | null;
@@ -196,15 +212,32 @@ export function usePageTeams(): {
   const list = useTeamList();
   const searchParams = useSearchParams();
   const urlTeamId = searchParams?.get("teamId") || null;
-  const teams = list.teams ?? NO_TEAMS;
+  const teams = userReady ? (list.teams ?? NO_TEAMS) : NO_TEAMS;
   const missing =
-    list.status === "ready" && urlTeamId !== null && !teams.some((t) => t.id === urlTeamId);
-  const { refreshForTeam } = list;
+    userReady &&
+    list.status === "ready" &&
+    urlTeamId !== null &&
+    !teams.some((t) => t.id === urlTeamId);
+  const { refreshForTeam, refreshTeams } = list;
   useEffect(() => {
     if (missing && urlTeamId) refreshForTeam(urlTeamId);
   }, [missing, urlTeamId, refreshForTeam]);
+
+  // A list that failed before this page mounted is retried once, so a
+  // transient failure does not outlive the page it hit. A failure that
+  // arrives after the mount is not retried here (the next page does).
+  const [retryPending, setRetryPending] = useState(() => list.status === "error");
+  const retriedRef = useRef(false);
+  useEffect(() => {
+    if (!retryPending || !userReady || retriedRef.current) return;
+    retriedRef.current = true;
+    void refreshTeams().then(() => setRetryPending(false));
+  }, [retryPending, userReady, refreshTeams]);
+
   const held = missing && urlTeamId !== null && (!list.asked.has(urlTeamId) || list.refreshing);
-  return { teams, status: list.status, error: list.error, held };
+  const status: TeamListStatus =
+    !userReady || (retryPending && list.status === "error") ? "loading" : list.status;
+  return { teams, status, error: list.error, held };
 }
 
 /**

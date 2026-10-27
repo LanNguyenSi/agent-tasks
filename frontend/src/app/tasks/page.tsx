@@ -187,15 +187,18 @@ function TasksPageInner() {
   const listQuery = searchParams.toString();
   const listHref = listQuery ? `/tasks?${listQuery}` : "/tasks";
 
+  const [userReady, setUserReady] = useState(false);
   // The shell's team list (one lookup for the header and the pages), not a
-  // copy of this page's own. `teamsHeld`: ?teamId names a team that list
-  // lacks and its one refresh is pending.
+  // copy of this page's own; empty until the session check answered, so
+  // without a session no team resolves and nothing is requested or written
+  // into the URL. `teamsHeld`: ?teamId names a team that list lacks and its
+  // one refresh is pending.
   const {
     teams,
     status: teamsStatus,
     error: teamsError,
     held: teamsHeld,
-  } = usePageTeams();
+  } = usePageTeams(userReady);
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so a switch and back/forward always agree.
   const selectedTeam = useCurrentTeam(teams, { hold: teamsHeld });
@@ -311,7 +314,6 @@ function TasksPageInner() {
 
   // ── Bootstrap: auth + teams ───────────────────────────────────
 
-  const [userReady, setUserReady] = useState(false);
   useEffect(() => {
     void (async () => {
       try {

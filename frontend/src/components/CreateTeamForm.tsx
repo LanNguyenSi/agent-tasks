@@ -35,8 +35,9 @@ function slugFromName(name: string): string {
  */
 export default function CreateTeamForm({ onCancel, onCreated }: CreateTeamFormProps) {
   const router = useRouter();
-  // The shell's team list, when there is one (the dialog); the first-team
-  // page sits outside the shell and its Home loads the list afresh.
+  // The shell's team list. On /onboarding the shell's provider is disabled,
+  // so refreshTeams is a no-op there and Home loads the list when it mounts;
+  // null only outside any provider (isolated tests).
   const teamList = useOptionalTeamList();
   const [teamName, setTeamName] = useState("");
   const [teamSlug, setTeamSlug] = useState("");

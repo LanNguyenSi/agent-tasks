@@ -420,11 +420,18 @@ describe("TeamSettingsPage — page shell", () => {
   });
 
   it("redirects to /auth when there is no session", async () => {
+    // A non-empty list: the shell loads it for the header whether or not
+    // there is a session, so the page must not act on it.
+    mockGetTeams.mockResolvedValue([makeTeam("ADMIN")]);
     mockGetCurrentUser.mockResolvedValue(null);
     render(<TeamSettingsPage />);
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
-    // The shell's team list loads for the header regardless; the page itself
-    // loads nothing without a session.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(mockGetTeams).toHaveBeenCalled();
     expect(mockGetAgentTokens).not.toHaveBeenCalled();
+    // No ?teamId written for a team the page never resolved.
+    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
   });
 });

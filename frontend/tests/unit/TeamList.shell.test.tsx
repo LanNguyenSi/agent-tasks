@@ -12,6 +12,7 @@
  * fallback (the remembered team, else the first one) and nothing loops.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 import type { Task, Team, TeamTasksProject, User } from "../../src/lib/api";
 
@@ -43,6 +44,8 @@ import ProjectsPage from "../../src/app/projects/page";
 import TasksPage from "../../src/app/tasks/page";
 import TeamSettingsPage from "../../src/app/settings/team/page";
 import { TeamListProvider, useTeamList } from "../../src/lib/teamList";
+import type { ReactElement } from "react";
+import { usePathname } from "next/navigation";
 import { nav, router } from "../setup/fakeNavigation";
 import {
   createTeam,
@@ -288,6 +291,174 @@ describe("one team list for the header and the page", () => {
     expect(document.querySelector(".app-team-label, .app-team-trigger")).toBeNull();
     expect(getTeams).toHaveBeenCalledTimes(1);
   });
+});
+
+/** The page for the current path, under one mounted shell (a navigation swaps the page, not the shell). */
+const PAGES: Record<string, () => ReactElement> = {
+  "/home": () => <HomeDashboardPage />,
+  "/projects": () => <ProjectsPage />,
+  "/tasks": () => <TasksPage />,
+  "/settings/team": () => <TeamSettingsPage />,
+};
+function Routes() {
+  const Page = PAGES[usePathname() ?? "/home"];
+  return Page ? <Page /> : null;
+}
+
+describe("a failed first lookup is retried by the next team-scoped page", () => {
+  it("home fails to load the list; navigating to /tasks retries once and the page renders", async () => {
+    vi.mocked(getTeams).mockRejectedValueOnce(new Error("teams are down")).mockResolvedValue([A, B]);
+    nav.reset("/home");
+    render(<AppChrome><Routes /></AppChrome>);
+    await settleAll();
+    // /home keeps its loading frame, nothing was retried yet.
+    expect(screen.getByRole("main")).toHaveAttribute("aria-busy", "true");
+    expect(getTeams).toHaveBeenCalledTimes(1);
+
+    act(() => nav.push("/tasks"));
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalled());
+    await waitFor(() => expect(nav.url).toBe("/tasks?teamId=t1"));
+    expect(screen.queryByText("teams are down")).not.toBeInTheDocument();
+    expect(headerTeam()).toBe("Alpha Team");
+    expect(getTeams).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["/projects", "/tasks", "/settings/team", "/home"])(
+    "%s mounted after a failed lookup recovers the list",
+    async (path) => {
+      vi.mocked(getTeams).mockRejectedValueOnce(new Error("down")).mockResolvedValue([A, B]);
+      // Start on a page that does not read the list through the retry (a path
+      // with no page), so the first lookup fails with nobody to retry it.
+      nav.reset("/elsewhere");
+      render(<AppChrome><Routes /></AppChrome>);
+      await settleAll();
+      expect(getTeams).toHaveBeenCalledTimes(1);
+
+      act(() => nav.push(path));
+      await waitFor(() => expect(nav.url).toBe(`${path}?teamId=t1`));
+      await settleAll();
+      expect(getTeams).toHaveBeenCalledTimes(2);
+      expect(headerTeam()).toBe("Alpha Team");
+      expect(screen.getByRole("main")).not.toHaveAttribute("aria-busy", "true");
+    },
+  );
+
+  it("a persistent failure costs one retry per page mount and never loops", async () => {
+    vi.mocked(getTeams).mockRejectedValue(new Error("teams are down"));
+    nav.reset("/home");
+    render(<AppChrome><Routes /></AppChrome>);
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(1);
+
+    act(() => nav.push("/tasks"));
+    expect(await screen.findByText("teams are down")).toBeInTheDocument();
+    await settleAll();
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(2);
+
+    act(() => nav.push("/projects"));
+    await settleAll();
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(3);
+    expect(getTeamTasks).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("the retry runs once per mount even when effects run twice (StrictMode)", async () => {
+    vi.mocked(getTeams).mockRejectedValue(new Error("teams are down"));
+    nav.reset("/elsewhere");
+    render(<StrictMode><AppChrome><Routes /></AppChrome></StrictMode>);
+    await settleAll();
+    // StrictMode runs the provider's load effect twice.
+    const afterMount = vi.mocked(getTeams).mock.calls.length;
+
+    act(() => nav.push("/tasks"));
+    expect(await screen.findByText("teams are down")).toBeInTheDocument();
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(afterMount + 1);
+  });
+
+  it("no session: a failed list is not retried by the page", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(null);
+    vi.mocked(getTeams).mockRejectedValueOnce(new Error("down")).mockResolvedValue([A, B]);
+    nav.reset("/elsewhere");
+    render(<AppChrome><Routes /></AppChrome>);
+    await settleAll();
+
+    act(() => nav.push("/tasks"));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(1);
+    expect(router.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+  });
+
+  it("a page that mounts while the first lookup is still in flight does not retry", async () => {
+    const first = deferred<Team[]>();
+    vi.mocked(getTeams).mockReturnValueOnce(first.promise);
+    nav.reset("/tasks");
+    render(<AppChrome><Routes /></AppChrome>);
+    await waitFor(() => expect(getCurrentUser).toHaveBeenCalled());
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      first.resolve([A, B]);
+    });
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalled());
+    expect(getTeams).toHaveBeenCalledTimes(1);
+  });
+
+  it("a list that loaded is not retried when a page mounts", async () => {
+    vi.mocked(getTeams).mockResolvedValue([A, B]);
+    nav.reset("/home");
+    render(<AppChrome><Routes /></AppChrome>);
+    await screen.findByRole("heading", { name: "Alpha Team" });
+    act(() => nav.push("/projects?teamId=t1"));
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("without a session the pages resolve no team and request nothing", () => {
+  it.each(["/home", "/projects", "/tasks", "/settings/team"])(
+    "%s with a non-empty team list: only the /auth redirect",
+    async (path) => {
+      vi.mocked(getCurrentUser).mockResolvedValue(null);
+      vi.mocked(getTeams).mockResolvedValue([A, B]);
+      nav.reset(path);
+      render(<AppChrome><Routes /></AppChrome>);
+
+      await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
+      await settleAll();
+      await settleAll();
+
+      expect(getTeams).toHaveBeenCalledTimes(1);
+      expect(router.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+      expect(getTeamTasks).not.toHaveBeenCalled();
+      expect(getProjects).not.toHaveBeenCalled();
+      expect(getTasks).not.toHaveBeenCalled();
+      expect(getAgentTokens).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["/home", "/projects", "/tasks", "/settings/team"])(
+    "%s with a ?teamId the list lacks and no session: no refresh, nothing written",
+    async (path) => {
+      vi.mocked(getCurrentUser).mockResolvedValue(null);
+      vi.mocked(getTeams).mockResolvedValue([A, B]);
+      nav.reset(`${path}?teamId=t9`);
+      render(<AppChrome><Routes /></AppChrome>);
+
+      await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
+      await settleAll();
+      await settleAll();
+
+      expect(getTeams).toHaveBeenCalledTimes(1);
+      expect(router.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+      expect(getTeamTasks).not.toHaveBeenCalled();
+      expect(getAgentTokens).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("who asks for a refresh", () => {
