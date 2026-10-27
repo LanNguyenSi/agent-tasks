@@ -46,9 +46,21 @@ export function needsOnboarding(ctx: AccessContext): boolean {
 export async function getAccessContext(): Promise<AccessContext> {
   const teams = await getTeams();
   if (teams.length > 0) return { teams, sharedProjects: [] };
+  return { teams, ...(await retrySharedProjects()) };
+}
+
+/**
+ * Retry entry point for /onboarding: re-runs only the shared-projects lookup
+ * (the page already knows the user has no teams; that is what put them on
+ * /onboarding). Same fail-soft contract as getAccessContext: a rejection is
+ * reported as the empty list plus `sharedProjectsError`, never as a throw.
+ */
+export async function retrySharedProjects(): Promise<
+  Pick<AccessContext, "sharedProjects" | "sharedProjectsError">
+> {
   try {
-    return { teams, sharedProjects: await getProjects() };
+    return { sharedProjects: await getProjects() };
   } catch {
-    return { teams, sharedProjects: [], sharedProjectsError: true };
+    return { sharedProjects: [], sharedProjectsError: true };
   }
 }
