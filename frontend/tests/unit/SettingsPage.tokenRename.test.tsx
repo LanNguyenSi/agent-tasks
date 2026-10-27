@@ -54,7 +54,9 @@ vi.mock("../../src/lib/api", () => ({
   getAvailableScopes: vi.fn(),
 }));
 
-import TeamSettingsPage from "../../src/app/settings/team/page";
+import TeamSettingsPageRaw from "../../src/app/settings/team/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TeamSettingsPage = withTeamList(TeamSettingsPageRaw);
 import { nav, router as routerMocks } from "../setup/fakeNavigation";
 import {
   getCurrentUser,
@@ -418,9 +420,18 @@ describe("TeamSettingsPage — page shell", () => {
   });
 
   it("redirects to /auth when there is no session", async () => {
+    // A non-empty list: the shell loads it for the header whether or not
+    // there is a session, so the page must not act on it.
+    mockGetTeams.mockResolvedValue([makeTeam("ADMIN")]);
     mockGetCurrentUser.mockResolvedValue(null);
     render(<TeamSettingsPage />);
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
-    expect(mockGetTeams).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(mockGetTeams).toHaveBeenCalled();
+    expect(mockGetAgentTokens).not.toHaveBeenCalled();
+    // No ?teamId written for a team the page never resolved.
+    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
   });
 });

@@ -31,7 +31,9 @@ vi.mock("../../src/lib/api", () => ({
   getTeamTasks: vi.fn(),
 }));
 
-import HomeDashboardPage from "../../src/app/home/page";
+import HomeDashboardPageRaw from "../../src/app/home/page";
+import { withTeamList } from "./helpers/withTeamList";
+const HomeDashboardPage = withTeamList(HomeDashboardPageRaw);
 import { getCurrentUser, getTeams, getTeamTasks } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);

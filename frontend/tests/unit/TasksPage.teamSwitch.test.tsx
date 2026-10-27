@@ -41,7 +41,9 @@ vi.mock("../../src/components/tasks/NewTaskFlow", () => ({
     ) : null,
 }));
 
-import TasksPage from "../../src/app/tasks/page";
+import TasksPageRaw from "../../src/app/tasks/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TasksPage = withTeamList(TasksPageRaw);
 import AppHeader from "../../src/components/AppHeader";
 import { nav } from "../setup/fakeNavigation";
 import { getCurrentUser, getTeams, getTeamTasks, updateTask } from "../../src/lib/api";

@@ -28,8 +28,11 @@ vi.mock("../../src/lib/api", () => ({
   syncTeamFromGitHub: vi.fn(),
 }));
 
-import HomeDashboardPage from "../../src/app/home/page";
-import ProjectsPage from "../../src/app/projects/page";
+import HomeDashboardPageRaw from "../../src/app/home/page";
+import { withTeamList } from "./helpers/withTeamList";
+const HomeDashboardPage = withTeamList(HomeDashboardPageRaw);
+import ProjectsPageRaw from "../../src/app/projects/page";
+const ProjectsPage = withTeamList(ProjectsPageRaw);
 import { getCurrentUser, getProjects, getTasks, getTeams, getTeamTasks } from "../../src/lib/api";
 
 const USER = { id: "u-1", login: "lan", githubConnected: true } as User;

@@ -7,7 +7,6 @@ import {
   getCurrentUser,
   getTeamTasks,
   type User,
-  type Team,
   type Project,
   type Task,
   type TeamTasksCounts,
@@ -19,7 +18,8 @@ import {
   HOME_PROJECTS_STRIP_LIMIT,
   readRecentProjects,
 } from "../../lib/recentProjects";
-import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { needsOnboarding } from "../../lib/access";
+import { accessContextForTeams, usePageTeams } from "../../lib/teamList";
 import { useCurrentTeam } from "../../lib/teamSwitch";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref, projectsHref } from "../../lib/routes";
@@ -285,10 +285,15 @@ function ProjectsStrip({ projects, teamId, activeCounts }: ProjectsStripProps) {
 export default function HomeDashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
+  // The shell's team list (one lookup for the header and the pages), not a
+  // copy of this page's own; empty until the session check answered, so
+  // without a session no team resolves and nothing is requested or written
+  // into the URL. `teamsHeld`: ?teamId names a team that list lacks and its
+  // one refresh is pending.
+  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams(user !== null);
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so back/forward and a switch always agree.
-  const selectedTeam = useCurrentTeam(teams);
+  const selectedTeam = useCurrentTeam(teams, { hold: teamsHeld });
   // Zero-team user with shared projects: the project list replaces the task
   // widgets (the team task aggregation needs a team).
   const [sharedProjects, setSharedProjects] = useState<Project[]>([]);
@@ -324,20 +329,28 @@ export default function HomeDashboardPage() {
       const me = await getCurrentUser();
       if (!me) { router.replace("/auth"); return; }
       setUser(me);
-
-      const ctx = await getAccessContext();
-      if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
-      const teams = ctx.teams;
-      if (teams.length === 0) {
-        setSharedProjects(ctx.sharedProjects);
-        setLoading(false);
-        return;
-      }
-
-      setTeams(teams);
-      setLoading(false);
     })();
   }, [router]);
+
+  // Access decision once the user and the shell's team list are known.
+  // `error` (the list could not be loaded) keeps the page loading, as the
+  // page's own failed lookup did.
+  useEffect(() => {
+    if (!user || teamsStatus !== "ready") return;
+    if (teams.length > 0) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ctx = await accessContextForTeams(teams);
+      if (cancelled) return;
+      if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
+      setSharedProjects(ctx.sharedProjects);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [user, teamsStatus, teams, router]);
 
   useEffect(() => {
     if (!selectedTeam) return;

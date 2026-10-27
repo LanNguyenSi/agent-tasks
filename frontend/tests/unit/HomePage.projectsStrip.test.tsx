@@ -49,7 +49,9 @@ vi.mock("../../src/lib/api", async () => {
   };
 });
 
-import HomeDashboardPage from "../../src/app/home/page";
+import HomeDashboardPageRaw from "../../src/app/home/page";
+import { withTeamList } from "./helpers/withTeamList";
+const HomeDashboardPage = withTeamList(HomeDashboardPageRaw);
 import ProjectBoardPage from "../../src/app/projects/[id]/board/page";
 import { ToastProvider } from "../../src/components/ui/Toast";
 import {

@@ -45,11 +45,17 @@ vi.mock("../../src/lib/api", () => ({
 
 vi.mock("../../src/components/tasks/NewTaskFlow", () => ({ default: () => null }));
 
-import HomeDashboardPage from "../../src/app/home/page";
-import ProjectsPage from "../../src/app/projects/page";
-import TasksPage from "../../src/app/tasks/page";
-import TeamSettingsPage from "../../src/app/settings/team/page";
+import HomeDashboardPageRaw from "../../src/app/home/page";
+import { withTeamList } from "./helpers/withTeamList";
+const HomeDashboardPage = withTeamList(HomeDashboardPageRaw);
+import ProjectsPageRaw from "../../src/app/projects/page";
+const ProjectsPage = withTeamList(ProjectsPageRaw);
+import TasksPageRaw from "../../src/app/tasks/page";
+const TasksPage = withTeamList(TasksPageRaw);
+import TeamSettingsPageRaw from "../../src/app/settings/team/page";
+const TeamSettingsPage = withTeamList(TeamSettingsPageRaw);
 import AppHeader from "../../src/components/AppHeader";
+import AppChrome from "../../src/components/AppChrome";
 import { nav, router } from "../setup/fakeNavigation";
 import {
   getAgentTokens,
@@ -217,6 +223,46 @@ describe.each(PAGES)("$path without ?teamId", ({ path, Page }) => {
     await pageShows("Beta");
     expect(headerTeam()).toBe("Beta");
     expect(nav.url).toBe(`${path}?teamId=t2`);
+  });
+});
+
+/** The pages as the shell mounts them: AppChrome owns the team list. */
+const RAW_PAGES: { path: string; Page: ComponentType }[] = [
+  { path: "/home", Page: HomeDashboardPageRaw },
+  { path: "/projects", Page: ProjectsPageRaw },
+  { path: "/tasks", Page: TasksPageRaw },
+  { path: "/settings/team", Page: TeamSettingsPageRaw },
+];
+
+describe.each(RAW_PAGES)("$path with a team list older than the URL", ({ path, Page }) => {
+  const GAMMA = team("t3", "Gamma");
+
+  beforeEach(() => {
+    NAME.t3 = "Gamma";
+  });
+
+  it("reloads the shared list once; header and page show the team the URL names", async () => {
+    vi.mocked(getTeams).mockReset();
+    vi.mocked(getTeams).mockResolvedValueOnce(TEAMS).mockResolvedValue([...TEAMS, GAMMA]);
+    nav.reset(`${path}?teamId=t3`);
+    render(<AppChrome><Page /></AppChrome>);
+
+    await pageShows("Gamma");
+    await waitFor(() => expect(headerTeam()).toBe("Gamma"));
+    expect(nav.url).toBe(`${path}?teamId=t3`);
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(getTeams).toHaveBeenCalledTimes(2);
+  });
+
+  it("still missing after the reload: header and page show the same fallback, the remembered team", async () => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    nav.reset(`${path}?teamId=t3`);
+    render(<AppChrome><Page /></AppChrome>);
+
+    await waitFor(() => expect(nav.url).toBe(`${path}?teamId=t2`));
+    await pageShows("Beta");
+    expect(headerTeam()).toBe("Beta");
+    expect(getTeams).toHaveBeenCalledTimes(2);
   });
 });
 
