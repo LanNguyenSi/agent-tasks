@@ -361,14 +361,6 @@ input[type="checkbox"] {
 
 /* ── Layout shells ────────────────────────────────────────────── */
 
-.page-shell {
-  width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  min-height: 100vh;
-  padding: var(--space-5);
-}
-
 /* PageShell (components/ui/PageShell.tsx): one <main>, full-width header
    bands and a centred content slot. --page-column is the width of the page
    column (set per variant on <main>); the content slot's first child and the
@@ -706,6 +698,9 @@ input[type="checkbox"] {
      mobile-overflow bug this grid had. */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
+  /* Cards keep their own height instead of stretching to the tallest one in
+     the row. */
+  align-items: start;
 }
 
 @media (max-width: 768px) {
@@ -1100,6 +1095,16 @@ input[type="checkbox"] {
   margin-bottom: var(--space-3);
 }
 
+/* Cards view adds the sort Select between the checkbox and the view toggle.
+   Declared before the narrow-width override so that one still stacks it. */
+.teams-filter-bar--sort {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+}
+
+.teams-sort-select {
+  min-width: 200px;
+}
+
 .teams-pagination {
   display: flex;
   justify-content: space-between;
@@ -1115,21 +1120,6 @@ input[type="checkbox"] {
   grid-template-columns: 1fr;
   gap: 0.35rem;
   margin-bottom: 0.65rem;
-}
-
-.teams-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.teams-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
 .project-form-grid {
@@ -1652,10 +1642,6 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 900px) {
-  .page-shell {
-    padding: var(--space-4);
-  }
-
   .landing-feature-grid {
     grid-template-columns: 1fr;
   }
@@ -1669,22 +1655,6 @@ input[type="checkbox"] {
   .teams-layout {
     grid-template-columns: 1fr;
     gap: var(--space-4);
-  }
-
-  .teams-header-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .teams-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .teams-actions > a,
-  .teams-actions > button {
-    width: 100%;
-    text-align: center;
   }
 
   .project-form-grid {
@@ -2703,6 +2673,20 @@ input[type="checkbox"] {
   color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* Opt-in (PageHeader truncateSummary): a summary that carries a user-chosen
+   name shrinks with an ellipsis and the title keeps its full width, instead
+   of the nowrap summary widening the band past the viewport. */
+.page-header--summary-truncates .page-header-title {
+  flex-shrink: 0;
+}
+
+.page-header--summary-truncates .page-header-summary {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .page-header-actions {
@@ -3780,25 +3764,6 @@ html[data-theme="light"] {
  * Prefix: home- (header, stat strip, task row, widget internals).
  * All geometry lives here; no inline style blocks in home/page.tsx.
  */
-
-/* Page-level heading (H1 + sub-line) above the stat strip */
-.home-header {
-  margin-bottom: var(--space-4);
-}
-
-.home-header-title {
-  font-size: var(--text-xl);
-  font-weight: 600;
-  letter-spacing: -0.012em;
-  color: var(--text);
-  line-height: 1.2;
-}
-
-.home-header-sub {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  margin-top: var(--space-1);
-}
 
 /* Stat strip: 6-column row of large-number tiles (one row per D2). Below
    1100px, six columns crowd the number+label pair, so it drops to 3
@@ -7607,25 +7572,6 @@ a.proj-chip:hover {
 
 /* ── Teams page v2 ─────────────────────────────────────────────── */
 
-.teams-page-title {
-  font-size: var(--text-xl);
-  font-weight: 700;
-  margin: 0 0 var(--space-1) 0;
-}
-
-.teams-team-name {
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  font-weight: 400;
-  margin: 0;
-}
-
-.teams-project-count {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  margin: 0;
-}
-
 .teams-filter-card {
   margin-bottom: var(--space-3);
 }
@@ -7657,19 +7603,6 @@ a.proj-chip:hover {
 
 .teams-github-repo-field {
   margin-bottom: var(--space-3);
-}
-
-/* Sort control row shown above the cards grid. Constrains the native
-   <select> (which defaults to width:100%) to a reasonable inline size. */
-.teams-cards-sort-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-2);
-}
-
-.teams-cards-sort-row .table-sort-native {
-  width: auto;
-  min-width: 200px;
 }
 
 /* ── Project cards ─────────────────────────────────────────────── */

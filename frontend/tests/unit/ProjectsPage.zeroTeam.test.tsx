@@ -101,7 +101,7 @@ describe("/projects with a team", () => {
     setAccess([TEAM], shared);
     render(<ProjectsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Pandora" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Pandora · /)).toBeInTheDocument();
     await screen.findByText("Own Project");
     expect(screen.getAllByRole("button", { name: /New Project/ }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();

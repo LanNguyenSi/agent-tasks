@@ -25,6 +25,14 @@ interface PageHeaderProps {
   title: ReactNode;
   /** Compact summary next to the title (e.g. "12 open"). */
   summary?: ReactNode;
+  /**
+   * Opt in when the summary can be arbitrarily long (a user-chosen name): the
+   * title keeps its full width and the summary shrinks with an ellipsis
+   * instead of pushing the band wider than the viewport. The text stays in
+   * the DOM, so assistive tech still reads all of it. Off by default: the
+   * summary then stays on one line at its natural width.
+   */
+  truncateSummary?: boolean;
   /** Right-aligned actions (buttons, toggles). */
   children?: ReactNode;
   className?: string;
@@ -34,11 +42,20 @@ export function PageHeader({
   breadcrumb,
   title,
   summary,
+  truncateSummary = false,
   children,
   className,
 }: PageHeaderProps) {
   return (
-    <div className={["page-header", className].filter(Boolean).join(" ")}>
+    <div
+      className={[
+        "page-header",
+        truncateSummary && "page-header--summary-truncates",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <div className="page-header-left">
         {breadcrumb && (
           <div className="page-header-breadcrumb">{breadcrumb}</div>

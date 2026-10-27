@@ -35,6 +35,9 @@ import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
+import { PageHeader } from "../../components/ui/PageHeader";
+import { PageShell } from "../../components/ui/PageShell";
+import Select from "../../components/ui/Select";
 import { Skeleton, SkeletonList } from "../../components/ui/Skeleton";
 import { Table, type ColumnDef } from "../../components/ui/Table";
 import { Tabs } from "../../components/ui/Tabs";
@@ -47,6 +50,49 @@ import {
 import { isActiveTask } from "../home/widgetFilters";
 
 const PROJECT_PAGE_SIZE = 25;
+
+// Sort choices as `column:direction` values, grouped by column for the
+// native (mobile) select; the shared Select takes them flattened.
+const PROJECT_SORT_GROUPS: {
+  label: string;
+  options: { value: string; label: string }[];
+}[] = [
+  {
+    label: "Name",
+    options: [
+      { value: "name:asc", label: "Name: A to Z" },
+      { value: "name:desc", label: "Name: Z to A" },
+    ],
+  },
+  {
+    label: "Repo",
+    options: [
+      { value: "repo:asc", label: "Repo: A to Z" },
+      { value: "repo:desc", label: "Repo: Z to A" },
+    ],
+  },
+  {
+    label: "Active tasks",
+    options: [
+      { value: "activeTasks:asc", label: "Active tasks: Low to High" },
+      { value: "activeTasks:desc", label: "Active tasks: High to Low" },
+    ],
+  },
+  {
+    label: "Created",
+    options: [
+      { value: "createdAt:asc", label: "Created: Oldest first" },
+      { value: "createdAt:desc", label: "Created: Newest first" },
+    ],
+  },
+  {
+    label: "Synced",
+    options: [
+      { value: "syncedAt:asc", label: "Synced: Oldest first" },
+      { value: "syncedAt:desc", label: "Synced: Newest first" },
+    ],
+  },
+];
 
 // ── Project card components ────────────────────────────────────────────────
 
@@ -65,7 +111,7 @@ function ProjectCard({
     <Card interactive className="project-card">
       <Link href={href} className="project-card-link">
         <div className="project-card-title-row">
-          <h3 className="project-card-title">{project.name}</h3>
+          <h2 className="project-card-title">{project.name}</h2>
         </div>
         {project.githubRepo ? (
           <p className="project-card-repo">GitHub: {project.githubRepo}</p>
@@ -572,149 +618,143 @@ export default function ProjectsPage() {
     currentProjectPage * PROJECT_PAGE_SIZE,
   );
 
-  // Native sort select shared between both views.
-  // In table view it's passed as compactSort (shown on mobile).
-  // In cards view it's rendered visibly in teams-cards-sort-row.
-  const sortSelect = (
+  // Sort control. Table view: the table header sorts at desktop widths and
+  // the native select is the stacked (mobile) compactSort. Cards view has no
+  // header, so the shared Select sits in the filter card row at every width.
+  const sortValue = `${sortColumn}:${sortDirection}`;
+  const applySort = (value: string) => {
+    const [col, dir] = value.split(":");
+    setSortColumn(col as ProjectSortColumn);
+    setSortDirection(dir as "asc" | "desc");
+  };
+  const compactSortSelect = (
     <select
       className="table-sort-native"
       aria-label="Sort by"
-      value={`${sortColumn}:${sortDirection}`}
-      onChange={(e) => {
-        const [col, dir] = e.target.value.split(":");
-        setSortColumn(col as ProjectSortColumn);
-        setSortDirection(dir as "asc" | "desc");
-      }}
+      value={sortValue}
+      onChange={(e) => applySort(e.target.value)}
     >
-      <optgroup label="Name">
-        <option value="name:asc">Name: A to Z</option>
-        <option value="name:desc">Name: Z to A</option>
-      </optgroup>
-      <optgroup label="Repo">
-        <option value="repo:asc">Repo: A to Z</option>
-        <option value="repo:desc">Repo: Z to A</option>
-      </optgroup>
-      <optgroup label="Active tasks">
-        <option value="activeTasks:asc">Active tasks: Low to High</option>
-        <option value="activeTasks:desc">Active tasks: High to Low</option>
-      </optgroup>
-      <optgroup label="Created">
-        <option value="createdAt:asc">Created: Oldest first</option>
-        <option value="createdAt:desc">Created: Newest first</option>
-      </optgroup>
-      <optgroup label="Synced">
-        <option value="syncedAt:asc">Synced: Oldest first</option>
-        <option value="syncedAt:desc">Synced: Newest first</option>
-      </optgroup>
+      {PROJECT_SORT_GROUPS.map((group) => (
+        <optgroup key={group.label} label={group.label}>
+          {group.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </optgroup>
+      ))}
     </select>
+  );
+  const cardsSortSelect = (
+    <Select
+      className="teams-sort-select"
+      ariaLabel="Sort by"
+      options={PROJECT_SORT_GROUPS.flatMap((group) => group.options)}
+      value={sortValue}
+      onChange={applySort}
+    />
   );
 
   if (loading) {
-    return <FullPageLoader label="Loading teams…" />;
+    return <FullPageLoader variant="shell" label="Loading teams…" headerActions={2} />;
   }
 
-  return (
-    <main className="page-shell">
-      {!selectedTeam && (
+  // One band for both states: the title is the page, the summary carries
+  // the team and its project count (or the shared-project count), and the
+  // actions sit on the right like on /tasks and /settings.
+  const teamProjectCount = selectedTeam
+    ? (selectedTeam.projectCount ?? projects.length)
+    : 0;
+  const summary = selectedTeam
+    ? `${selectedTeam.name} · ${teamProjectCount} ${teamProjectCount === 1 ? "project" : "projects"}`
+    : `${sharedProjects.length} shared ${sharedProjects.length === 1 ? "project" : "projects"}`;
+  const header = (
+    <PageHeader title="Projects" summary={summary} truncateSummary>
+      {selectedTeam ? (
         <>
-          <div className="teams-header-row">
-            <div>
-              <h1 className="teams-page-title">Projects</h1>
-              <p className="teams-project-count">
-                {sharedProjects.length} shared {sharedProjects.length === 1 ? "project" : "projects"}
-              </p>
-            </div>
-            <div className="teams-actions">
-              <Button href="/onboarding" variant="secondary">
-                Create a team
-              </Button>
-            </div>
-          </div>
-          <SharedProjectsList projects={sharedProjects} />
+          {!user?.githubConnected ? (
+            <Button href="/api/auth/github/connect" variant="primary">
+              Connect GitHub
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void (async () => {
+                  setFeedback(null);
+                  setSyncing(true);
+                  const syncedTeamId = selectedTeam.id;
+                  try {
+                    const result = await syncTeamFromGitHub(syncedTeamId);
+                    await loadProjects(syncedTeamId);
+                    // The user switched teams meanwhile: the outcome
+                    // belongs to the team that was left.
+                    if (activeTeamRef.current !== syncedTeamId) return;
+                    if (result.skippedPrune) {
+                      setFeedback({
+                        tone: "warning",
+                        title: "Sync completed",
+                        message: result.message,
+                      });
+                    } else if (
+                      result.created === 0 &&
+                      result.updated === 0 &&
+                      result.pruned === 0
+                    ) {
+                      setFeedback({
+                        tone: "success",
+                        title: "Already up to date",
+                        message:
+                          "No projects were created, updated, or pruned.",
+                      });
+                    } else {
+                      setFeedback({
+                        tone: "success",
+                        title: "Sync completed",
+                        message: `${result.created} created, ${result.updated} updated, ${result.pruned} pruned.`,
+                      });
+                    }
+                  } catch (err) {
+                    if (activeTeamRef.current !== syncedTeamId) return;
+                    setFeedback({
+                      tone: "danger",
+                      title: "Sync failed",
+                      message: (err as Error).message,
+                    });
+                  } finally {
+                    setSyncing(false);
+                  }
+                })();
+              }}
+              disabled={syncing}
+              loading={syncing}
+            >
+              {syncing ? "Syncing…" : "Sync GitHub"}
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              setError(null);
+              setShowNewProject(true);
+            }}
+          >
+            + New Project
+          </Button>
         </>
+      ) : (
+        <Button href="/onboarding" variant="secondary">
+          Create a team
+        </Button>
       )}
+    </PageHeader>
+  );
+
+  return (
+    <PageShell header={header}>
+      {!selectedTeam && <SharedProjectsList projects={sharedProjects} />}
 
       {selectedTeam && (
         <>
-          <div className="teams-header-row">
-            <div>
-              <h1 className="teams-page-title">Projects</h1>
-              <h2 className="teams-team-name">{selectedTeam.name}</h2>
-              <p className="teams-project-count">
-                {selectedTeam.projectCount ?? projects.length} projects
-              </p>
-            </div>
-            <div className="teams-actions">
-              {!user?.githubConnected ? (
-                <Button href="/api/auth/github/connect" variant="primary">
-                  Connect GitHub
-                </Button>
-              ) : (
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    void (async () => {
-                      setFeedback(null);
-                      setSyncing(true);
-                      const syncedTeamId = selectedTeam.id;
-                      try {
-                        const result = await syncTeamFromGitHub(syncedTeamId);
-                        await loadProjects(syncedTeamId);
-                        // The user switched teams meanwhile: the outcome
-                        // belongs to the team that was left.
-                        if (activeTeamRef.current !== syncedTeamId) return;
-                        if (result.skippedPrune) {
-                          setFeedback({
-                            tone: "warning",
-                            title: "Sync completed",
-                            message: result.message,
-                          });
-                        } else if (
-                          result.created === 0 &&
-                          result.updated === 0 &&
-                          result.pruned === 0
-                        ) {
-                          setFeedback({
-                            tone: "success",
-                            title: "Already up to date",
-                            message:
-                              "No projects were created, updated, or pruned.",
-                          });
-                        } else {
-                          setFeedback({
-                            tone: "success",
-                            title: "Sync completed",
-                            message: `${result.created} created, ${result.updated} updated, ${result.pruned} pruned.`,
-                          });
-                        }
-                      } catch (err) {
-                        if (activeTeamRef.current !== syncedTeamId) return;
-                        setFeedback({
-                          tone: "danger",
-                          title: "Sync failed",
-                          message: (err as Error).message,
-                        });
-                      } finally {
-                        setSyncing(false);
-                      }
-                    })();
-                  }}
-                  disabled={syncing}
-                  loading={syncing}
-                >
-                  {syncing ? "Syncing…" : "Sync GitHub"}
-                </Button>
-              )}
-              <Button
-                onClick={() => {
-                  setError(null);
-                  setShowNewProject(true);
-                }}
-              >
-                + New Project
-              </Button>
-            </div>
-          </div>
 
           {!user?.githubConnected && (
             <AlertBanner tone="warning" title="GitHub is not connected yet">
@@ -799,7 +839,14 @@ export default function ProjectsPage() {
           </Modal>
 
           <Card padding="sm" className="teams-filter-card">
-            <div className="teams-filter-bar">
+            <div
+              className={[
+                "teams-filter-bar",
+                viewMode === "cards" ? "teams-filter-bar--sort" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               <input
                 type="search"
                 aria-label="Search projects"
@@ -816,6 +863,7 @@ export default function ProjectsPage() {
                 />
                 GitHub projects only
               </label>
+              {viewMode === "cards" && cardsSortSelect}
               <Tabs
                 value={viewMode}
                 onChange={(v) => {
@@ -878,7 +926,6 @@ export default function ProjectsPage() {
             />
           ) : viewMode === "cards" ? (
             <>
-              <div className="teams-cards-sort-row">{sortSelect}</div>
               <div className="projects-grid">
                 {pagedProjects.map((project) => (
                   <ProjectCard
@@ -917,7 +964,7 @@ export default function ProjectsPage() {
                 sortDirection={sortDirection === "asc" ? "ascending" : "descending"}
                 onSortChange={handleSortChange}
                 emptyLabel="No projects match the current filters."
-                compactSort={sortSelect}
+                compactSort={compactSortSelect}
               />
               <Pagination
                 page={currentProjectPage}
@@ -947,6 +994,6 @@ export default function ProjectsPage() {
           setDeleteTarget(null);
         }}
       />
-    </main>
+    </PageShell>
   );
 }

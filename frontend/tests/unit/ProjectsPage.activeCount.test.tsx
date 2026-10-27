@@ -70,15 +70,15 @@ afterEach(() => {
 });
 
 describe("/projects: heading", () => {
-  it("is the H1 'Projects' with the team name as the H2 below it", async () => {
+  it("is the one H1 'Projects' with the team name in the band summary, not an H2", async () => {
     vi.mocked(getTasks).mockResolvedValue([]);
     render(<ProjectsPage />);
     expect(await screen.findByRole("heading", { level: 1, name: "Projects" })).toBeInTheDocument();
-    const teamHeading = screen.getByRole("heading", { level: 2, name: TEAM.name });
-    expect(teamHeading).toBeInTheDocument();
-    // Its own class (secondary text colour), not the muted count style.
-    expect(teamHeading).toHaveClass("teams-team-name");
-    expect(teamHeading).not.toHaveClass("teams-project-count");
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { level: 2, name: TEAM.name })).toBeNull();
+    await waitFor(() =>
+      expect(document.querySelector(".page-header-summary")).toHaveTextContent(`${TEAM.name} · 1 project`),
+    );
   });
 });
 
