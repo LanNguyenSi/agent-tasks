@@ -3761,7 +3761,7 @@ html[data-theme="light"] {
 /* ── Home v2 ─────────────────────────────────────────────────── */
 /*
  * Component-scoped classes for the home surface (Stage D2).
- * Prefix: home- (header, stat strip, task row, widget internals).
+ * Prefix: home- (header, scope strip, task row, widget internals).
  * All geometry lives here; no inline style blocks in home/page.tsx.
  */
 
@@ -3867,7 +3867,7 @@ html[data-theme="light"] {
 }
 
 /* "Your projects" jump strip (T05): chips of up to 6 project links above
-   the stat strip. flex-wrap (no grid, no scroll container) so the chips
+   the scope strip. flex-wrap (no grid, no scroll container) so the chips
    wrap onto new lines at phone width instead of widening the page. */
 .home-projects-strip {
   margin-bottom: var(--space-5);

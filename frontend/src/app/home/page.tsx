@@ -147,7 +147,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
   return (
     <Card className="home-widget-card" padding="sm">
       <div className="home-widget-header">
-        {/* Plain text: the stat tile above is the one link to this scope
+        {/* Plain text: the scope link above is the one link to this scope
             ("N total" and "+N more" below lead there too). */}
         <h2 className="home-widget-title">{title}</h2>
         <Link href={moreHref} className="widget-link home-widget-more">
@@ -229,7 +229,7 @@ interface ProjectsStripProps {
 
 /**
  * "Your projects" jump strip (T05, UI/IA S1): up to
- * `HOME_PROJECTS_STRIP_LIMIT` project links above the stat strip, recents
+ * `HOME_PROJECTS_STRIP_LIMIT` project links above the scope strip, recents
  * first (localStorage, recorded when a board is opened) and then the
  * remaining projects in the order `getTeamTasks` returns them, plus the
  * "All projects" link to the team's Projects page. Shared projects
@@ -671,7 +671,7 @@ export default function HomeDashboardPage() {
               )}
             </div>
 
-            {/* Widgets: same six scopes as the stat strip above, rendered
+            {/* Widgets: same six scopes as the scope strip above, rendered
                 from the same `homeScopes` list in the same D1 order (My
                 Tasks, Priority, Backlog, Active Tasks, In Review, Done) --
                 see the comment at homeScopes for the ordering rule. */}
