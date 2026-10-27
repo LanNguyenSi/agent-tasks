@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type GroundingGithubCreateOperation, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import type { Actor, AgentActor } from "../types/auth.js";
-import { canonicalGroundingJson, GroundingAccessError, groundingAuthority, type GroundingTask } from "./grounding-context.js";
+import { canonicalGroundingJson, CREATE_CONSENT_REFUSAL, KEY_OTHER_ACTOR_REFUSAL, tokenScopeMessage, GroundingAccessError, groundingAuthority, type GroundingTask } from "./grounding-context.js";
 import { groundingTransaction, lockGroundingTask, assertNoGroundingReservation, invalidateGroundingContext, GroundingDecisionError } from "./grounding-transaction.js";
 import { acquireGithubFence, assertGithubFenceOwned, releaseGithubFence, withGithubFenceWrites, canonicalGithubRepo, GithubFenceError, type GithubFenceOwner } from "./grounding-github-fence.js";
 import { findDelegationUser } from "./github-delegation.js";
@@ -12,7 +12,7 @@ import { normalizeGithubCreateRequest, githubCreateProof, hasGithubCreateCorrela
 const storedProof = z.object({ repo: z.string(), number: z.number().int().positive().max(2147483647), url: z.string(), title: z.string().max(4096), sourceRepo: z.string(), headRef: z.string(), headSha: z.string().regex(/^[0-9a-f]{40}$/), baseRef: z.string() }).strict();
 function fingerprint(request: GithubCreateRequest) { return createHash("sha256").update(canonicalGroundingJson(request)).digest("hex"); }
 function agent(actor: Actor): AgentActor {
-  if (actor.type !== "agent" || !actor.scopes.includes("tasks:update") || !actor.scopes.includes("github:pr_create")) throw new GroundingAccessError("forbidden", 403);
+  if (actor.type !== "agent" || !actor.scopes.includes("tasks:update") || !actor.scopes.includes("github:pr_create")) throw new GroundingAccessError("forbidden", 403, tokenScopeMessage(actor, ["tasks:update", "github:pr_create"]));
   return actor;
 }
 function conflict(): never { throw new GroundingDecisionError("grounding_operation_conflict"); }
@@ -35,7 +35,7 @@ export class GroundingGithubCreateService {
     });
   }
   private match(operation: GroundingGithubCreateOperation, actor: AgentActor, request: GithubCreateRequest) {
-    if (operation.actorId !== actor.tokenId || operation.actorUserId !== actor.userId || operation.actorTeamId !== actor.teamId) throw new GroundingAccessError("forbidden", 403);
+    if (operation.actorId !== actor.tokenId || operation.actorUserId !== actor.userId || operation.actorTeamId !== actor.teamId) throw new GroundingAccessError("forbidden", 403, KEY_OTHER_ACTOR_REFUSAL);
     if (operation.fingerprint !== fingerprint(request) || canonicalGroundingJson(operation.request) !== canonicalGroundingJson(request)) conflict();
   }
   private async authorize(db: Prisma.TransactionClient, task: GroundingTask, actor: AgentActor, request: GithubCreateRequest, delegateId?: string) {
@@ -43,11 +43,11 @@ export class GroundingGithubCreateService {
     const effective = task.deliverableRepo ?? task.project.githubRepo;
     if (effective !== null && canonicalGithubRepo(effective) !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
     const chosenId = delegateId ?? (await findDelegationUser(task.project.teamId, "allowAgentPrCreate", { preferUserId: actor.userId, db }))?.userId;
-    if (!chosenId) throw new GroundingAccessError("forbidden", 403);
+    if (!chosenId) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
     await db.$queryRaw`SELECT id FROM users WHERE id = ${chosenId} FOR SHARE`;
     await db.$queryRaw`SELECT id FROM team_members WHERE "teamId" = ${task.project.teamId} AND "userId" = ${chosenId} FOR SHARE`;
     const member = await db.teamMember.findUnique({ where: { teamId_userId: { teamId: task.project.teamId, userId: chosenId } }, include: { user: true } });
-    if (!member?.user.allowAgentPrCreate || !member.user.githubConnectedAt || !member.user.githubAccessToken) throw new GroundingAccessError("forbidden", 403);
+    if (!member?.user.allowAgentPrCreate || !member.user.githubConnectedAt || !member.user.githubAccessToken) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
     return { id: chosenId, token: member.user.githubAccessToken };
   }
   private async load(db: Prisma.TransactionClient, taskId: string, actor: AgentActor, key: string, request: GithubCreateRequest) {

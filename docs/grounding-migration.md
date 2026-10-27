@@ -153,8 +153,10 @@ the previous behavior and follows the redirect.
 Every Grounding router checks the caller's access before it reads or locks any
 Grounding state, and answers a caller without access the same way whatever the
 task's or project's Grounding state: the GitHub create and merge routes with
-the legacy handler's own `404` or `403`, the completion, direct, attempt and
-migration routes with one `403 {"error":"forbidden"}`, and the creation router
+the legacy handler's own `404` or `403`, the direct, attempt and migration
+routes with one `403 {"error":"forbidden"}`, the completion routes with the
+same `403` carrying `message: "No write access to this project"`, and the
+creation router
 with the legacy creator's own validation and `403`, so whether a project is
 selected by `creationPolicy` is not observable without access. A request handed
 to a legacy handler reaches it unmodified: the Grounding key format, strict

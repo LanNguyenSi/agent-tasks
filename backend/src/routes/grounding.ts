@@ -41,7 +41,7 @@ export function createGroundingRouter(service?: GroundingAttemptsService) {
     await next();
   });
   router.onError((error, c) => {
-    if (error instanceof GroundingAccessError) return c.json({ error: error.code }, error.status);
+    if (error instanceof GroundingAccessError) return c.json({ error: error.code, ...(error.detail ? { message: error.detail } : {}) }, error.status);
     if (error instanceof GroundingReceiptVerificationError) {
       const status = error.code === "grounding_verification_unavailable" ? 503
         : error.code === "grounding_receipt_invalid" ? 400

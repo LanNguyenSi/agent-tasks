@@ -3,7 +3,7 @@ type: invariant
 title: "Signals: recipients, pull inbox, acknowledgement and webhook push delivery"
 description: "A Signal row is the durable notification and the pull inbox is authoritative; recipients are fixed per signal type, done paths acknowledge pending asks before they emit outcome signals, and a project's notification webhook gets a best-effort push copy of each new row behind an egress guard."
 tags: [signals, notifications, webhook, pickup, egress]
-timestamp: 2026-10-27T13:30:32Z
+timestamp: 2026-10-27T21:27:09Z
 sources:
   - backend/prisma/schema.prisma
   - backend/src/services/signal.ts
@@ -33,7 +33,7 @@ sources:
 - `task_force_transitioned`: `emitForceTransitionedSignal` (`backend/src/services/force-transition-signal.ts`) after an admin `force` transition, to the work claimant and the review claimant, agent or human, deduplicated, and never to the forcing admin.
 - `self_merge_notice`: `emitSelfMergeNoticeIfApplicable` (`backend/src/services/self-merge-notice.ts`) after a merge to done, only when the project's governance mode resolves to `AWAITS_CONFIRMATION` (see `governance-merge.md`). Recipients: every team member of the project's team except a merging human. Agent tokens never receive it.
 
-**Grounding-configured paths**: when the grounding runtime is configured (see `architecture.md`), the route plan in `backend/src/services/grounding-route-effects.ts` computes the same recipient sets for `review_needed`, `task_approved`, `changes_requested`, `self_merge_notice`, `task_available` and, on a forced direct transition, `task_force_transitioned` (the work and review claimants, without the forcing human) and writes the rows inside the task transaction (`applyGroundingRoutePlan`); task creation does the same for `task_available` in `backend/src/routes/grounding-creation.ts`. Webhook delivery runs after the commit, once per signal and best effort, so it cannot undo the transaction (`backend/src/services/grounding-completion.ts:240-245#"deliver(signal)"`).
+**Grounding-configured paths**: when the grounding runtime is configured (see `architecture.md`), the route plan in `backend/src/services/grounding-route-effects.ts` computes the same recipient sets for `review_needed`, `task_approved`, `changes_requested`, `self_merge_notice`, `task_available` and, on a forced direct transition, `task_force_transitioned` (the work and review claimants, without the forcing human) and writes the rows inside the task transaction (`applyGroundingRoutePlan`); task creation does the same for `task_available` in `backend/src/routes/grounding-creation.ts`. Webhook delivery runs after the commit, once per signal and best effort, so it cannot undo the transaction (`backend/src/services/grounding-completion.ts:245-250#"deliver(signal)"`).
 
 **Pull inbox**: `GET /api/agent/signals` (`backend/src/routes/signals.ts`, behind the same `authMiddleware` as the task routes) returns the caller's own signals, oldest first: an agent token sees the rows addressed to its token id, a human the rows addressed to the user. The `status` query selects unread (the default), acknowledged or all; `limit` defaults to 50 and is capped at 200 (`backend/src/routes/signals.ts:21#"Math.min"`). `POST /api/agent/signals/:id/ack` sets `acknowledgedAt`; a signal addressed to someone else answers 404. `POST /tasks/pickup` returns the oldest pending signal and acknowledges it in the same step (see `claim-model.md`).
 

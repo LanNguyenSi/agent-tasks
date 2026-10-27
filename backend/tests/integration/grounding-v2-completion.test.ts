@@ -602,7 +602,17 @@ it("R1-H1 distinct-reviewer governance permits a third-party merger with an exis
   const a = app(); await routeEvidence(a); expect((await a.fetch(request({}, "merge"))).status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
 });
 
-it.each(["scope", "project", "review-lock", "self-merge", "consent", "open", "in_progress", "done"])("R1-H1 standalone retains %s denial before effects", async denial => {
+const standaloneRefusals: Record<string, { status: 403 | 409; body: unknown }> = {
+  scope: { status: 403, body: { error: "forbidden", message: "Token missing scope: github:pr_merge" } },
+  project: { status: 403, body: { error: "forbidden", message: "No write access to this project" } },
+  "review-lock": { status: 403, body: { error: "forbidden", message: "Review approval is blocked: no review lock is held on this task" } },
+  "self-merge": { status: 403, body: { error: "forbidden", message: "Self-merge is blocked: a distinct reviewer must merge" } },
+  consent: { status: 403, body: { error: "forbidden", message: "No team member allows agent PR merges (allowAgentPrMerge)" } },
+  open: { status: 409, body: { error: "bad_state" } },
+  in_progress: { status: 409, body: { error: "bad_state" } },
+  done: { status: 409, body: { error: "bad_state" } },
+};
+it.each(Object.keys(standaloneRefusals))("R1-H1 standalone retains %s denial before effects", async denial => {
   await standalone(denial === "review-lock" || denial === "self-merge" ? "REQUIRES_DISTINCT_REVIEWER" : "AUTONOMOUS");
   if (denial === "scope") await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: [] } });
   if (denial === "project") {
@@ -611,11 +621,35 @@ it.each(["scope", "project", "review-lock", "self-merge", "consent", "open", "in
   }
   if (denial === "self-merge") await store.db.task.update({ where: { id: f.taskId }, data: { claimedByUserId: null, claimedByAgentId: ids.agent } });
   if (denial === "consent") await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } });
-  const badState = ["open", "in_progress", "done"].includes(denial);
-  if (badState) await store.db.task.update({ where: { id: f.taskId }, data: { status: denial } });
+  if (["open", "in_progress", "done"].includes(denial)) await store.db.task.update({ where: { id: f.taskId }, data: { status: denial } });
   const a = app(); const before = await snapshot();
-  expect((await a.fetch(request({ intent: "merge" }, "grounding-attempts", null))).status).toBe(badState ? 409 : 403);
-  expect((await a.fetch(request({}, "merge"))).status).toBe(badState ? 409 : 403);
+  const refusal = standaloneRefusals[denial]!;
+  // On in_progress (a work state outside review) the attempt route answers the claim path's own refusal: this
+  // merge-only token lacks tasks:transition. On open and done the merge route's bad_state stays.
+  const attemptStatus = denial === "in_progress" ? 403 : refusal.status;
+  expect((await a.fetch(request({ intent: "merge" }, "grounding-attempts", null))).status).toBe(attemptStatus);
+  const response = await a.fetch(request({}, "merge"));
+  expect({ status: response.status, body: await response.json() }).toEqual({ status: refusal.status, body: refusal.body });
+  expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
+});
+
+it("R1-H1 standalone merge 403 names the transition role the terminal edge requires", async () => {
+  await standalone();
+  const definition = defaultWorkflowDefinition();
+  for (const edge of definition.transitions) if (edge.to === "done") (edge as { requiredRole?: string }).requiredRole = "HUMAN_MEMBER";
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Role gated", isDefault: true, definition: definition as object } });
+  const a = app(); const before = await snapshot();
+  const response = await a.fetch(request({}, "merge"));
+  expect({ status: response.status, body: await response.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "The transition to done requires the HUMAN_MEMBER project role" } });
+  expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
+});
+
+it("R1-H1 standalone merge 403 names the foreign-deliverable precondition", async () => {
+  await standalone();
+  await store.db.task.update({ where: { id: f.taskId }, data: { deliverableRepo: "acme/other", prUrl: "https://github.com/acme/other/pull/9", prNumber: 9 } });
+  const a = app(); const before = await snapshot();
+  const response = await a.fetch(request({}, "merge"));
+  expect({ status: response.status, body: await response.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "The task's PR lives in a repository foreign to this project, so this project's delegation cannot merge it" } });
   expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
 });
 

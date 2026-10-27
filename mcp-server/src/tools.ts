@@ -223,11 +223,11 @@ const projectTasksIncludeSchema = z
 // place that decides the wire format for every verb's failure path;
 // tests/errors.test.ts pins the equality with serializeResult directly.
 //
-// `verbContext`, forwarded to mapBackendError, is this call's own tool name
-// — passed only at the handful of call sites where the resulting recipe
-// actually depends on it (see errors.ts's precondition_failed entry);
-// every other call site omits it and gets the verb-independent catalog
-// entries (or the generic degrade path) unaffected.
+// `verbContext`, forwarded to mapBackendError, is this call's own tool name,
+// passed wherever a catalog entry branches on it (precondition_failed,
+// cross_repo_pr_rejected, github_error, the grounding forbidden table; see
+// errors.ts), and also at task_respec, task_submit_pr and
+// task_grounding_receipt_upload for explicitness. Other call sites omit it.
 async function wrap<T>(fn: () => Promise<T>, verbContext?: string): Promise<T> {
   try {
     return await fn();
@@ -410,7 +410,7 @@ export function buildTools(
         intent: z.enum(["finish", "approve", "merge"]),
       },
       handler: async ({ taskId, intent }) =>
-        wrap(() => client.createGroundingAttempt(taskId, intent)),
+        wrap(() => client.createGroundingAttempt(taskId, intent), "task_grounding_attempt_create"),
     }),
     def({
       name: "task_grounding_receipt_upload",
@@ -429,7 +429,7 @@ export function buildTools(
         ),
       },
       handler: async ({ taskId, attemptId, session, receipt }) =>
-        wrap(() => client.uploadGroundingReceipt(taskId, attemptId, { session, receipt })),
+        wrap(() => client.uploadGroundingReceipt(taskId, attemptId, { session, receipt }), "task_grounding_receipt_upload"),
     }),
     def({
       name: "task_finish",
@@ -612,7 +612,7 @@ export function buildTools(
         } = {};
         if (description !== undefined) body.description = description;
         if (templateData !== undefined) body.templateData = templateData;
-        const response = await wrap(() => client.respecTask(taskId, body));
+        const response = await wrap(() => client.respecTask(taskId, body), "task_respec");
         if (include?.includes("task")) return response;
         return receiptForRespec(response as CreateOrRespecResponse);
       },
@@ -624,7 +624,7 @@ export function buildTools(
       inputShape: { taskId: uuid(), operationKey: operationKey().optional().describe("Provisioned external-grounding abandonment always receives a key." + OPERATION_KEY_HINT), include: includeSchema },
       handler: async ({ taskId, operationKey, include }) => {
         const key = resolveOperationKey(operationKey);
-        const response = await wrap(() => client.abandonTask(taskId, key));
+        const response = await wrap(() => client.abandonTask(taskId, key), "task_abandon");
         if (include?.includes("task")) return response;
         return receiptForAbandon(response as AbandonResponse);
       },
@@ -667,7 +667,7 @@ export function buildTools(
         include: includeSchema,
       },
       handler: async ({ taskId, include, ...input }) => {
-        const response = await wrap(() => client.submitPr(taskId, input));
+        const response = await wrap(() => client.submitPr(taskId, input), "task_submit_pr");
         if (include?.includes("task")) return response;
         return receiptForSubmitPr(response as SubmitPrResponse);
       },
@@ -773,7 +773,7 @@ export function buildTools(
     def({
       name: "task_merge",
       description:
-        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project's governanceMode is not AUTONOMOUS (the legacy soloMode=true flag is only a fallback while governanceMode is unset), refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
+        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project's governanceMode is not AUTONOMOUS (the legacy soloMode=true flag is only a fallback while governanceMode is unset), refuses with 403 if the caller also holds the work claim: `forbidden` with the message `Self-merge is blocked: a distinct reviewer must merge` on a task enrolled in Grounding (any Grounding cohort, including admin-migrated tasks), `self_merge_blocked` on a task the legacy handler serves (not enrolled in Grounding and outside the enforced Grounding scope; inside that scope a merge of an unenrolled task is refused with a 409 asking for Grounding enrollment). Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
@@ -782,7 +782,7 @@ export function buildTools(
       },
       handler: async ({ taskId, mergeMethod, operationKey, include }) => {
         const key = resolveOperationKey(operationKey);
-        const response = await wrap(() => client.mergeTask(taskId, mergeMethod, key));
+        const response = await wrap(() => client.mergeTask(taskId, mergeMethod, key), "task_merge");
         if (include?.includes("task")) return response;
         return receiptForMerge(response as MergeResponse);
       },
@@ -1167,6 +1167,7 @@ export function buildTools(
             // and translates here at the client boundary.
             ...(mergeMethod !== undefined ? { merge_method: mergeMethod } : {}),
           }),
+          "pull_requests_merge",
         );
       },
     }),

@@ -10,9 +10,9 @@ import { z } from "zod";
 import type { Actor } from "../types/auth.js";
 import { verifyGroundingReceipt, GroundingReceiptVerificationError, type GroundingReceiptTrustEntry } from "./grounding-receipt.js";
 import {
-  GROUNDING_POLICY, GroundingAccessError, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
+  GROUNDING_POLICY, GroundingAccessError, NO_CLAIM_REFUSAL, tokenScopeMessage, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
   mismatch, projectGroundingContext, resolveGroundingTarget, unavailable,
-  resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState,
+  resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState, isInClaimPathState,
   type GroundingAuthority, type GroundingHeadProvider, type GroundingIntent, type GroundingTarget, type GroundingTask,
 } from "./grounding-context.js";
 
@@ -77,12 +77,12 @@ export class GroundingAttemptsService {
   }
 
   private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, authority = this.authority): Promise<void> {
-    if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await authority.canWrite(actor, task.projectId, db))
-      throw new GroundingAccessError("forbidden", 403);
+    if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) throw new GroundingAccessError("forbidden", 403, tokenScopeMessage(actor, ["tasks:transition"]));
+    if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
     const ownsClaim = actor.type === "agent"
       ? task.claimedByAgentId === actor.tokenId || task.reviewClaimedByAgentId === actor.tokenId
       : task.claimedByUserId === actor.userId || task.reviewClaimedByUserId === actor.userId;
-    if (!ownsClaim) throw new GroundingAccessError("forbidden", 403);
+    if (!ownsClaim) throw new GroundingAccessError("forbidden", 403, NO_CLAIM_REFUSAL);
   }
 
   /** HTTP preauthorization before parsing receipt data; transaction paths repeat these checks. */
@@ -100,7 +100,18 @@ export class GroundingAttemptsService {
     else await this.authorizeTask(task, actor, db);
   }
 
-  /** Pre-parse admission grants only one of the installed route capabilities. */
+  /**
+   * Pre-parse admission grants only one of the installed route capabilities:
+   * the claim and scope check, or else merge eligibility. When merge
+   * eligibility refuses too, the caller gets the claim and scope refusal: the
+   * request's intent is not read yet, and naming a merge precondition would
+   * send an ordinary caller after a merge scope or gate it does not need. That
+   * holds for a forbidden, and for the merge route's bad_state on a task in a
+   * work state outside review (the claim path's own state, where the claim or
+   * scope is what refuses). Any other merge-eligibility error keeps its own
+   * answer: bad_state on the initial or a terminal state (no claim or scope
+   * would help there), an ambiguous review workflow, an unavailable definition.
+   */
   async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {
       await this.admit(db, taskId, actor);
@@ -108,7 +119,12 @@ export class GroundingAttemptsService {
       try { await this.authorizeTask(task, actor, db); }
       catch (error) {
         if (!(error instanceof GroundingAccessError) || error.code !== "forbidden") throw error;
-        await resolveTaskMergeTarget(db, task, actor, this.authority);
+        try { await resolveTaskMergeTarget(db, task, actor, this.authority); }
+        catch (fallback) {
+          if (fallback instanceof GroundingAccessError && fallback.code === "forbidden") throw error;
+          if (fallback instanceof GroundingAccessError && fallback.code === "bad_state" && await isInClaimPathState(db, task)) throw error;
+          throw fallback;
+        }
       }
     });
   }

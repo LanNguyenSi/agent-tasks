@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 vi.mock("../../src/services/github-delegation.js", () => ({ findDelegationUser: vi.fn() }));
 vi.mock("../../src/services/team-access.js", () => ({ requireProjectWrite: vi.fn(), hasProjectRole: vi.fn() }));
 import { findDelegationUser } from "../../src/services/github-delegation.js";
-import { canonicalGroundingJson, projectGroundingContext, resolveGroundingTarget, fetchGroundingHead } from "../../src/services/grounding-context.js";
+import { canonicalGroundingJson, projectGroundingContext, requireTaskMergeActor, resolveGroundingTarget, fetchGroundingHead } from "../../src/services/grounding-context.js";
 import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
 import { actor, ids, taskFixture, bindingFixture, workflowDb, headSha } from "../helpers/grounding-fixtures.js";
 
@@ -78,6 +78,28 @@ describe("authorized existing workflow intent", () => {
     await expect(resolveGroundingTarget(workflowDb(), task, actor, "approve", authority)).rejects.toMatchObject({ code: "forbidden" });
     task.claimedByAgentId = ids.user;
     expect((await resolveGroundingTarget(workflowDb(), task, actor, "merge", authority)).target.action).toBe("merge");
+  });
+});
+
+describe("work finish refusal for a claim that changed under the lock", () => {
+  // Unreachable through the finish route (it refuses a caller with neither claim
+  // first and routes a review claimant to the review branch), so the service is
+  // pinned directly: the work claim moved away, or the caller also holds the review claim.
+  it("names the work-claim requirement when the work claim is not held or the review claim is", async () => {
+    const message = "Finishing work requires the work claim on this task and no review claim";
+    await expect(resolveGroundingTarget(workflowDb(), { ...taskFixture(), claimedByAgentId: null }, actor, "finish", authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: message });
+    await expect(resolveGroundingTarget(workflowDb(), { ...taskFixture(), reviewClaimedByAgentId: actor.tokenId }, actor, "finish", authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: message });
+  });
+});
+
+describe("task-merge admission refusals name their precondition", () => {
+  it("names the missing github:pr_merge scope, the missing project write, and passes both checks held", async () => {
+    const holder = { ...actor, scopes: ["github:pr_merge"] };
+    await expect(requireTaskMergeActor({} as never, taskFixture(), { ...actor, scopes: [] }, authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "Token missing scope: github:pr_merge", message: "Token missing scope: github:pr_merge" });
+    authority.canWrite.mockResolvedValue(false);
+    await expect(requireTaskMergeActor({} as never, taskFixture(), holder, authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "No write access to this project" });
+    authority.canWrite.mockResolvedValue(true);
+    await expect(requireTaskMergeActor({} as never, taskFixture(), holder, authority)).resolves.toBeUndefined();
   });
 });
 

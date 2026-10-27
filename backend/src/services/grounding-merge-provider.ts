@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Actor } from "../types/auth.js";
 import type { Prisma } from "@prisma/client";
 import { findDelegationUser } from "./github-delegation.js";
-import { GroundingAccessError, unavailable } from "./grounding-context.js";
+import { GroundingAccessError, MERGE_CONSENT_REFUSAL, unavailable } from "./grounding-context.js";
 import { canonicalGithubRepo } from "./grounding-github-fence.js";
 
 const repoSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(repo => repo.split("/").every(p => p !== "." && p !== ".."));
@@ -14,9 +14,9 @@ export interface GroundingMergeProvider {
   read(input: MergeIdentity, token: string): Promise<MergeProof>;
 }
 export async function groundingMergeConsent(db: Prisma.TransactionClient, actor: Actor, teamId: string): Promise<string> {
-  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403);
+  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403, "Token missing scope: github:pr_merge");
   const delegate = await findDelegationUser(teamId, "allowAgentPrMerge", { preferUserId: actor.userId, db });
-  if (!delegate) throw new GroundingAccessError("forbidden", 403);
+  if (!delegate) throw new GroundingAccessError("forbidden", 403, MERGE_CONSENT_REFUSAL);
   return delegate.githubAccessToken;
 }
 async function request(input: MergeIdentity, token: string, write: boolean): Promise<unknown> {

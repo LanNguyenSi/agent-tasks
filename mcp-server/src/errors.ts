@@ -29,14 +29,14 @@
 // mapBackendError(status, body, verbContext?) is the single entry point:
 // tools.ts's wrap() is its only call site (mirrors receipt.ts's relationship
 // to the receipt-projection helpers). `verbContext`, when supplied, is the
-// calling tool's own registered name (e.g. "task_finish") — used only where
-// the correct recipe genuinely depends on which verb was called (today:
-// `precondition_failed`, which the live backend can raise from task_start,
-// task_finish, and two deprecated v1 routes with different correct retry
-// targets; and `cross_repo_pr_rejected`, whose pull_requests_create emit
-// site sends owner/repo rather than a prUrl, so the default task_submit_pr
-// recipe would misdirect it). Every other catalog entry is verb-independent
-// by construction.
+// calling tool's own registered name (e.g. "task_finish"). Four catalog
+// entries branch on it: `precondition_failed` (raised from task_start,
+// task_finish and deprecated v1 routes with different correct retry
+// targets), `cross_repo_pr_rejected` (pull_requests_create's emit site sends
+// owner/repo rather than a prUrl, so the default task_submit_pr recipe would
+// misdirect it), `github_error` (pull_requests_create only) and the grounding
+// forbidden table (one precondition list per verb, see 7e). Every other
+// catalog entry is verb-independent by construction.
 //
 // Catalog seed (docs/response-contract-v1.md's "Catalog seed" list, plus
 // pr_author_mismatch from the read_first context on backend/src/routes/
@@ -56,7 +56,12 @@
 // alias), the v1 backlog-routing pair -- see backlogRoutingEnforcedError and
 // backlogNotPromotedError below. Plus merge_in_progress (409, a claim or
 // status write refused while a pull request merge holds the task) -- see
-// mergeInProgressError below. Every other backend error degrades to the
+// mergeInProgressError below. Plus recipe branches for the grounding write
+// verbs' (pull_requests_create, pull_requests_merge, task_merge,
+// task_finish, task_abandon, task_grounding_attempt_create) 403 `forbidden`:
+// re-mint guidance for a message naming a missing `github:*` scope, that
+// verb's own precondition list when the backend sent no message, both under
+// the backend's own `forbidden` code -- see groundingForbiddenError below. Every other backend error degrades to the
 // generic shape (status-derived code, message passthrough, recipe ->
 // workflow_primer, and now also a clamped passthrough of any structured
 // body.details — see genericDegrade) rather than being forwarded as raw
@@ -641,11 +646,11 @@ function preconditionFailedError(body: BackendErrorBody, verbContext: string | u
   });
   const needsSubmitPr = rules.includes("branchPresent") || rules.includes("prPresent");
   // task_finish is the contract's own documented context for this trap
-  // ("blocks task_finish with 422 precondition_failed") and the correct
-  // fallback for every call site this module does not thread verbContext
-  // through today (only task_start, task_finish, tasks_claim, tasks_update,
-  // and tasks_transition can actually raise this error; see tools.ts's
-  // wrap() call sites for those five).
+  // ("blocks task_finish with 422 precondition_failed") and the fallback
+  // for a call without a verbContext. Only task_start, task_finish,
+  // tasks_claim, tasks_update and tasks_transition can raise this error,
+  // and each passes its own name to wrap() (tools.ts; wrap()'s comment
+  // there lists every call site that passes one).
   const retryVerb = verbContext ?? "task_finish";
   const recipe = needsSubmitPr
     ? `run \`gh pr create\`, call task_submit_pr with the branch/PR metadata, then retry ${retryVerb}`
@@ -824,6 +829,82 @@ function mergeInProgressError(message: string): TeachingError {
     recipe:
       "a merge of this task's pull request is in progress and holds its claims and status; call tasks_get until the merge has settled, then retry the call (the reservation lapses on its own if the merge never completes)",
     allowedNext: ["tasks_get"],
+  });
+}
+
+// 7e. Grounding write precondition 403s. The Grounding routes behind
+// pull_requests_create, pull_requests_merge, task_merge, task_finish,
+// task_abandon and task_grounding_attempt_create answer 403 `forbidden`
+// when one of their preconditions is unmet (backend/src/routes/
+// grounding-github.ts, grounding-task-completion.ts, grounding.ts and the
+// services behind them). A current backend names the failed precondition in
+// the body's `message` on every reachable refusal except the documented
+// no-access answers; the ordinary message passthrough (generic degrade)
+// carries that message unchanged, and this entry adds only what passthrough
+// alone cannot give:
+//  - A message naming a missing `github:*` scope (the backend's own
+//    "Token missing scope: ..." wording) has no self-service corrective:
+//    an existing token never gains a new scope, so only a team admin can
+//    re-mint one carrying it -- an admin wall, so `allowedNext` is empty
+//    by the same convention as force_admin_only above. This applies to
+//    every verb.
+//  - A body with NO message (a backend predating the precondition messages,
+//    or a deliberately bare no-access answer) gets that verb's own list of
+//    possible preconditions as the recipe, from GROUNDING_FORBIDDEN_
+//    PRECONDITIONS. The table is keyed by the verbContext the tool passes
+//    to wrap(); its keys are the six verbs whose Grounding routes answer
+//    this 403 (task_merge, pull_requests_merge, task_finish, task_abandon,
+//    pull_requests_create, task_grounding_attempt_create), each of which
+//    passes its own name. Each list names only the preconditions that
+//    verb's route can refuse on. A verbContext outside the table (such as
+//    task_grounding_receipt_upload), or none, makes no causal claim: the
+//    result falls through to the generic degrade.
+// Precedence: a present non-empty message wins (the list never applies to
+// it); an empty message counts as absent. A message without a `github:*`
+// scope returns undefined: it falls through to the generic degrade path
+// unchanged, which is the required "backend message is passed through"
+// behavior (same code `forbidden`, message verbatim, recipe ->
+// workflow_primer).
+const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
+
+const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
+  task_merge:
+    "the github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent",
+  pull_requests_merge:
+    "the tasks:transition or github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent",
+  task_finish:
+    "a missing tasks:transition scope, write access, a work or review claim, review approval, the transition role (autoMerge: github:pr_merge, self-merge gate, allowAgentPrMerge)",
+  task_abandon:
+    "a missing tasks:claim scope, project write access, or holding neither the work claim nor the review claim",
+  pull_requests_create:
+    "a missing tasks:update or github:pr_create scope, project access, or no allowAgentPrCreate consent from a team member with a connected GitHub account",
+  task_grounding_attempt_create:
+    "a missing tasks:transition scope, project write access, neither work nor review claim held, or (intent merge) the merge gates",
+};
+
+function groundingForbiddenError(body: BackendErrorBody, message: string, verbContext?: string): TeachingError | undefined {
+  if (typeof body.message === "string" && body.message.length > 0) {
+    const missing = TOKEN_MISSING_SCOPE_PATTERN.exec(body.message)?.[1];
+    return missing?.includes("github:")
+      ? buildTeachingError({
+          code: "forbidden",
+          message,
+          recipe: `a team admin must re-mint this agent token with the missing scope (${missing}); existing tokens never gain new scopes`,
+          allowedNext: [],
+        })
+      : undefined;
+  }
+  const preconditions = verbContext === undefined
+    ? undefined
+    : Object.prototype.hasOwnProperty.call(GROUNDING_FORBIDDEN_PRECONDITIONS, verbContext)
+      ? GROUNDING_FORBIDDEN_PRECONDITIONS[verbContext]
+      : undefined;
+  if (preconditions === undefined) return undefined;
+  return buildTeachingError({
+    code: "forbidden",
+    message,
+    recipe: `no detail sent; this verb is refused for: ${preconditions} (see workflow_primer)`,
+    allowedNext: ["workflow_primer"],
   });
 }
 
@@ -1580,8 +1661,8 @@ function genericDegrade(
 /**
  * Maps a backend AgentTasksApiError's (status, body) to the teaching-error
  * shape. `verbContext`, when supplied, is the calling tool's own registered
- * name — see the precondition_failed catalog entry above for the one place
- * it changes the output.
+ * name; it changes the output only in precondition_failed, cross_repo_pr_
+ * rejected, github_error and the grounding forbidden table (see the header).
  */
 export function mapBackendError(status: number, rawBody: unknown, verbContext?: string): TeachingError {
   const body = asBackendBody(rawBody);
@@ -1593,6 +1674,13 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 403 && code === "forbidden" && FORCE_ADMIN_ONLY_PATTERN.test(message)) {
     return forceAdminOnlyError(message);
+  }
+  if (status === 403 && code === "forbidden") {
+    // not_claimed and force_admin_only above are the earlier, more specific
+    // pattern matches of this same status/code pair; this entry adds the
+    // grounding write precondition teachings (see groundingForbiddenError).
+    const groundingForbidden = groundingForbiddenError(body, message, verbContext);
+    if (groundingForbidden) return groundingForbidden;
   }
   if (status === 409 && code === "already_claimed") {
     return alreadyClaimedError(body, message);

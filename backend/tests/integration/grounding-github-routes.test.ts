@@ -12,6 +12,7 @@ import { GroundingGithubCreateService } from "../../src/services/grounding-githu
 import { githubCreateCorrelationMarker, type GroundingGithubCreateProvider } from "../../src/services/grounding-github-create-provider.js";
 import { GroundingAttemptsService } from "../../src/services/grounding-attempts.js";
 import { createGroundingRemoteTargetGuard, type GroundingEnforcedScope } from "../../src/services/grounding-scope.js";
+import { createSessionToken } from "../../src/services/session.js";
 import { completionFixture, completionStore, completionActor } from "../helpers/grounding-completion-fixtures.js";
 import { ids, session } from "../helpers/grounding-fixtures.js";
 import * as audit from "../../src/services/audit.js";
@@ -119,6 +120,60 @@ it("requires durable key and current authenticated scope before effects", async 
   expect((await a.fetch(request(mergeBody(), undefined, "key", null))).status).toBe(401);
   await f.evidence("merge"); await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["github:pr_merge"] } });
   expect((await a.fetch(request(mergeBody()))).status).toBe(403); expect(f.merge).not.toHaveBeenCalled();
+});
+it("a github create or merge 403 names every absent scope and passes when none is absent", async () => {
+  const a = app();
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["tasks:comment"] } });
+  const createBoth = await a.fetch(request(createRequest(f.taskId, "acme", repo), "/api/github/pull-requests", null));
+  expect({ status: createBoth.status, body: await createBoth.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "Token missing scope: tasks:update, github:pr_create" } });
+  const mergeBoth = await a.fetch(request(mergeBody()));
+  expect({ status: mergeBoth.status, body: await mergeBoth.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "Token missing scope: tasks:transition, github:pr_merge" } });
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["tasks:update"] } });
+  const createOne = await a.fetch(request(createRequest(f.taskId, "acme", repo), "/api/github/pull-requests", null));
+  expect({ status: createOne.status, body: await createOne.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "Token missing scope: github:pr_create" } });
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["github:pr_merge"] } });
+  const mergeOne = await a.fetch(request(mergeBody()));
+  expect({ status: mergeOne.status, body: await mergeOne.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "Token missing scope: tasks:transition" } });
+  // None absent: neither gate refuses and both requests reach the operation-key contract.
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: actor.scopes } });
+  const createPasses = await a.fetch(request(createRequest(f.taskId, "acme", repo), "/api/github/pull-requests", null));
+  expect(createPasses.status).toBe(400); expect((await createPasses.json() as { error: string }).error).toBe("grounding_operation_key_required");
+  const mergePasses = await a.fetch(request(mergeBody(), undefined, null));
+  expect(mergePasses.status).toBe(400); expect((await mergePasses.json() as { error: string }).error).toBe("grounding_operation_key_required");
+  expect(f.merge).not.toHaveBeenCalled();
+});
+it("a non-agent caller of the grounding github routes gets the legacy Agent token required refusal", async () => {
+  const humanToken = await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234");
+  const a = app();
+  const create = await a.fetch(request(createRequest(f.taskId, "acme", repo), "/api/github/pull-requests", null, humanToken));
+  expect({ status: create.status, body: await create.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "Agent token required" } });
+  const merge = await a.fetch(request(mergeBody(), undefined, null, humanToken));
+  expect({ status: merge.status, body: await merge.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "Agent token required" } });
+});
+it("a completion 403 names the absent admission scope and passes when it is present", async () => {
+  const a = app();
+  const denied = (message: string) => ({ status: 403, body: { error: "forbidden", message } });
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["tasks:transition", "tasks:claim"] } });
+  const merge = await a.fetch(request({}, `/api/tasks/${f.taskId}/merge`, "admission-merge"));
+  expect({ status: merge.status, body: await merge.json() }).toEqual(denied("Token missing scope: github:pr_merge"));
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["tasks:claim", "github:pr_merge"] } });
+  const finish = await a.fetch(request({}, `/api/tasks/${f.taskId}/finish`, "admission-finish"));
+  expect({ status: finish.status, body: await finish.json() }).toEqual(denied("Token missing scope: tasks:transition"));
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["tasks:transition", "github:pr_merge"] } });
+  const abandon = await a.fetch(request({}, `/api/tasks/${f.taskId}/abandon`, "admission-abandon"));
+  expect({ status: abandon.status, body: await abandon.json() }).toEqual(denied("Token missing scope: tasks:claim"));
+  // None absent: the merge request passes the gate and reaches its receipt
+  // contract instead of a scope refusal.
+  await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: actor.scopes } });
+  const passes = await a.fetch(request({}, `/api/tasks/${f.taskId}/merge`, "admission-passes"));
+  expect(passes.status).not.toBe(403);
+});
+it("a finish without either claim names the claim precondition", async () => {
+  const a = app();
+  await store.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null, claimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedByUserId: null } });
+  const finish = await a.fetch(request({ result: "done" }, `/api/tasks/${f.taskId}/finish`, "claim-check"));
+  expect({ status: finish.status, body: await finish.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "You hold neither the work claim nor the review claim on this task" } });
+  expect(f.merge).not.toHaveBeenCalled();
 });
 it("N11 concurrent same-key route calls commit one group and send one merge", async () => {
   await f.evidence("merge"); const a = app(); const b = app(f.make(store.connect()));
@@ -812,7 +867,7 @@ it.each(foreignTargets.filter(([label]) => ["unprovisioned unscoped", "held", "p
   const a = app(f.service, undefined, target.scope);
   for (const [endpoint, body] of [["finish", { autoMerge: true }], ["merge", {}], ["abandon", {}]] as const) {
     const result = await a.fetch(request(body, `/api/tasks/${target.taskId}/${endpoint}`, null, foreign.token));
-    expect({ status: result.status, body: await result.json() }).toEqual({ status: 403, body: { error: "forbidden" } });
+    expect({ status: result.status, body: await result.json() }).toEqual({ status: 403, body: { error: "forbidden", message: "No write access to this project" } });
   }
   expect(globalThis.fetch).not.toHaveBeenCalled(); expect(f.merge).not.toHaveBeenCalled();
 });

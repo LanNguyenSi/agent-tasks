@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { Prisma, type GroundingCohort, type GroundingOperation, type PrismaClient, type Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GroundingReceiptVerificationError, verifyGroundingReceipt } from "./grounding-receipt.js";
-import { canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
+import { ATTEMPT_OTHER_ACTOR_REFUSAL, NO_CLAIM_REFUSAL, REVIEW_CLAIM_REFUSAL, reviewApprovalRefusal, canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, SELF_MERGE_REFUSAL, tokenScopeMessage, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
 import { groundingSettings, groundingTime } from "./grounding-verification.js";
 import type { GroundingAttemptsConfig } from "./grounding-attempts.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
@@ -45,7 +45,7 @@ export interface GroundingDecision {
 }
 export { clearWork, clearReview };
 function stale(): never { throw new GroundingReceiptVerificationError("grounding_receipt_stale"); }
-function forbidden(): never { throw new GroundingAccessError("forbidden", 403); }
+function forbidden(detail?: string): never { throw new GroundingAccessError("forbidden", 403, detail); }
 function badState(): never { throw new GroundingAccessError("bad_state", 409); }
 
 /** Shared service boundary only; existing HTTP callers are not enrolled or wired here. */
@@ -88,7 +88,7 @@ export class GroundingCompletionService {
     const standalone = this.isTaskMerge(request);
     const head = this.requestHead(request);
     const scope = standalone ? "github:pr_merge" : request.action === "creator_abandon" ? "tasks:update" : ["abandon", "release"].includes(request.action) ? "tasks:claim" : "tasks:transition";
-    if (actor.type === "agent" && !actor.scopes.includes(scope)) forbidden();
+    if (actor.type === "agent" && !actor.scopes.includes(scope)) forbidden(tokenScopeMessage(actor, [scope]));
     await operationAccess(db, task, actor, this.authority);
     if (request.overrideReason !== null && (actor.type !== "human" || !request.overrideReason.trim() || !await this.authority.hasRole(actor, task.projectId, "ADMIN", db))) forbidden();
     const holdsWork = actor.type === "human" ? task.claimedByUserId === actor.userId : task.claimedByAgentId === actor.tokenId;
@@ -119,14 +119,19 @@ export class GroundingCompletionService {
       }
     } else if (success) {
       if (remote && request.action === "finish" && resolveGovernanceMode(task.project) !== GovernanceMode.AUTONOMOUS) badState();
-      if (remote && !checkSelfMergeGate(task, actor, task.project).allowed) forbidden();
+      if (remote && !checkSelfMergeGate(task, actor, task.project).allowed) forbidden(SELF_MERGE_REFUSAL);
       const resolved = standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, request.action as "finish" | "approve" | "merge", this.authority);
       target = resolved.target;
       ({ skippedRules, ciHeadSha } = await (standalone ? taskMergeCompletionGates : completionGates)(db, task, actor, target, definition, this.authority, remote, head));
       data = { status: target.to, ...clearReview, ...(isTerminalState(def, target.to) ? clearWork : {}), ...(request.result !== null ? { result: request.result } : {}) };
     } else if (request.action === "request_changes") {
       if (!isReviewState(def, task.status)) badState();
-      if (!holdsReview && !(request.route?.kind === "self_approve_finish" && holdsWork && !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId && checkReviewApprovalGate(task, actor, task.project).allowed)) forbidden();
+      if (!holdsReview) {
+        const selfApprove = request.route?.kind === "self_approve_finish" && holdsWork && !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId;
+        if (!selfApprove) forbidden(REVIEW_CLAIM_REFUSAL);
+        const approval = checkReviewApprovalGate(task, actor, task.project);
+        if (!approval.allowed) forbidden(reviewApprovalRefusal(approval.reason));
+      }
       const to = requestChangesTarget(def, task.status);
       if (!to || isTerminalState(def, to) || isReviewState(def, to)) badState();
       const edge = { workflowId, from: task.status, to, action: "approve" as const };
@@ -157,7 +162,7 @@ export class GroundingCompletionService {
       if (isReviewState(def, task.status) || task.reviewClaimedByUserId || task.reviewClaimedByAgentId) badState();
       data = { status: def.initialState, ...clearWork };
     } else {
-      if (!holdsWork && !holdsReview) forbidden();
+      if (!holdsWork && !holdsReview) forbidden(NO_CLAIM_REFUSAL);
       if (holdsWork && !holdsReview && isReviewState(def, task.status)) badState();
       data = { status: holdsWork && isWorkState(def, task.status) ? def.initialState : task.status, ...(holdsWork ? clearWork : {}), ...(holdsReview ? clearReview : {}) };
     }
@@ -180,7 +185,7 @@ export class GroundingCompletionService {
     const attempt = await db.groundingAttempt.findUnique({ where: { id: binding.activeAttemptId }, include: { receipt: true } });
     if (!attempt || attempt.state !== "ACTIVE") stale();
     if (!attempt.receipt) throw new GroundingReceiptVerificationError("grounding_required");
-    if (attempt.actorType !== actor.type || attempt.actorId !== groundingActorId(actor)) forbidden();
+    if (attempt.actorType !== actor.type || attempt.actorId !== groundingActorId(actor)) forbidden(ATTEMPT_OTHER_ACTOR_REFUSAL);
     const persistedDirect = readDirectDescriptor(attempt.directRoute);
     if (canonicalGroundingJson(persistedDirect) !== canonicalGroundingJson(direct?.descriptor ?? null)) mismatch();
     const projected = await projectGroundingContext(task, binding, target, definition, actor, head, db);
