@@ -136,7 +136,7 @@ export interface Project {
   aiHelpersEnabled?: boolean;
 }
 
-/** Whether a project `accessRole` (from GET /projects/:id) is an admin role —
+/** Whether a project `accessRole` (from GET /projects/:id) is an admin role:
  * a team `ADMIN` or a per-project `PROJECT_ADMIN`; anything else
  * (HUMAN_MEMBER / REVIEWER / CONTRIBUTOR / VIEWER / null / undefined) is not.
  * It cannot see a `PROJECT_ADMIN` grant behind a team role, so UI gates call
