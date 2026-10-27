@@ -384,11 +384,21 @@ projectRouter.get("/projects/:id", async (c) => {
   // here (the forbidden check above already returned), but role itself can
   // be null for the agent-via-team case — pass it through as-is rather than
   // coercing, so the frontend can distinguish "no role info" from a role.
+  //
+  // `accessRole` is the team role when the caller has one (team first), so a
+  // team HUMAN_MEMBER or REVIEWER who also holds PROJECT_ADMIN reports
+  // `HUMAN_MEMBER` and the admin grant is hidden. `canAdmin` is the
+  // authoritative admin answer: it calls `isProjectAdmin`, the exact check the
+  // workflow, force-transition, invite and project-settings write routes
+  // enforce, so the frontend's admin controls agree with what the backend
+  // will accept. False for agents (the admin tier is human-only).
+  const canAdmin = await isProjectAdmin(actor, project.id);
   return c.json({
     project: redactProject({
       ...project,
       accessSource: membership.source,
       accessRole: membership.role,
+      canAdmin,
     }),
     effectiveGates: computeEffectiveGates(project),
     taskCreation: describeTaskCreation(project),

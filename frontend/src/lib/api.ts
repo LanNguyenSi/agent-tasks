@@ -117,10 +117,18 @@ export interface Project {
    * `"PROJECT_ADMIN"`) when access comes from a per-project share. Only
    * returned by `GET /projects/:id` (not the list endpoint) — `null` when
    * the role itself is unset, `undefined` on responses that predate this
-   * field. Admin-ness is `accessRole === "ADMIN" || accessRole === "PROJECT_ADMIN"`,
-   * which — unlike `team?.role === "ADMIN"` — also covers per-project-only
-   * admins who hold no team-level role. */
+   * field. The team role wins when the caller has one, so a team
+   * `HUMAN_MEMBER` who also holds `PROJECT_ADMIN` reports `HUMAN_MEMBER`:
+   * do NOT infer admin-ness from this field, read `canAdmin` (see
+   * `projectCanAdmin`). */
   accessRole?: string | null;
+  /** Whether the caller passes the backend's project-admin check (team
+   * `ADMIN` or per-project `PROJECT_ADMIN`, the gate every workflow, force-
+   * transition, invite and project-settings write route enforces). Unlike
+   * `accessRole` it also sees a `PROJECT_ADMIN` grant held by a team member.
+   * Only returned by `GET /projects/:id`; `undefined` on responses from a
+   * backend that predates the field (see `projectCanAdmin` for the fallback). */
+  canAdmin?: boolean;
   /** M4 (task fc4f2dc7): opt-in gate for the LLM-advisory "Suggest
    *  improvement" rewrite helper (POST /tasks/:id/suggest-rewrite).
    *  Default false server-side; `undefined` on API responses that predate
@@ -128,13 +136,28 @@ export interface Project {
   aiHelpersEnabled?: boolean;
 }
 
-/** Whether a project `accessRole` (from GET /projects/:id) grants admin
- * override rights — a team `ADMIN` or a per-project `PROJECT_ADMIN`. The
- * single source of truth for gating the admin status-override and claim-
- * release controls; anything else (HUMAN_MEMBER / REVIEWER / CONTRIBUTOR /
- * VIEWER / null / undefined) is not admin. */
+/** Whether a project `accessRole` (from GET /projects/:id) is an admin role —
+ * a team `ADMIN` or a per-project `PROJECT_ADMIN`; anything else
+ * (HUMAN_MEMBER / REVIEWER / CONTRIBUTOR / VIEWER / null / undefined) is not.
+ * It cannot see a `PROJECT_ADMIN` grant behind a team role, so UI gates call
+ * `projectCanAdmin`, which prefers the server's `canAdmin` and uses this only
+ * as the fallback for responses that lack it. */
 export function isProjectAdminRole(accessRole: string | null | undefined): boolean {
   return accessRole === "ADMIN" || accessRole === "PROJECT_ADMIN";
+}
+
+/** Whether the caller is a project admin: the single source of truth for
+ * gating the admin status-override, claim-release and workflow-editor
+ * controls. `canAdmin` from `GET /projects/:id` wins whenever the backend sent
+ * a boolean, because `accessRole` alone hides a `PROJECT_ADMIN` grant held by
+ * a team member. A project without a boolean `canAdmin` (a backend that
+ * predates the field, or a project object that did not come from that
+ * endpoint) falls back to `isProjectAdminRole(project.accessRole)`. */
+export function projectCanAdmin(
+  project: Pick<Project, "canAdmin" | "accessRole"> | null | undefined,
+): boolean {
+  if (typeof project?.canAdmin === "boolean") return project.canAdmin;
+  return isProjectAdminRole(project?.accessRole);
 }
 
 /** Whether a project `accessRole` grants write access to task fields: the

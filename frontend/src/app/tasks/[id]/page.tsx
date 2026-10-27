@@ -9,7 +9,7 @@ import {
   getTasks,
   getEffectiveWorkflow,
   getTaskConfidenceDetail,
-  isProjectAdminRole,
+  projectCanAdmin,
   isProjectWriteRole,
   type User,
   type Task,
@@ -92,7 +92,7 @@ export default function TaskDetailPage() {
         // workflow edges. A failure here must not break the page — the control
         // falls back to the base states when transitions stay null. Same
         // helper the render path uses, so both admin derivations stay in sync.
-        if (isProjectAdminRole(fetchedProject.accessRole)) {
+        if (projectCanAdmin(fetchedProject)) {
           try {
             const wf = await getEffectiveWorkflow(fetchedProject.id);
             if (!cancelled) setWorkflowTransitions(wf.definition.transitions);
@@ -133,10 +133,11 @@ export default function TaskDetailPage() {
       ? boardHref({ teamId: project.teamId, projectId: task.projectId })
       : boardHref();
 
-  // `accessRole` (from GET /projects/:id, fetched above via getProject) covers
-  // both a team ADMIN and a per-project-only PROJECT_ADMIN — unlike
-  // `team?.role === "ADMIN"`, which misses the latter (see workflow/page.tsx).
-  const isProjectAdmin = isProjectAdminRole(project?.accessRole);
+  // `canAdmin` (from GET /projects/:id, fetched above via getProject) covers a
+  // team ADMIN, a per-project-only PROJECT_ADMIN and a team member who also
+  // holds PROJECT_ADMIN. `team?.role === "ADMIN"` misses the last two and
+  // `accessRole` the last one (see projectCanAdmin in lib/api.ts).
+  const isProjectAdmin = projectCanAdmin(project);
   const isProjectWrite = isProjectWriteRole(project?.accessRole);
 
   // Close and delete return to the originating list when there is one,

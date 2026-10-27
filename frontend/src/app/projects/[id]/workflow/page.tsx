@@ -34,7 +34,7 @@ import {
   getCurrentUser,
   getEffectiveWorkflow,
   getProject,
-  isProjectAdminRole,
+  projectCanAdmin,
   getWorkflowRules,
   listWorkflowTemplates,
   resetProjectWorkflow,
@@ -69,7 +69,7 @@ export default function WorkflowEditorPage() {
   const projectId = params.id;
   const router = useRouter();
 
-  const [accessRole, setAccessRole] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [workflow, setWorkflow] = useState<EffectiveWorkflow | null>(null);
   const [rules, setRules] = useState<WorkflowRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,10 +114,11 @@ export default function WorkflowEditorPage() {
           router.replace("/auth");
           return;
         }
-        // GET /projects/:id carries the caller's effective `accessRole`
-        // (team ADMIN or per-project PROJECT_ADMIN), mirroring the backend
-        // `isProjectAdmin` gate on every workflow write route.
-        setAccessRole(proj.accessRole ?? null);
+        // GET /projects/:id carries `canAdmin`, computed with the backend
+        // `isProjectAdmin` gate every workflow write route enforces (team
+        // ADMIN or per-project PROJECT_ADMIN, also when the caller holds a team
+        // role). `accessRole` is only the fallback for an older backend.
+        setIsAdmin(projectCanAdmin(proj));
         setWorkflow(wf);
         setRules(catalog);
         setTemplates(tpls);
@@ -131,8 +132,6 @@ export default function WorkflowEditorPage() {
       cancelled = true;
     };
   }, [projectId, router]);
-
-  const isAdmin = isProjectAdminRole(accessRole);
 
   const ruleLabelById = useMemo(() => {
     const map = new Map<string, string>();

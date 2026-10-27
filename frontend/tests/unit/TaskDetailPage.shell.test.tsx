@@ -25,7 +25,7 @@ vi.mock("../../src/lib/api", () => ({
   getTeams: vi.fn(),
   getEffectiveWorkflow: vi.fn(),
   getTaskConfidenceDetail: vi.fn(),
-  isProjectAdminRole: () => false,
+  projectCanAdmin: () => false,
   isProjectWriteRole: () => false,
 }));
 
