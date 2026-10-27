@@ -319,6 +319,41 @@ describe("home page: more than 500 team tasks", () => {
   });
 });
 
+describe("home page: header View all links of all six widgets", () => {
+  // (widget title, exact header-link href) per D1-order widget, as the page
+  // renders them today (homeScopes in page.tsx): scope presets for Mine,
+  // Priority, Active (`open`), In Review and Done (+ `recency=recent`),
+  // Backlog's status-filter override; team id from the TEAM fixture.
+  const HEADER_LINKS: ReadonlyArray<readonly [string, string]> = [
+    ["My Tasks", "/tasks?teamId=team-1&scope=mine"],
+    ["Priority (High / Critical)", "/tasks?teamId=team-1&scope=priority"],
+    ["Backlog", "/tasks?teamId=team-1&status=backlog"],
+    ["Active Tasks", "/tasks?teamId=team-1&scope=open"],
+    ["In Review", "/tasks?teamId=team-1&scope=review"],
+    ["Done · 14 days", "/tasks?teamId=team-1&scope=done&recency=recent"],
+  ];
+
+  it("names each header link for its widget and points it at the exact scope href", async () => {
+    // One row per scope so every widget renders with data.
+    serveDataset([
+      makeTask({ status: "open", claimedByUserId: ME, priority: "HIGH" }),
+      makeTask({ status: "backlog" }),
+      makeTask({ status: "review" }),
+      makeTask({ status: "done" }),
+    ]);
+    await renderHome();
+
+    for (const [title, href] of HEADER_LINKS) {
+      // headerLink() also pins this is the header's only link.
+      const link = headerLink(title);
+      expect(link, `header link of the ${title} widget`).toHaveAccessibleName(
+        `View all ${title}`,
+      );
+      expect(link.getAttribute("href"), `href of the ${title} header link`).toBe(href);
+    }
+  });
+});
+
 describe("home page: +N more is the total minus the rows shown", () => {
   it("total 15 with 3 rows loaded shows +12 more", async () => {
     // The backend reports 15 backlog tasks but this response carries 3 rows.
