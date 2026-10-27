@@ -837,9 +837,13 @@ function mergeInProgressError(message: string): TeachingError {
 // when one of their preconditions is unmet (backend/src/routes/
 // grounding-github.ts, backend/src/routes/grounding-task-completion.ts):
 // the token lacks a required scope, the caller has no write access to the
-// project, or, on a finish or merge, it holds neither the work claim nor
-// the review claim. The backend messages name the precondition, and the
-// ordinary message passthrough (generic degrade) carries them unchanged;
+// project, it holds neither the work claim nor the review claim (finish),
+// or a merge gate (team delegation of agent PR merges, the self-merge
+// gate, review lock/approval, the transition's project role, a foreign
+// deliverable repository) refuses. A current backend names the failed
+// precondition in the message of those merge-gate refusals and of the
+// scope, write-access and no-claim refusals on these routes; the ordinary
+// message passthrough (generic degrade) carries any message unchanged, and
 // this entry adds only the two teachings passthrough alone cannot give:
 //  - A message naming a missing `github:*` scope (the backend's own
 //    "Token missing scope: ..." wording) has no self-service corrective:
@@ -847,18 +851,24 @@ function mergeInProgressError(message: string): TeachingError {
 //    re-mint one carrying it -- an admin wall, so `allowedNext` is empty
 //    by the same convention as force_admin_only above.
 //  - A body with NO message (a backend predating the precondition
-//    messages) gets the precondition list as the recipe. This branch is
-//    not verb-ambiguous: a bare `{error:"forbidden"}` body with no
-//    message is emitted only by those Grounding routes (every legacy 403
-//    carries a message), and verb-gating was infeasible anyway because
-//    two of the four verbs call wrap() without a verbContext.
+//    messages) gets the precondition list as the recipe. The work-or-
+//    review-claim item is named only for `task_finish`, the only verb
+//    threaded through wrap() that gates on a claim; a standalone merge
+//    (task_merge, pull_requests_merge) is claim-independent. Precedence:
+//    a present non-empty message wins (the list never applies to it);
+//    an empty message counts as absent; among verbs, a named `task_finish`
+//    wins over an absent verbContext, and an absent verbContext is one of
+//    the two merge verbs (the only verbs calling wrap() without one), so
+//    it takes the claim-free list. A bare `{error:"forbidden"}` body with
+//    no message is emitted only by those Grounding routes (every legacy
+//    403 carries a message).
 // A message without a `github:*` scope returns undefined: it falls
 // through to the generic degrade path unchanged, which is the required
 // "backend message is passed through" behavior (same code `forbidden`,
 // message verbatim, recipe -> workflow_primer).
 const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
 
-function groundingForbiddenError(body: BackendErrorBody, message: string): TeachingError | undefined {
+function groundingForbiddenError(body: BackendErrorBody, message: string, verbContext?: string): TeachingError | undefined {
   if (typeof body.message === "string" && body.message.length > 0) {
     const missing = TOKEN_MISSING_SCOPE_PATTERN.exec(body.message)?.[1];
     return missing?.includes("github:")
@@ -870,11 +880,12 @@ function groundingForbiddenError(body: BackendErrorBody, message: string): Teach
         })
       : undefined;
   }
+  const claimItem = verbContext === "task_finish" ? ", and the work or review claim on the task" : "";
   return buildTeachingError({
     code: "forbidden",
     message,
     recipe:
-      "the backend sent no detail: check this verb's token scopes (see workflow_primer), write access to the project, and, for a finish or merge, the work or review claim on the task",
+      `the backend sent no detail: check this verb's token scopes (see workflow_primer), write access to the project, agent PR merge consent (allowAgentPrMerge), the self-merge gate and review approval${claimItem}`,
     allowedNext: ["workflow_primer"],
   });
 }
@@ -1650,7 +1661,7 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
     // not_claimed and force_admin_only above are the earlier, more specific
     // pattern matches of this same status/code pair; this entry adds the
     // grounding write precondition teachings (see groundingForbiddenError).
-    const groundingForbidden = groundingForbiddenError(body, message);
+    const groundingForbidden = groundingForbiddenError(body, message, verbContext);
     if (groundingForbidden) return groundingForbidden;
   }
   if (status === 409 && code === "already_claimed") {

@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { z } from "zod";
-import { GroundingAccessError, unavailable, type GroundingTask, type GroundingTarget, type GroundingAuthority, type GroundingHeadProvider } from "./grounding-context.js";
+import { GroundingAccessError, roleRefusal, unavailable, type GroundingTask, type GroundingTarget, type GroundingAuthority, type GroundingHeadProvider } from "./grounding-context.js";
 import { findDelegationUser } from "./github-delegation.js";
 import { evaluateTransitionRules, GITHUB_BACKED_RULES, type TransitionRule } from "./transition-rules.js";
 import { fetchCheckRunStatus } from "./github-checks.js";
@@ -23,9 +23,9 @@ async function evaluateCompletionGates(db: Prisma.TransactionClient, task: Groun
   if (!parsed.success) unavailable();
   const edge = parsed.data.transitions.find(t => t.from === target.from && t.to === target.to);
   if (!edge) throw new GroundingAccessError("bad_state", 409);
-  if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole, db)) throw new GroundingAccessError("forbidden", 403);
+  if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole, db)) throw new GroundingAccessError("forbidden", 403, roleRefusal(target.to, edge.requiredRole));
   const foreign = task.deliverableRepo !== null && task.deliverableRepo !== task.project.githubRepo;
-  if (remote && foreign) throw new GroundingAccessError("forbidden", 403);
+  if (remote && foreign) throw new GroundingAccessError("forbidden", 403, "The task's PR lives in a repository foreign to this project, so this project's delegation cannot merge it");
   // Local foreign-deliverable behavior preserves the existing explicit skip.
   const skipped = foreign ? (edge.requires ?? []).filter(r => GITHUB_BACKED_RULES.has(r as TransitionRule)) : [];
   const rules = (edge.requires ?? []).filter(r => !skipped.includes(r) && !(remote && r === "prMerged"));

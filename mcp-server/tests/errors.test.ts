@@ -651,6 +651,8 @@ describe("mapBackendError catalog", () => {
   });
 
   // ── 7e. grounding write precondition 403s ─────────────────────────────────
+  const GENERIC_PRIMER_RECIPE = "call workflow_primer for the full lifecycle reference and today's known traps";
+  const GROUNDING_FALLBACK_RECIPE = "the backend sent no detail: check this verb's token scopes (see workflow_primer), write access to the project, agent PR merge consent (allowAgentPrMerge), the self-merge gate and review approval";
   it("grounding 403: a backend precondition message is passed through verbatim (no-scope message keeps the generic degrade)", () => {
     for (const [verb, message] of [
       ["pull_requests_create", "No write access to this project"],
@@ -661,8 +663,7 @@ describe("mapBackendError catalog", () => {
       const err = mapBackendError(403, { error: "forbidden", message }, verb);
       expect(err.error.code).toBe("forbidden");
       expect(err.error.message).toBe(message);
-      expect(err.error.recipe).toContain("workflow_primer");
-      expect(err.error.recipe).not.toContain("re-mint");
+      expect(err.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
     }
   });
   it("grounding 403: a message naming an absent github scope teaches the admin re-mint and offers no self-service call", () => {
@@ -681,28 +682,35 @@ describe("mapBackendError catalog", () => {
     expect(err.error.recipe).toContain("re-mint");
     expect(err.error.recipe).toContain("tasks:update, github:pr_create");
   });
-  it("grounding 403: an absent non-github scope message keeps the generic degrade (no re-mint recipe)", () => {
+  it("grounding 403: an absent non-github scope message keeps the generic degrade (no re-mint recipe, exact generic recipe string)", () => {
     const err = mapBackendError(403, { error: "forbidden", message: "Token missing scope: tasks:transition" }, "task_finish");
     expect(err.error.recipe).not.toContain("re-mint");
-    expect(err.error.recipe).toContain("workflow_primer");
+    expect(err.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
   });
-  it("grounding 403: a body with no message at all lists the possible preconditions", () => {
+  it("grounding 403: a body with no message lists every merge-path precondition including delegation, self-merge and review approval", () => {
     const err = mapBackendError(403, { error: "forbidden" }, "pull_requests_merge");
     expect(err.error.code).toBe("forbidden");
     expect(err.error.message).toBe("request failed with status 403");
-    expect(err.error.recipe).toContain("token scopes");
-    expect(err.error.recipe).toContain("write access");
-    expect(err.error.recipe).toContain("review claim");
+    expect(err.error.recipe).toBe(GROUNDING_FALLBACK_RECIPE);
     expect(err.error.allowedNext).toEqual(["workflow_primer"]);
     assertAllowedNextRegistered(err, registered);
+  });
+  it("grounding 403: the no-message list names the claim only for task_finish, never for the claim-independent merges or an absent verb", () => {
+    expect(mapBackendError(403, { error: "forbidden" }, "task_finish").error.recipe)
+      .toBe(`${GROUNDING_FALLBACK_RECIPE}, and the work or review claim on the task`);
+    for (const verb of ["task_merge", "pull_requests_merge", undefined] as const) {
+      const recipe = mapBackendError(403, { error: "forbidden" }, verb).error.recipe;
+      expect(recipe).toBe(GROUNDING_FALLBACK_RECIPE);
+      expect(recipe).not.toContain("claim");
+    }
   });
   it("grounding 403: an empty message string counts as no message (same precondition list); a body without the forbidden code keeps the generic recipe", () => {
     const empty = mapBackendError(403, { error: "forbidden", message: "" }, "task_merge");
     expect(empty.error.message).toBe("request failed with status 403");
-    expect(empty.error.recipe).toContain("review claim");
+    expect(empty.error.recipe).toBe(GROUNDING_FALLBACK_RECIPE);
     const noCode = mapBackendError(403, {});
     expect(noCode.error.code).toBe("http_403");
-    expect(noCode.error.recipe).not.toContain("review claim");
+    expect(noCode.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
   });
 
   // ── 7c. backlog_not_promoted ───────────────────────────────────────────────

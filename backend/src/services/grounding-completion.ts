@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { Prisma, type GroundingCohort, type GroundingOperation, type PrismaClient, type Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GroundingReceiptVerificationError, verifyGroundingReceipt } from "./grounding-receipt.js";
-import { canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, tokenScopeMessage, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
+import { canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, SELF_MERGE_REFUSAL, tokenScopeMessage, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
 import { groundingSettings, groundingTime } from "./grounding-verification.js";
 import type { GroundingAttemptsConfig } from "./grounding-attempts.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
@@ -119,7 +119,7 @@ export class GroundingCompletionService {
       }
     } else if (success) {
       if (remote && request.action === "finish" && resolveGovernanceMode(task.project) !== GovernanceMode.AUTONOMOUS) badState();
-      if (remote && !checkSelfMergeGate(task, actor, task.project).allowed) forbidden();
+      if (remote && !checkSelfMergeGate(task, actor, task.project).allowed) forbidden(SELF_MERGE_REFUSAL);
       const resolved = standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, request.action as "finish" | "approve" | "merge", this.authority);
       target = resolved.target;
       ({ skippedRules, ciHeadSha } = await (standalone ? taskMergeCompletionGates : completionGates)(db, task, actor, target, definition, this.authority, remote, head));

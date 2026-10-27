@@ -153,6 +153,8 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       const buildTransport = (idempotencyKey: string) => ({ endpoint: "github_merge" as const, body: { ...parsed.data, idempotencyKey, prNumber } });
       const previous = keyValue ? await service.lookupRouteOperation(taskId, actor, keyValue, buildTransport(keyValue)) : null;
       if (!previous) {
+        // Reachable only when write access is revoked between this check and
+        // the route's earlier project-access gate.
         if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403, "No write access to this project");
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         // Reached only when durable history named a key that no longer
