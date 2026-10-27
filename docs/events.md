@@ -21,7 +21,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | Action | Emitted on |
 |---|---|
 | `project.created` | New project |
-| `project.updated` | Settings changed (governance fields, confidence threshold, task template, ...) |
+| `project.updated` | Settings changed (governance fields, confidence threshold, task template, ...). Also written, with no `projectId` and payload `{ teamId, from, to }`, when a team admin renames a team via `PATCH /api/teams/:id` |
 | `project.synced` | GitHub repo sync |
 | `project.invite_created` / `project.invite_consumed` / `project.invite_revoked` | Per-project share-link lifecycle |
 | `project.member_removed` | Collaborator dropped from a project |

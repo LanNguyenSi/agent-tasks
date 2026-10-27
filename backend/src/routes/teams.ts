@@ -20,6 +20,13 @@ const createTeamSchema = z.object({
     .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with dashes"),
 });
 
+// Same rule as `createTeamSchema.name`, applied after trimming: a name that is
+// only whitespace is empty and rejected. The slug is not part of the body and
+// never changes on rename.
+const renameTeamSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+});
+
 function toSlug(value: string): string {
   const slug = value
     .toLowerCase()
@@ -138,6 +145,45 @@ teamRouter.get("/teams/:id", async (c) => {
   if (!isMember) return forbidden(c, "Not a member of this team");
 
   return c.json({ team });
+});
+
+// ── Rename team ───────────────────────────────────────────────────────────────
+
+teamRouter.patch("/teams/:id", zValidate("json", renameTeamSchema), async (c) => {
+  const actor = c.get("actor");
+
+  if (actor.type !== "human") {
+    return forbidden(c, "Agents cannot rename teams");
+  }
+
+  const team = await prisma.team.findUnique({ where: { id: c.req.param("id") } });
+  if (!team) return notFound(c);
+
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId: team.id, userId: actor.userId } },
+  });
+  if (!membership) return forbidden(c, "Not a member of this team");
+  if (membership.role !== "ADMIN") {
+    return forbidden(c, "Only team admins can rename the team");
+  }
+
+  const { name } = c.req.valid("json");
+
+  // Only the display name is written; the slug is an identifier and stays.
+  const updated = await prisma.team.update({
+    where: { id: team.id },
+    data: { name },
+  });
+
+  // Team creation logs its event as "project.created" with a team payload;
+  // the rename follows that convention with { teamId, from, to }.
+  void logAuditEvent({
+    action: "project.updated",
+    actorId: actor.userId,
+    payload: { teamId: team.id, from: team.name, to: updated.name },
+  });
+
+  return c.json({ team: updated });
 });
 
 // ── Invite member (by GitHub login) ──────────────────────────────────────────

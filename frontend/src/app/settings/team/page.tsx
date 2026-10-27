@@ -1,6 +1,6 @@
 "use client";
 
-// Team settings: /settings/team. API tokens (Connect an agent, create, rename,
+// Team settings: /settings/team. Team name (rename), API tokens (Connect an agent, create, rename,
 // revoke) and the Enterprise SSO entry. Personal settings (account,
 // appearance, GitHub, agent permissions) live at /settings.
 
@@ -13,7 +13,7 @@ import {
 } from "../../../lib/api";
 import { settingsHref, ssoSettingsHref } from "../../../lib/routes";
 import { useCurrentTeam } from "../../../lib/teamSwitch";
-import { usePageTeams } from "../../../lib/teamList";
+import { usePageTeams, useTeamList } from "../../../lib/teamList";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
@@ -21,6 +21,7 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { PageShell } from "../../../components/ui/PageShell";
 import { SkeletonList } from "../../../components/ui/Skeleton";
 import ApiTokensSection from "../../../components/settings/ApiTokensSection";
+import TeamNameSection from "../../../components/settings/TeamNameSection";
 import {
   TokenRevealBanner,
   useTokenReveals,
@@ -28,6 +29,7 @@ import {
 
 // Section ids for the sticky side-nav anchors.
 const SECTIONS = [
+  { id: "team-name", label: "Team name" },
   { id: "api-tokens", label: "API Tokens" },
   { id: "sso", label: "Enterprise SSO" },
 ];
@@ -41,7 +43,10 @@ export default function TeamSettingsPage() {
   // into the URL. `teamsHeld`: ?teamId names a team that list lacks and its
   // one refresh is pending.
   const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams(userReady);
-  const [activeSection, setActiveSection] = useState<string>("api-tokens");
+  // A rename reloads the shell's one list, so the header, the switcher and
+  // this page all show the new name without a page reload.
+  const { refreshTeams } = useTeamList();
+  const [activeSection, setActiveSection] = useState<string>("team-name");
 
   // The current team is derived from the URL, the same input the header
   // switcher uses (?teamId, then the remembered team, then the first team).
@@ -201,6 +206,13 @@ export default function TeamSettingsPage() {
         {/* Sticky side-nav: hidden under 1000px via CSS */}
         <aside className="settings-side-nav" aria-label="Team settings sections">
           <nav>
+            <p className="settings-side-nav-group-label">General</p>
+            <a
+              href="#team-name"
+              className={`settings-side-nav-link${activeSection === "team-name" ? " settings-side-nav-link--active" : ""}`}
+            >
+              Team name
+            </a>
             <p className="settings-side-nav-group-label">Developer</p>
             <a
               href="#api-tokens"
@@ -219,6 +231,17 @@ export default function TeamSettingsPage() {
         </aside>
 
         <div className="settings-content">
+          {team && (
+            <div className="settings-section-group">
+              <p className="settings-group-eyebrow">General</p>
+              <TeamNameSection
+                key={team.id}
+                team={team}
+                onRenamed={() => void refreshTeams()}
+              />
+            </div>
+          )}
+
           <div className="settings-section-group">
             <p className="settings-group-eyebrow">Developer</p>
 
