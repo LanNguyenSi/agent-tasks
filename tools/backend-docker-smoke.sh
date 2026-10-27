@@ -40,9 +40,9 @@
 # Env overrides (all optional): SMOKE_PROJECT_PREFIX, MIGRATE_TIMEOUT_SECS,
 # READY_TIMEOUT_SECS, HEALTH_TIMEOUT_SECS, POLL_INTERVAL_SECS,
 # SMOKE_BUILD_PLATFORM (for example linux/amd64: builds the migrate and backend
-# images for that platform only; the Prisma client is generated for
-# debian-openssl-3.0.x, which is the x64 engine, so on an arm64 host the
-# images only boot when built for linux/amd64, as on the x64 CI runner).
+# images for that platform only; unset, they build for the host platform. The
+# Prisma client is generated for debian-openssl-3.0.x (x64) and
+# linux-arm64-openssl-3.0.x (arm64), so the images boot natively on both).
 
 set -euo pipefail
 
