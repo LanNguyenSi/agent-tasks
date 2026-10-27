@@ -422,14 +422,14 @@ describe("home page: labels", () => {
     serveDataset([makeTask()]);
     await renderHome();
 
-    const tileLabels = Array.from(document.querySelectorAll(".home-stat-tile-label")).map(
+    const tileLabels = Array.from(document.querySelectorAll(".home-scope-label")).map(
       (el) => el.textContent,
     );
     expect(tileLabels).toContain("Active");
     expect(tileLabels).not.toContain("Open");
     expect(screen.getByRole("heading", { level: 2, name: "Active Tasks" })).toBeTruthy();
     // The scope value in the URL stays `open`.
-    const tile = Array.from(document.querySelectorAll(".home-stat-tile")).find(
+    const tile = Array.from(document.querySelectorAll(".home-scope-link")).find(
       (el) => el.textContent?.includes("Active"),
     ) as HTMLAnchorElement;
     expect(tile.getAttribute("href")).toContain("scope=open");
@@ -439,7 +439,7 @@ describe("home page: labels", () => {
     serveDataset([makeTask({ status: "done" })]);
     await renderHome();
 
-    const tileLabels = Array.from(document.querySelectorAll(".home-stat-tile-label")).map(
+    const tileLabels = Array.from(document.querySelectorAll(".home-scope-label")).map(
       (el) => el.textContent,
     );
     expect(tileLabels).toContain("Done · 14 days");

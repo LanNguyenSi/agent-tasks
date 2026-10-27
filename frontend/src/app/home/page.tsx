@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -57,9 +57,13 @@ function emptyWidgetRows(): WidgetRows {
   return { mine: [], priority: [], backlog: [], open: [], review: [], done: [] };
 }
 
+type ScopeGroup = "filters" | "stages";
+
 type HomeScope = {
   key: string;
   scope: WidgetKey;
+  /** Which side of the scope strip the entry sits on. */
+  group: ScopeGroup;
   statLabel: string;
   widgetTitle: string;
   count: number;
@@ -143,7 +147,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
   return (
     <Card className="home-widget-card" padding="sm">
       <div className="home-widget-header">
-        {/* Plain text: the stat tile above is the one link to this scope
+        {/* Plain text: the scope link above is the one link to this scope
             ("N total" and "+N more" below lead there too). */}
         <h2 className="home-widget-title">{title}</h2>
         <Link href={moreHref} className="widget-link home-widget-more">
@@ -189,9 +193,9 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
   );
 }
 
-// ── StatTile ──────────────────────────────────────────────────────
+// ── ScopeLink ─────────────────────────────────────────────────────
 
-function StatTile({
+function ScopeLink({
   count,
   label,
   href,
@@ -200,10 +204,12 @@ function StatTile({
   label: string;
   href: string;
 }) {
+  // The explicit name keeps "<n> <label>" with a space; the two spans are
+  // only presentation.
   return (
-    <Link href={href} className="home-stat-tile">
-      <span className="home-stat-tile-number num">{count}</span>
-      <span className="home-stat-tile-label">{label}</span>
+    <Link href={href} className="home-scope-link" aria-label={`${count} ${label}`}>
+      <span className="home-scope-num num">{count}</span>
+      <span className="home-scope-label">{label}</span>
     </Link>
   );
 }
@@ -223,7 +229,7 @@ interface ProjectsStripProps {
 
 /**
  * "Your projects" jump strip (T05, UI/IA S1): up to
- * `HOME_PROJECTS_STRIP_LIMIT` project links above the stat strip, recents
+ * `HOME_PROJECTS_STRIP_LIMIT` project links above the scope strip, recents
  * first (localStorage, recorded when a board is opened) and then the
  * remaining projects in the order `getTeamTasks` returns them, plus the
  * "All projects" link to the team's Projects page. Shared projects
@@ -475,7 +481,7 @@ export default function HomeDashboardPage() {
   );
 
   // ── Ordered scope list (D1/D3) ───────────────────────────────
-  // Single source of truth for BOTH the stat strip and the widget grid:
+  // Single source of truth for BOTH the scope strip and the widget grid:
   // each surface below renders this list, in this order, and nothing
   // else. D1 (operator-decided): My Tasks, Priority, Backlog, Active
   // Tasks, In Review, Done. To reorder either surface, reorder
@@ -485,6 +491,7 @@ export default function HomeDashboardPage() {
     {
       key: "mine",
       scope: "mine",
+      group: "filters",
       statLabel: "Mine",
       widgetTitle: "My Tasks",
       count: counts?.mine ?? myTasks.length,
@@ -505,6 +512,7 @@ export default function HomeDashboardPage() {
     {
       key: "priority",
       scope: "priority",
+      group: "filters",
       statLabel: "Priority",
       widgetTitle: "Priority (High / Critical)",
       count: counts?.priority ?? priorityTasks.length,
@@ -516,6 +524,7 @@ export default function HomeDashboardPage() {
     {
       key: "backlog",
       scope: "backlog",
+      group: "stages",
       statLabel: "Backlog",
       widgetTitle: "Backlog",
       count: counts?.backlog ?? backlogTasks.length,
@@ -528,6 +537,7 @@ export default function HomeDashboardPage() {
     {
       key: "open",
       scope: "open",
+      group: "stages",
       statLabel: "Active",
       widgetTitle: "Active Tasks",
       count: counts?.open ?? openTasks.length,
@@ -548,6 +558,7 @@ export default function HomeDashboardPage() {
     {
       key: "review",
       scope: "review",
+      group: "stages",
       statLabel: "In Review",
       widgetTitle: "In Review",
       count: counts?.review ?? inReviewTasks.length,
@@ -559,6 +570,7 @@ export default function HomeDashboardPage() {
     {
       key: "done",
       scope: "done",
+      group: "stages",
       statLabel: DONE_LABEL,
       widgetTitle: DONE_LABEL,
       count: counts?.doneRecent ?? recentlyDone.length,
@@ -573,14 +585,32 @@ export default function HomeDashboardPage() {
     },
   ];
 
-  // ── Stat strip ────────────────────────────────────────────────
+  // ── Scope strip ───────────────────────────────────────────────
 
-  const statStrip = (
-    <div className="home-stat-strip">
-      {homeScopes.map((s) => (
-        <StatTile key={s.key} count={s.count} label={s.statLabel} href={s.href} />
-      ))}
-    </div>
+  // Two groups from the one homeScopes list: the filters (Mine, Priority)
+  // and the stage flow (Backlog to Done), whose links are joined by a
+  // decorative chevron. DOM order equals the list order.
+  const scopesOf = (group: ScopeGroup) => homeScopes.filter((s) => s.group === group);
+  const scopeStrip = (
+    <nav className="home-scopes" aria-label="Task scopes">
+      <div className="home-scopes-group home-scopes-group--filters">
+        {scopesOf("filters").map((s) => (
+          <ScopeLink key={s.key} count={s.count} label={s.statLabel} href={s.href} />
+        ))}
+      </div>
+      <div className="home-scopes-group home-scopes-group--stages">
+        {scopesOf("stages").map((s, i) => (
+          <Fragment key={s.key}>
+            {i > 0 && (
+              <span className="home-scopes-sep" aria-hidden="true">
+                {"\u203A"}
+              </span>
+            )}
+            <ScopeLink count={s.count} label={s.statLabel} href={s.href} />
+          </Fragment>
+        ))}
+      </div>
+    </nav>
   );
 
   // The team name is the H1 in the PageHeader band; a user without a team
@@ -602,7 +632,7 @@ export default function HomeDashboardPage() {
       {selectedTeam && (
         !tasksLoaded ? (
           <>
-            {statStrip}
+            {scopeStrip}
             <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
           </>
         ) : error ? (
@@ -625,7 +655,7 @@ export default function HomeDashboardPage() {
         ) : (
           <>
             {projectsStrip}
-            {statStrip}
+            {scopeStrip}
 
             {/* Stale-warning slot: the live region is always mounted so the
                 warning is announced when it appears; the banner itself (and its
@@ -641,7 +671,7 @@ export default function HomeDashboardPage() {
               )}
             </div>
 
-            {/* Widgets: same six scopes as the stat strip above, rendered
+            {/* Widgets: same six scopes as the scope strip above, rendered
                 from the same `homeScopes` list in the same D1 order (My
                 Tasks, Priority, Backlog, Active Tasks, In Review, Done) --
                 see the comment at homeScopes for the ordering rule. */}

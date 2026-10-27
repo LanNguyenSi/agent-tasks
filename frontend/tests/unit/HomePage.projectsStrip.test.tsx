@@ -304,7 +304,7 @@ describe("home page — Your projects strip empty state", () => {
 
     render(<HomeDashboardPage />);
     await vi.waitFor(() => {
-      expect(document.querySelector(".home-stat-strip")).not.toBeNull();
+      expect(document.querySelector(".home-scopes")).not.toBeNull();
     });
 
     expect(document.querySelector(".home-projects-strip")).toBeNull();

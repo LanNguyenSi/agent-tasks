@@ -134,11 +134,11 @@ afterEach(() => {
 
 function backlogTileNumber(): string {
   // "Backlog" also labels the widget's <h2> title further down the page;
-  // the stat-tile label carries the home-stat-tile-label class.
+  // the scope-link label carries the home-scope-label class.
   const label = screen
     .getAllByText("Backlog")
-    .find((el) => el.className === "home-stat-tile-label");
-  if (!label) throw new Error("Backlog stat-tile label not found");
+    .find((el) => el.className === "home-scope-label");
+  if (!label) throw new Error("Backlog scope label not found");
   const tile = label.closest("a");
   if (!tile) throw new Error("Backlog tile <a> not found");
   return within(tile).getByText(/^\d+$/).textContent ?? "";
