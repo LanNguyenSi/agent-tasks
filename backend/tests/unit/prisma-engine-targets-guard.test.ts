@@ -32,8 +32,14 @@ describe('prisma engine targets', () => {
   })
 
   it('installs openssl in the build stage that runs prisma generate', () => {
-    const stage = buildStage(dockerfile)
-    expect(stage).toMatch(/apt-get install -y openssl/)
-    expect(stage.indexOf('apt-get install')).toBeLessThan(stage.indexOf('db:generate'))
+    // Only instruction lines count: a commented-out RUN must not satisfy the guard.
+    const runs = buildStage(dockerfile)
+      .split('\n')
+      .filter((line) => /^RUN\s/.test(line))
+    const install = runs.findIndex((line) => /apt-get install -y openssl/.test(line))
+    const generate = runs.findIndex((line) => /db:generate/.test(line))
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(generate).toBeGreaterThanOrEqual(0)
+    expect(install).toBeLessThan(generate)
   })
 })
