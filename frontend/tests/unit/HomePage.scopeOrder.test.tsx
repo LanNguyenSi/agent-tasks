@@ -232,10 +232,14 @@ describe("home page — widget plumbing", () => {
     expect(title.textContent).toBe("Backlog");
     expect(title.closest("a")).toBeNull();
 
-    // Check more-link href
-    const moreLink = backlogWidget.querySelector(".home-widget-more") as HTMLAnchorElement;
-    expect(moreLink).not.toBeNull();
-    expect(moreLink.href).toContain("status=backlog");
+    // The header's View all link carries the scope href (moreHrefOverride):
+    // named with the widget title, pointing at the backlog status filter.
+    const viewAll = backlogWidget.querySelector(
+      ".home-widget-header .view-all-link",
+    ) as HTMLAnchorElement;
+    expect(viewAll).not.toBeNull();
+    expect(viewAll.getAttribute("aria-label")).toBe("View all Backlog");
+    expect(viewAll.href).toContain("status=backlog");
   });
 
   it("(b) Done widget shows link to scope=done&recency=older when olderCount > 0", async () => {
@@ -273,6 +277,16 @@ describe("home page — widget plumbing", () => {
     expect(olderLink).not.toBeNull();
     expect(olderLink?.href).toContain("scope=done");
     expect(olderLink?.href).toContain("recency=older");
+
+    // The header's View all link stays in the recent window (same href the
+    // old "N total →" link had), named with the widget title.
+    const viewAll = doneWidget.querySelector(
+      ".home-widget-header .view-all-link",
+    ) as HTMLAnchorElement;
+    expect(viewAll.getAttribute("aria-label")).toBe("View all Done \u00b7 14 days");
+    expect(viewAll.href).toContain("scope=done");
+    expect(viewAll.href).toContain("recency=recent");
+    expect(viewAll.href).not.toContain("recency=older");
   });
 
   it("(c) Empty state action buttons render with correct hrefs when mine and open slices are empty", async () => {

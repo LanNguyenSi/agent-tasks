@@ -732,8 +732,8 @@ input[type="checkbox"] {
   }
 }
 
-/* Compact text links inside the home widgets ("N total", "+N more",
-   "older done"). Given a real hit area and the accent text token (not the
+/* Compact text links inside the home widgets ("+N more", "older done").
+   Given a real hit area and the accent text token (not the
    raw --primary fill, which is 4.05:1 on dark surfaces) so they read as the
    affordances they are, with an underline on hover. */
 .widget-link {
@@ -747,6 +747,38 @@ input[type="checkbox"] {
 
 .widget-link:hover {
   text-decoration: underline;
+}
+
+/* Quiet "View all" link (ViewAllLink component): secondary text with a
+   quiet accent fill on hover, a 28px hit area like .home-scope-link, and
+   the app's standard focus ring (the global `:focus-visible` rule restated
+   here so the ring also reads against the hover fill, in both themes).
+   Colour `--text-secondary` / hover `--primary-text` keep the dark-mode
+   contrast the accent-text token was chosen for. */
+.view-all-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.view-all-link:hover {
+  color: var(--primary-text);
+  background: var(--primary-muted);
+  text-decoration: none;
+}
+
+.view-all-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Indeterminate loading spinner used by FullPageLoader. Holds still under
@@ -3899,13 +3931,6 @@ html[data-theme="light"] {
   color: var(--text-secondary);
 }
 
-/* "All projects →" on the right of the section head */
-.home-projects-all {
-  font-size: var(--text-xs);
-  flex-shrink: 0;
-  color: var(--primary-text);
-}
-
 /* One line: wraps without page scroll, items never stretch below content */
 .home-projects-items {
   display: flex;
@@ -3968,7 +3993,7 @@ html[data-theme="light"] {
   margin-bottom: 0;
 }
 
-/* Widget header: title link + "N total" on the right */
+/* Widget header: plain title, count and "View all" on the right */
 .home-widget-header {
   display: flex;
   justify-content: space-between;
@@ -3988,10 +4013,12 @@ html[data-theme="light"] {
   white-space: nowrap;
 }
 
-/* "N total →" count link pinned right */
-.home-widget-more {
-  font-size: var(--text-xs);
+/* Count in the widget header: plain secondary text, not a link
+   (the .view-all-link next to it is the link to the scope). */
+.home-widget-count {
   flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 /* Column of task rows inside a widget */

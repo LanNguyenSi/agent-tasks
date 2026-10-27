@@ -230,8 +230,11 @@ describe("home page — Your projects strip links", () => {
   it("links All projects to the team's Projects page", async () => {
     await renderLoaded({ tasks: [], projects: [makeProject("p1")], counts: makeCounts() });
 
-    const all = screen.getByRole("link", { name: "All projects →" });
+    const all = screen.getByRole("link", { name: "View all projects" });
     expect(all.getAttribute("href")).toBe("/projects?teamId=team-1");
+    // Quiet ViewAllLink: the visible label carries no arrow glyph.
+    expect(all.textContent).toBe("All projects");
+    expect(all).toHaveClass("view-all-link");
   });
 
   it("gives each item link a discernible name (project name in the label)", async () => {

@@ -171,8 +171,16 @@ function footerLinks(title: string): string[] {
   );
 }
 
+/** The header count: plain secondary text, not a link. */
 function headerTotal(title: string): string {
-  return widget(title).querySelector(".home-widget-more")?.textContent ?? "";
+  return widget(title).querySelector(".home-widget-count")?.textContent ?? "";
+}
+
+/** The header's "View all" link (the only link in the header). */
+function headerLink(title: string): HTMLAnchorElement {
+  const links = Array.from(widget(title).querySelectorAll(".home-widget-header a"));
+  expect(links).toHaveLength(1);
+  return links[0] as HTMLAnchorElement;
 }
 
 /** Run the page's 15 s poll once, now. */
@@ -271,14 +279,32 @@ describe("home page: more than 500 team tasks", () => {
     serveDataset(bigTeam());
     await renderHome();
 
-    expect(headerTotal("Backlog")).toBe("15 total →");
+    expect(headerTotal("Backlog")).toBe("15");
     expect(footerLinks("Backlog")).toEqual(["+5 more →"]);
-    expect(headerTotal("Active Tasks")).toBe("12 total →");
+    expect(headerTotal("Active Tasks")).toBe("12");
     expect(footerLinks("Active Tasks")).toEqual(["+2 more →"]);
-    expect(headerTotal("Done · 14 days")).toBe("520 total →");
+    expect(headerTotal("Done · 14 days")).toBe("520");
     expect(footerLinks("Done · 14 days")[0]).toBe("+510 more →");
     // 3 rows of 3: nothing more to show.
     expect(footerLinks("In Review")).toEqual([]);
+  });
+
+  it("renders the header count as plain text and View all as the header's only link", async () => {
+    serveDataset(bigTeam());
+    await renderHome();
+
+    // The count is text, never part of the link.
+    const count = widget("Backlog").querySelector(".home-widget-count") as HTMLElement;
+    expect(count.textContent).toBe("15");
+    expect(count.closest("a")).toBeNull();
+
+    // One link in the header, named with the widget title, pointing at the
+    // Backlog list (the same href the old "N total →" link had).
+    const link = headerLink("Backlog");
+    expect(link).toHaveAccessibleName("View all Backlog");
+    expect(link.getAttribute("href")).toBe("/tasks?teamId=team-1&status=backlog");
+    expect(link.textContent).toContain("View all");
+    expect(link.textContent).not.toMatch(/→/);
   });
 
   it("keeps the per-project active counts of the strip complete", async () => {
@@ -307,7 +333,7 @@ describe("home page: +N more is the total minus the rows shown", () => {
     await renderHome();
 
     expect(rowCount("Backlog")).toBe(3);
-    expect(headerTotal("Backlog")).toBe("15 total →");
+    expect(headerTotal("Backlog")).toBe("15");
     expect(footerLinks("Backlog")).toEqual(["+12 more →"]);
   });
 

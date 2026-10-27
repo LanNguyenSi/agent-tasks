@@ -33,6 +33,7 @@ import { Button } from "../../components/ui/Button";
 import EmptyState from "../../components/ui/EmptyState";
 import { StatusChip } from "../../components/ui/StatusChip";
 import { PriorityLabel } from "../../components/ui/PriorityLabel";
+import { ViewAllLink } from "../../components/ui/ViewAllLink";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import {
   WIDGET_LIMIT,
@@ -148,11 +149,11 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
     <Card className="home-widget-card" padding="sm">
       <div className="home-widget-header">
         {/* Plain text: the scope link above is the one link to this scope
-            ("N total" and "+N more" below lead there too). */}
+            (the "View all" link here and "+N more" below lead there too).
+            The count is text, not part of the link. */}
         <h2 className="home-widget-title">{title}</h2>
-        <Link href={moreHref} className="widget-link home-widget-more">
-          <span className="num">{displayTotal}</span> total &rarr;
-        </Link>
+        <span className="home-widget-count num">{displayTotal}</span>
+        <ViewAllLink href={moreHref} aria-label={`View all ${title}`} />
       </div>
 
       {displayTotal === 0 ? (
@@ -241,9 +242,9 @@ function ProjectsStrip({ projects, teamId, activeCounts }: ProjectsStripProps) {
     <section className="home-projects-strip" aria-label="Your projects">
       <div className="home-projects-head">
         <h2 className="home-projects-title">Your projects</h2>
-        <Link href={projectsHref({ teamId })} className="widget-link home-projects-all">
-          All projects &rarr;
-        </Link>
+        <ViewAllLink href={projectsHref({ teamId })} aria-label="View all projects">
+          All projects
+        </ViewAllLink>
       </div>
       {projects.length === 0 ? (
         <p className="home-projects-empty">
