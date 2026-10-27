@@ -447,6 +447,93 @@ describe("/tasks: dismissing a load error", () => {
     expect(screen.queryByText("refresh failed")).not.toBeInTheDocument();
     expect(screen.getAllByText("Alpha only task").length).toBeGreaterThan(0);
     expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument();
+    // A list exists: no inline retry next to it.
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
+  });
+
+  it("without a list shows an inline Couldn't load tasks with Retry, only after dismiss", async () => {
+    nav.reset("/tasks?teamId=t1");
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("team one is down"));
+    render(<TasksPage />);
+    expect(await screen.findByText("team one is down")).toBeInTheDocument();
+    // While the banner shows, the list region itself stays as it is (blank).
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByText("team one is down")).not.toBeInTheDocument();
+    const inline = screen.getByText("Couldn't load tasks");
+    expect(document.querySelector(".tasks-table-region")?.contains(inline)).toBe(true);
+    // Keyboard operable: a real button in the region, using the Retry path.
+    const retry = within(document.querySelector(".tasks-table-region") as HTMLElement).getByRole(
+      "button",
+      { name: "Retry" },
+    );
+    expect(retry.tagName).toBe("BUTTON");
+    expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument();
+  });
+
+  it("the inline Retry loads: loading state, then the list, no banner", async () => {
+    nav.reset("/tasks?teamId=t1");
+    vi.mocked(getTeamTasks).mockRejectedValue(new Error("team one is down"));
+    render(<TasksPage />);
+    expect(await screen.findByText("team one is down")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    const calls = vi.mocked(getTeamTasks).mock.calls.length;
+    vi.mocked(getTeamTasks).mockImplementation(async () => result("Alpha only task"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(vi.mocked(getTeamTasks).mock.calls.length).toBe(calls + 1);
+    // A request is in flight now: the loading state is real.
+    expect(screen.getAllByText("Loading tasks").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
+    expect((await screen.findAllByText("Alpha only task")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("team one is down")).not.toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
+  });
+
+  it("a dismissed error of another team shows no inline message; back shows the loading state", async () => {
+    nav.reset("/tasks?teamId=t1");
+    vi.mocked(getTeamTasks).mockImplementation(async (teamId: string) => {
+      if (teamId === "t1") throw new Error("team one is down");
+      return result("Beta only task", "Beta project");
+    });
+    renderBoth();
+    expect(await screen.findByText("team one is down")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.getByText("Couldn't load tasks")).toBeInTheDocument();
+
+    const pendingB = deferred<TeamTasksResult>();
+    vi.mocked(getTeamTasks).mockImplementation((teamId: string) =>
+      teamId === "t2" ? pendingB.promise : Promise.resolve(result("Alpha only task")),
+    );
+    pick("Team Two");
+    await waitFor(() => expect(getTeamTasks).toHaveBeenLastCalledWith("t2", expect.anything()));
+
+    // Team One's dismissed error does not follow: Team Two gets its loading state.
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Loading tasks").length).toBeGreaterThan(0);
+    await act(async () => {
+      pendingB.resolve(result("Beta only task", "Beta project"));
+    });
+    expect((await screen.findAllByText("Beta only task")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
+
+    // Switching back starts a fresh load: the loading state, then Team One's
+    // list, not the old dismissed error.
+    const pendingA = deferred<TeamTasksResult>();
+    vi.mocked(getTeamTasks).mockImplementation((teamId: string) =>
+      teamId === "t1" ? pendingA.promise : Promise.resolve(result("Beta only task", "Beta project")),
+    );
+    act(() => nav.push("/tasks?teamId=t1"));
+    await waitFor(() => expect(getTeamTasks).toHaveBeenLastCalledWith("t1", expect.anything()));
+    expect(screen.getAllByText("Loading tasks").length).toBeGreaterThan(0);
+    await act(async () => {
+      pendingA.resolve(result("Alpha only task"));
+    });
+    expect((await screen.findAllByText("Alpha only task")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();
   });
 
   it("a later failed load of the same team shows the banner again, and Retry loads", async () => {
