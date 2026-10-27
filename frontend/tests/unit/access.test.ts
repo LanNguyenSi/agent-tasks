@@ -14,7 +14,7 @@ vi.mock("../../src/lib/api", () => ({
   getProjects: vi.fn(),
 }));
 
-import { getAccessContext, needsOnboarding } from "../../src/lib/access";
+import { getAccessContext, needsOnboarding, retrySharedProjects } from "../../src/lib/access";
 import { getProjects, getTeams } from "../../src/lib/api";
 
 const TEAM = { id: "t1", name: "Team", slug: "team", role: "ADMIN", createdAt: "x" } as Team;
@@ -83,5 +83,30 @@ describe("getAccessContext", () => {
     vi.mocked(getTeams).mockRejectedValue(new Error("boom"));
     await expect(getAccessContext()).rejects.toThrow("boom");
     expect(getProjects).not.toHaveBeenCalled();
+  });
+});
+
+describe("retrySharedProjects", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("success: returns the list, no teams request, no error flag", async () => {
+    vi.mocked(getProjects).mockResolvedValue([SHARED]);
+    expect(await retrySharedProjects()).toEqual({ sharedProjects: [SHARED] });
+    expect(getTeams).not.toHaveBeenCalled();
+  });
+
+  it("success with nothing shared: empty list, no error flag", async () => {
+    vi.mocked(getProjects).mockResolvedValue([]);
+    expect(await retrySharedProjects()).toEqual({ sharedProjects: [] });
+  });
+
+  it("failure: empty list plus the error flag, never a throw", async () => {
+    vi.mocked(getProjects).mockRejectedValue(new Error("boom"));
+    await expect(retrySharedProjects()).resolves.toEqual({
+      sharedProjects: [],
+      sharedProjectsError: true,
+    });
   });
 });
