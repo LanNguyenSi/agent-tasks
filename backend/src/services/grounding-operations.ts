@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Actor } from "../types/auth.js";
 import type { GroundingOperation, Prisma } from "@prisma/client";
-import { canonicalGroundingJson, GroundingAccessError, groundingAuthority, type GroundingAuthority, type GroundingTask } from "./grounding-context.js";
+import { canonicalGroundingJson, GroundingAccessError, groundingAuthority, KEY_OTHER_ACTOR_REFUSAL, type GroundingAuthority, type GroundingTask } from "./grounding-context.js";
 import { GroundingDecisionError } from "./grounding-transaction.js";
 
 export const routeTransportSchema = z.object({
@@ -43,7 +43,7 @@ export function operationRequest(input: OperationInput): OperationRequest {
 export function groundingActorId(actor: Actor) { return actor.type === "agent" ? actor.tokenId : actor.userId; }
 export function operationFingerprint(request: OperationRequest) { if (request.route) return routeTransportFingerprint(request.route.transport); return createHash("sha256").update(canonicalGroundingJson(request)).digest("hex"); }
 export function checkOperationActor(operation: GroundingOperation, actor: Actor) {
-  if (operation.actorType !== actor.type || operation.actorId !== groundingActorId(actor)) throw new GroundingAccessError("forbidden", 403);
+  if (operation.actorType !== actor.type || operation.actorId !== groundingActorId(actor)) throw new GroundingAccessError("forbidden", 403, KEY_OTHER_ACTOR_REFUSAL);
 }
 export async function operationAccess(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, authority: GroundingAuthority = groundingAuthority) {
   if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);

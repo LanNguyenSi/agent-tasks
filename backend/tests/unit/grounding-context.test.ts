@@ -81,6 +81,17 @@ describe("authorized existing workflow intent", () => {
   });
 });
 
+describe("work finish refusal for a claim that changed under the lock", () => {
+  // Unreachable through the finish route (it refuses a caller with neither claim
+  // first and routes a review claimant to the review branch), so the service is
+  // pinned directly: the work claim moved away, or the caller also holds the review claim.
+  it("names the work-claim requirement when the work claim is not held or the review claim is", async () => {
+    const message = "Finishing work requires the work claim on this task and no review claim";
+    await expect(resolveGroundingTarget(workflowDb(), { ...taskFixture(), claimedByAgentId: null }, actor, "finish", authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: message });
+    await expect(resolveGroundingTarget(workflowDb(), { ...taskFixture(), reviewClaimedByAgentId: actor.tokenId }, actor, "finish", authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: message });
+  });
+});
+
 describe("task-merge admission refusals name their precondition", () => {
   it("names the missing github:pr_merge scope, the missing project write, and passes both checks held", async () => {
     const holder = { ...actor, scopes: ["github:pr_merge"] };

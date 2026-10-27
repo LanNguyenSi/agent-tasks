@@ -78,8 +78,14 @@ export async function requireTaskMergeActor(db: Prisma.TransactionClient, task: 
  * identically from every site that enforces the precondition. */
 export const SELF_MERGE_REFUSAL = "Self-merge is blocked: a distinct reviewer must merge";
 export const MERGE_CONSENT_REFUSAL = "No team member allows agent PR merges (allowAgentPrMerge)";
+export const CREATE_CONSENT_REFUSAL = "No team member with a connected GitHub account allows agent PR creation (allowAgentPrCreate)";
+export const NO_CLAIM_REFUSAL = "You hold neither the work claim nor the review claim on this task";
+export const WORK_CLAIM_REFUSAL = "Finishing work requires the work claim on this task and no review claim";
+export const REVIEW_CLAIM_REFUSAL = "Approving or requesting changes requires the review claim on this task, or the work claim while no review claim is held";
+export const KEY_OTHER_ACTOR_REFUSAL = "This Idempotency-Key was already used on this task by a different caller";
+export const ATTEMPT_OTHER_ACTOR_REFUSAL = "The active grounding attempt was issued to a different caller; issue a new one with task_grounding_attempt_create";
 export function roleRefusal(to: string, role: string): string { return `The transition to ${to} requires the ${role} project role`; }
-function reviewApprovalRefusal(reason: DistinctReviewerRejection | undefined): string {
+export function reviewApprovalRefusal(reason: DistinctReviewerRejection | undefined): string {
   if (reason === "no_review_lock") return "Review approval is blocked: no review lock is held on this task";
   if (reason === "review_lock_held_by_claimant") return "Review approval is blocked: the review lock is held by the work claimant";
   return "Review approval is blocked: the work claimant cannot approve their own work";
@@ -121,12 +127,13 @@ export async function resolveGroundingTarget(
   if (intent === "approve" || (intent === "merge" && review)) {
     if (!review) throw new GroundingAccessError("bad_state", 409);
     if (!holdsReview && !(holdsWork && !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId))
-      throw new GroundingAccessError("forbidden", 403);
-    if (!checkReviewApprovalGate(task, actor, task.project).allowed)
-      throw new GroundingAccessError("forbidden", 403);
+      throw new GroundingAccessError("forbidden", 403, REVIEW_CLAIM_REFUSAL);
+    const approval = checkReviewApprovalGate(task, actor, task.project);
+    if (!approval.allowed)
+      throw new GroundingAccessError("forbidden", 403, reviewApprovalRefusal(approval.reason));
   } else {
     if (!isWorkState(def, task.status) || review) throw new GroundingAccessError("bad_state", 409);
-    if (!holdsWork || holdsReview) throw new GroundingAccessError("forbidden", 403);
+    if (!holdsWork || holdsReview) throw new GroundingAccessError("forbidden", 403, WORK_CLAIM_REFUSAL);
   }
   if (intent === "merge" && !checkSelfMergeGate(task, actor, task.project).allowed)
     throw new GroundingAccessError("forbidden", 403);
@@ -139,7 +146,7 @@ export async function resolveGroundingTarget(
   const existingTarget = intent === "finish" ? expectedFinishStateFromDefinition(def) : approveTarget(def, task.status);
   if (edge.to !== existingTarget) throw new GroundingAccessError("bad_state", 409);
   if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole as ProjectRole, db))
-    throw new GroundingAccessError("forbidden", 403);
+    throw new GroundingAccessError("forbidden", 403, roleRefusal(edge.to, edge.requiredRole));
   return { target: { workflowId, from: task.status, to: edge.to, action: intent }, definition };
 }
 

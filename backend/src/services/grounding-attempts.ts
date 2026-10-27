@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { Actor } from "../types/auth.js";
 import { verifyGroundingReceipt, GroundingReceiptVerificationError, type GroundingReceiptTrustEntry } from "./grounding-receipt.js";
 import {
-  GROUNDING_POLICY, GroundingAccessError, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
+  GROUNDING_POLICY, GroundingAccessError, NO_CLAIM_REFUSAL, tokenScopeMessage, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
   mismatch, projectGroundingContext, resolveGroundingTarget, unavailable,
   resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState,
   type GroundingAuthority, type GroundingHeadProvider, type GroundingIntent, type GroundingTarget, type GroundingTask,
@@ -77,12 +77,12 @@ export class GroundingAttemptsService {
   }
 
   private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, authority = this.authority): Promise<void> {
-    if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await authority.canWrite(actor, task.projectId, db))
-      throw new GroundingAccessError("forbidden", 403);
+    if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) throw new GroundingAccessError("forbidden", 403, tokenScopeMessage(actor, ["tasks:transition"]));
+    if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
     const ownsClaim = actor.type === "agent"
       ? task.claimedByAgentId === actor.tokenId || task.reviewClaimedByAgentId === actor.tokenId
       : task.claimedByUserId === actor.userId || task.reviewClaimedByUserId === actor.userId;
-    if (!ownsClaim) throw new GroundingAccessError("forbidden", 403);
+    if (!ownsClaim) throw new GroundingAccessError("forbidden", 403, NO_CLAIM_REFUSAL);
   }
 
   /** HTTP preauthorization before parsing receipt data; transaction paths repeat these checks. */

@@ -4,7 +4,7 @@ import { Prisma, type GroundingGithubMergeGroup, type GroundingOperation, type P
 import type { Actor } from "../types/auth.js";
 import { GroundingFinalizationService } from "./grounding-finalization.js";
 import { assertAttemptMergeHead, groundingDecisionDigest, type GroundingAfterCommit, type GroundingCompletionDependencies, type GroundingDecision } from "./grounding-completion.js";
-import { canonicalGroundingJson, groundingWorkflow, projectGroundingContext, mismatch, GroundingAccessError, type GroundingTask } from "./grounding-context.js";
+import { canonicalGroundingJson, groundingWorkflow, projectGroundingContext, mismatch, GroundingAccessError, KEY_OTHER_ACTOR_REFUSAL, type GroundingTask } from "./grounding-context.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
 import { findOperation, groundingActorId, operationFingerprint, operationRequest, routeTransportFingerprint, type GroundingRouteTransport, type OperationInput, type OperationRequest } from "./grounding-operations.js";
 import { assertNoGroundingReservation, GroundingDecisionError, invalidateGroundingContext, lockGroundingProjects, lockGroundingTaskUnderProject } from "./grounding-transaction.js";
@@ -103,7 +103,7 @@ export class GroundingGithubMergeService extends GroundingFinalizationService {
     const operation = await findOperation(db, taskId, key, actor);
     const group = await db.groundingGithubMergeGroup.findUnique({ where: { seedTaskId_key: { seedTaskId: taskId, key } }, include: { members: { include: { operation: true }, orderBy: { taskId: "asc" } } } });
     if (!group || !operation) mismatch();
-    if (group.actorType !== actor.type || group.actorId !== groundingActorId(actor)) throw new GroundingAccessError("forbidden", 403);
+    if (group.actorType !== actor.type || group.actorId !== groundingActorId(actor)) throw new GroundingAccessError("forbidden", 403, KEY_OTHER_ACTOR_REFUSAL);
     if (transport && group.fingerprint !== routeTransportFingerprint(transport)) throw new GroundingDecisionError("grounding_operation_conflict");
     if (group.fingerprint !== operation.fingerprint || canonicalGroundingJson(group.request) !== canonicalGroundingJson(operation.request)) mismatch();
     if (!completed(group.state)) await assertGithubFenceOwned(db, owner(group));

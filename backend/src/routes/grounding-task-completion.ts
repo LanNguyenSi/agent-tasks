@@ -8,7 +8,7 @@ import type { Actor } from "../types/auth.js";
 import { GroundingGithubMergeService } from "../services/grounding-github-merge.js";
 import type { GroundingGithubCreateService } from "../services/grounding-github-create.js";
 import { GroundingFinalizationService } from "../services/grounding-finalization.js";
-import { GroundingAccessError, groundingAuthority, groundingWorkflow, unavailable } from "../services/grounding-context.js";
+import { GroundingAccessError, groundingAuthority, groundingWorkflow, NO_CLAIM_REFUSAL, unavailable } from "../services/grounding-context.js";
 import { GroundingReceiptVerificationError } from "../services/grounding-receipt.js";
 import { recordBounceBack, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
 import { isReviewState } from "../services/default-workflow.js";
@@ -150,7 +150,7 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         const body = parsed.data as z.infer<typeof finishSchema>;
         const holdsWork = actor.type === "agent" ? task.claimedByAgentId === actor.tokenId : task.claimedByUserId === actor.userId;
         const holdsReview = actor.type === "agent" ? task.reviewClaimedByAgentId === actor.tokenId : task.reviewClaimedByUserId === actor.userId;
-        if (!holdsWork && !holdsReview) throw new GroundingAccessError("forbidden", 403, "You hold neither the work claim nor the review claim on this task");
+        if (!holdsWork && !holdsReview) throw new GroundingAccessError("forbidden", 403, NO_CLAIM_REFUSAL);
         const { def } = await groundingWorkflow(deps.db, task);
         const review = holdsReview || isReviewState(def, task.status);
         if ((review && (!body.outcome || body.prUrl !== undefined || body.prNumber !== undefined)) || (!review && body.outcome)) return c.json({ error: "validation_error", message: "Review finish requires outcome; work finish accepts result and the pre-bound PR." }, 400);

@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { Prisma, type GroundingCohort, type GroundingOperation, type PrismaClient, type Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GroundingReceiptVerificationError, verifyGroundingReceipt } from "./grounding-receipt.js";
-import { canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, SELF_MERGE_REFUSAL, tokenScopeMessage, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
+import { ATTEMPT_OTHER_ACTOR_REFUSAL, NO_CLAIM_REFUSAL, REVIEW_CLAIM_REFUSAL, reviewApprovalRefusal, canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, SELF_MERGE_REFUSAL, tokenScopeMessage, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
 import { groundingSettings, groundingTime } from "./grounding-verification.js";
 import type { GroundingAttemptsConfig } from "./grounding-attempts.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
@@ -126,7 +126,12 @@ export class GroundingCompletionService {
       data = { status: target.to, ...clearReview, ...(isTerminalState(def, target.to) ? clearWork : {}), ...(request.result !== null ? { result: request.result } : {}) };
     } else if (request.action === "request_changes") {
       if (!isReviewState(def, task.status)) badState();
-      if (!holdsReview && !(request.route?.kind === "self_approve_finish" && holdsWork && !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId && checkReviewApprovalGate(task, actor, task.project).allowed)) forbidden();
+      if (!holdsReview) {
+        const selfApprove = request.route?.kind === "self_approve_finish" && holdsWork && !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId;
+        if (!selfApprove) forbidden(REVIEW_CLAIM_REFUSAL);
+        const approval = checkReviewApprovalGate(task, actor, task.project);
+        if (!approval.allowed) forbidden(reviewApprovalRefusal(approval.reason));
+      }
       const to = requestChangesTarget(def, task.status);
       if (!to || isTerminalState(def, to) || isReviewState(def, to)) badState();
       const edge = { workflowId, from: task.status, to, action: "approve" as const };
@@ -157,7 +162,7 @@ export class GroundingCompletionService {
       if (isReviewState(def, task.status) || task.reviewClaimedByUserId || task.reviewClaimedByAgentId) badState();
       data = { status: def.initialState, ...clearWork };
     } else {
-      if (!holdsWork && !holdsReview) forbidden();
+      if (!holdsWork && !holdsReview) forbidden(NO_CLAIM_REFUSAL);
       if (holdsWork && !holdsReview && isReviewState(def, task.status)) badState();
       data = { status: holdsWork && isWorkState(def, task.status) ? def.initialState : task.status, ...(holdsWork ? clearWork : {}), ...(holdsReview ? clearReview : {}) };
     }
@@ -180,7 +185,7 @@ export class GroundingCompletionService {
     const attempt = await db.groundingAttempt.findUnique({ where: { id: binding.activeAttemptId }, include: { receipt: true } });
     if (!attempt || attempt.state !== "ACTIVE") stale();
     if (!attempt.receipt) throw new GroundingReceiptVerificationError("grounding_required");
-    if (attempt.actorType !== actor.type || attempt.actorId !== groundingActorId(actor)) forbidden();
+    if (attempt.actorType !== actor.type || attempt.actorId !== groundingActorId(actor)) forbidden(ATTEMPT_OTHER_ACTOR_REFUSAL);
     const persistedDirect = readDirectDescriptor(attempt.directRoute);
     if (canonicalGroundingJson(persistedDirect) !== canonicalGroundingJson(direct?.descriptor ?? null)) mismatch();
     const projected = await projectGroundingContext(task, binding, target, definition, actor, head, db);
