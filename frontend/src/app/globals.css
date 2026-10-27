@@ -4042,6 +4042,7 @@ html[data-theme="light"] {
 .home-widget-footer-link:hover {
   color: var(--primary-text);
   background: var(--primary-muted);
+  text-decoration: none;
 }
 
 /* The older-than link is one step quieter than the main overflow link

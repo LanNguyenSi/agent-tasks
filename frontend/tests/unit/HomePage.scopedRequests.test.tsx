@@ -373,7 +373,7 @@ describe("home page: N more in Tasks is the total minus the rows shown", () => {
     expect(footerLinks("Backlog")).toEqual(["12 more in Tasks"]);
   });
 
-  it("total 15 with 10 rows shows +5 more", async () => {
+  it("total 15 with 10 rows shows 5 more in Tasks", async () => {
     serveDataset(many(15, () => ({ status: "backlog" as const })));
     await renderHome();
 

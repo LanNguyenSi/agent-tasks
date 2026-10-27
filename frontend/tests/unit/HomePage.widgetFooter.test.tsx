@@ -4,7 +4,8 @@
  *
  * Branches pinned here (each with role, accessible name and exact href):
  * moreCount > 0 only; olderCount > 0 only (with rows); both in ONE footer
- * row; displayTotal === 0 with older tasks (empty-state action); the
+ * row; displayTotal === 0 with older tasks (empty-state action); displayTotal
+ * === 0 with zero older tasks (NO empty-state action); the
  * projects strip with zero projects. Links whose hrefs differ must never
  * share an accessible name, and every accessible name contains its visible
  * text (WCAG 2.5.3). Mock/render pattern mirrors
@@ -248,7 +249,7 @@ describe("home widget footer row", () => {
   });
 });
 
-describe("home Done widget empty with older tasks", () => {
+describe("home Done widget empty state", () => {
   it("shows the reveal as an empty-state action, not a text-arrow link", async () => {
     // Only older done tasks exist: the recent window is empty.
     serveDataset(
@@ -270,6 +271,17 @@ describe("home Done widget empty with older tasks", () => {
     expect(button).toHaveClass("btn-ghost", "btn--sm");
     // No footer row while the widget is empty.
     expect(footers("Done \u00b7 14 days")).toHaveLength(0);
+  });
+
+  it("empty with zero older tasks: the empty state shows no older-done action", async () => {
+    // Nothing done at all: the action must stay undefined, never a
+    // "Show 0 older done" CTA.
+    serveDataset(many(2, () => ({ status: "backlog" as const })));
+    await renderHome();
+
+    expect(screen.getByText("No tasks completed in the last 14 days.")).not.toBeNull();
+    expect(screen.queryByRole("link", { name: /older done/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /older done/i })).toBeNull();
   });
 });
 
