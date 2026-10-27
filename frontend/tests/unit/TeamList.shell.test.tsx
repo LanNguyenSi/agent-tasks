@@ -30,6 +30,8 @@ vi.mock("../../src/lib/api", () => ({
   getTeamTasks: vi.fn(),
   getProjects: vi.fn(),
   getTasks: vi.fn(),
+  getAgentTokens: vi.fn(),
+  getAvailableScopes: vi.fn(),
   createTeam: vi.fn(),
   logout: vi.fn(),
 }));
@@ -39,10 +41,13 @@ import AppHeader from "../../src/components/AppHeader";
 import HomeDashboardPage from "../../src/app/home/page";
 import ProjectsPage from "../../src/app/projects/page";
 import TasksPage from "../../src/app/tasks/page";
+import TeamSettingsPage from "../../src/app/settings/team/page";
 import { TeamListProvider, useTeamList } from "../../src/lib/teamList";
 import { nav, router } from "../setup/fakeNavigation";
 import {
   createTeam,
+  getAgentTokens,
+  getAvailableScopes,
   getCurrentUser,
   getProjects,
   getTasks,
@@ -51,6 +56,16 @@ import {
 } from "../../src/lib/api";
 
 vi.mock("../../src/components/tasks/NewTaskFlow", () => ({ default: () => null }));
+
+Element.prototype.scrollIntoView = vi.fn();
+class IntersectionObserverStub {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+  takeRecords = vi.fn(() => []);
+}
+(global as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+  IntersectionObserverStub;
 
 function team(id: string, name: string): Team {
   return { id, name, slug: id, role: "ADMIN", createdAt: "2026-01-01T00:00:00Z" };
@@ -93,6 +108,8 @@ beforeEach(() => {
   window.localStorage.clear();
   nav.reset("/home");
   vi.mocked(getCurrentUser).mockResolvedValue({ id: "u-1", login: "lan", avatarUrl: null } as User);
+  vi.mocked(getAgentTokens).mockResolvedValue([]);
+  vi.mocked(getAvailableScopes).mockResolvedValue([]);
   vi.mocked(getProjects).mockResolvedValue([]);
   vi.mocked(getTasks).mockResolvedValue([]);
   vi.mocked(getTeamTasks).mockImplementation(
@@ -243,6 +260,24 @@ describe("one team list for the header and the page", () => {
       expect(router.replace).not.toHaveBeenCalledWith("/onboarding");
     },
   );
+
+  it("/settings/team keeps its loading frame until the shell's list answers", async () => {
+    const first = deferred<Team[]>();
+    vi.mocked(getTeams).mockReturnValue(first.promise);
+    nav.reset("/settings/team");
+    render(<AppChrome><TeamSettingsPage /></AppChrome>);
+
+    await waitFor(() => expect(getCurrentUser).toHaveBeenCalled());
+    await settleAll();
+    expect(screen.getByRole("main")).toHaveAttribute("aria-busy", "true");
+    expect(document.getElementById("api-tokens")).toBeNull();
+
+    await act(async () => {
+      first.resolve([A, B]);
+    });
+    await waitFor(() => expect(document.getElementById("api-tokens")).not.toBeNull());
+    expect(getAgentTokens).toHaveBeenCalledWith("t1");
+  });
 
   it("a failed first lookup is the /tasks boot error and leaves the header without teams", async () => {
     vi.mocked(getTeams).mockRejectedValue(new Error("teams are down"));
