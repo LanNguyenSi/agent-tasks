@@ -803,3 +803,35 @@ describe("token reveal: the secret stays in React state", () => {
     expect(vi.getTimerCount()).toBe(timersAfterUnmount);
   });
 });
+
+describe("token reveal: several tokens created away for the team on screen", () => {
+  it("both away tokens resolving while the list loads are both in the list", async () => {
+    const a = deferred<CreateResult>();
+    const b = deferred<CreateResult>();
+    mockCreate.mockImplementation((body: { name: string }) => (body.name === "first" ? a.promise : b.promise));
+    renderBoth();
+    await screen.findByText("alpha-bot");
+    submitCreate("first");
+    pick("Beta");
+    await screen.findByText("beta-bot");
+    pick("Alpha");
+    await screen.findByText("alpha-bot");
+    submitCreate("second");
+    pick("Beta");
+    await screen.findByText("beta-bot");
+    const load = deferred<AgentToken[]>();
+    mockGetAgentTokens.mockImplementation(async (teamId: string) =>
+      teamId === "team-a" ? load.promise : [token("tok-team-b", "beta-bot")],
+    );
+    pick("Alpha");
+    await screen.findByText("Loading tokens…");
+    await act(async () => { a.resolve({ token: token("tok-1", "first"), rawToken: "at_FIRST_0123456789" }); });
+    await act(async () => { b.resolve({ token: token("tok-2", "second"), rawToken: "at_SECOND_0123456789" }); });
+    await act(async () => { load.resolve([token("tok-team-a", "alpha-bot")]); });
+    expect(await screen.findByText("alpha-bot")).toBeInTheDocument();
+    expect(screen.getAllByText("first")).toHaveLength(1);
+    expect(screen.getAllByText("second")).toHaveLength(1);
+    expect(screen.getByText("at_FIRST_0123456789")).toBeInTheDocument();
+    expect(screen.getByText("at_SECOND_0123456789")).toBeInTheDocument();
+  });
+});
