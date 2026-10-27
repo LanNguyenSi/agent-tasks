@@ -581,10 +581,15 @@ describe("token reveal: several creates for one team", () => {
     mockCreate.mockImplementation((body: { name: string }) => (body.name === "first" ? a.promise : b.promise));
     renderBoth();
     await screen.findByText("alpha-bot");
+    // Both creates are for Alpha, and both sections that submitted are gone.
     submitCreate("first");
     pick("Beta");
     await screen.findByText("beta-bot");
+    pick("Alpha");
+    await screen.findByText("alpha-bot");
     submitCreate("second");
+    pick("Beta");
+    await screen.findByText("beta-bot");
     pick("Alpha");
     await screen.findByText("alpha-bot");
 
@@ -598,12 +603,11 @@ describe("token reveal: several creates for one team", () => {
     await act(async () => {});
     expect(screen.queryByText("first")).not.toBeInTheDocument();
 
-    // "second" was created for Beta: it is not added to Alpha's list.
     await act(async () => {
       b.resolve(SECOND);
     });
+    expect(await screen.findByText("second")).toBeInTheDocument();
     expect(screen.queryByText("first")).not.toBeInTheDocument();
-    expect(screen.queryByText("second")).not.toBeInTheDocument();
   });
 });
 
@@ -703,6 +707,55 @@ describe("token reveal: the shown team's list is loading, failed, or in use", ()
 
     expect(screen.getByRole("dialog")).toBe(dialog);
     expect(screen.getByText("late-bot")).toBeInTheDocument();
+  });
+});
+
+describe("token reveal: tokens created while the section was gone, and later loads", () => {
+  async function createdAwayForShownTeam(loaded: () => AgentToken[]) {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    renderBoth();
+    await screen.findByText("alpha-bot");
+    submitCreate("late-bot");
+    pick("Beta");
+    await screen.findByText("beta-bot");
+    const load = deferred<AgentToken[]>();
+    mockGetAgentTokens.mockImplementation(async (teamId: string) =>
+      teamId === "team-a" ? load.promise : [token("tok-team-b", "beta-bot")],
+    );
+    pick("Alpha");
+    await screen.findByText("Loading tokens…");
+    await act(async () => {
+      pending.resolve({ token: token("tok-late", "late-bot"), rawToken: SECRET_A });
+    });
+    await act(async () => {
+      load.resolve(loaded());
+    });
+  }
+
+  it("a list that already has the new token shows it once", async () => {
+    await createdAwayForShownTeam(() => [token("tok-team-a", "alpha-bot"), token("tok-late", "late-bot")]);
+    expect(await screen.findByText("alpha-bot")).toBeInTheDocument();
+    expect(screen.getAllByText("late-bot")).toHaveLength(1);
+  });
+
+  it("the appended token is not carried into a later load of the same team", async () => {
+    await createdAwayForShownTeam(() => [token("tok-team-a", "alpha-bot")]);
+    expect(await screen.findByText("late-bot")).toBeInTheDocument();
+
+    // The token is revoked elsewhere; leaving the team and coming back loads
+    // the list again, which no longer has it.
+    pick("Beta");
+    await screen.findByText("beta-bot");
+    mockGetAgentTokens.mockImplementation(async (teamId: string) =>
+      teamId === "team-a" ? [token("tok-team-a", "alpha-bot")] : [token("tok-team-b", "beta-bot")],
+    );
+    pick("Alpha");
+
+    expect(await screen.findByText("alpha-bot")).toBeInTheDocument();
+    expect(screen.queryByText("late-bot")).not.toBeInTheDocument();
+    // The reveal is still there.
+    expect(screen.getByText(SECRET_A)).toBeInTheDocument();
   });
 });
 
