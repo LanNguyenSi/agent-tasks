@@ -226,6 +226,15 @@ describe("who asks for a refresh", () => {
     expect(getTeams).toHaveBeenCalledTimes(2);
   });
 
+  it("AppChrome passes the header's ask to the provider (a page with no team of its own)", async () => {
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockResolvedValue([A, B, X]);
+    nav.reset("/home?teamId=t9");
+    render(<AppChrome><p>plain page</p></AppChrome>);
+
+    await waitFor(() => expect(headerTeam()).toBe("Xray Team"));
+    expect(getTeams).toHaveBeenCalledTimes(2);
+  });
+
   it("the header asks on its own, naming the missing id", () => {
     const onMissingTeam = vi.fn();
     nav.reset("/home?teamId=t9");
