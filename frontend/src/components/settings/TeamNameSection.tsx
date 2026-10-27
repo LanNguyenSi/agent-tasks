@@ -10,7 +10,9 @@ import { Button } from "../ui/Button";
 import Card from "../ui/Card";
 import FormField from "../ui/FormField";
 
-// Same limit as the server's name rule (PATCH /api/teams/:id).
+// Mirrors the server's 100 limit (PATCH /api/teams/:id). The server counts
+// code points, the input's maxLength counts UTF-16 units, so for astral
+// characters (emoji) the input is stricter than the server, never looser.
 const MAX_NAME_LENGTH = 100;
 
 interface TeamNameSectionProps {
