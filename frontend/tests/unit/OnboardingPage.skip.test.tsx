@@ -37,10 +37,12 @@ const SHARED = { id: "p3", name: "Shared Project" } as Project;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   vi.mocked(getCurrentUser).mockResolvedValue(USER);
 });
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 
@@ -84,12 +86,28 @@ describe("/onboarding", () => {
   it.each([
     { name: "a team, no shared projects", shared: [] as Project[] },
     { name: "a team and shared projects", shared: [SHARED] },
-  ])("$name: redirects to /home without showing the form", async ({ shared }) => {
+  ])("$name: redirects to /home carrying the current team, without showing the form", async ({ shared }) => {
     setAccess([TEAM], shared);
     render(<OnboardingPage />);
-    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
+    // The only team is the current one (no remembered team stored): the
+    // redirect already names it, so /home opens it and writes no URL.
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t1"));
     expect(screen.queryByLabelText("Team name")).toBeNull();
     expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
+  });
+
+  it("redirect carries the remembered team, not the first team (precedence)", async () => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+    setAccess([TEAM, { ...TEAM, id: "t2", name: "Beta" }], []);
+    render(<OnboardingPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t2"));
+  });
+
+  it("a remembered team the list lacks falls through: redirect carries the first team", async () => {
+    window.localStorage.setItem("agent-tasks:lastTeamId", "t-gone");
+    setAccess([TEAM], []);
+    render(<OnboardingPage />);
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t1"));
   });
 
   it("a signed-out visitor goes to /auth", async () => {
@@ -182,18 +200,18 @@ describe("/onboarding?create=team", () => {
     window.history.replaceState(null, "", "/onboarding?create=team");
   });
 
-  it("a user with a team is redirected to /home, no form (the New team dialog replaced this entry)", async () => {
+  it("a user with a team is redirected to /home carrying it, no form (the New team dialog replaced this entry)", async () => {
     setAccess([TEAM], [SHARED]);
     render(<OnboardingPage />);
-    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t1"));
     expect(screen.queryByLabelText("Team name")).toBeNull();
   });
 
-  it("another create value makes no difference: a user with a team is redirected", async () => {
+  it("another create value makes no difference: a user with a team is redirected carrying it", async () => {
     window.history.replaceState(null, "", "/onboarding?create=other");
     setAccess([TEAM], []);
     render(<OnboardingPage />);
-    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t1"));
   });
 
   it("a user without a team still gets the first-team form", async () => {

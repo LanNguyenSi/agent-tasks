@@ -188,7 +188,10 @@ export default function SsoSettingsPage() {
       header={
         <PageHeader
           breadcrumb={
-            <a href={teamSettingsHref()} className="settings-breadcrumb">
+            // Once a token has resolved its team (whoami), the links back to
+            // team settings carry that team: /settings/team opens it instead
+            // of resolving and rewriting its URL. Bare until authorized.
+            <a href={teamSettingsHref(undefined, authorized?.team.id)} className="settings-breadcrumb">
               Team settings
             </a>
           }
@@ -201,7 +204,7 @@ export default function SsoSettingsPage() {
         API token with the <code>sso:admin</code> scope -- not by your normal session --
         so that accidental or stolen browser sessions cannot touch SSO configuration.
         Generate a token under{" "}
-        <a href={apiTokensSettingsHref()} className="settings-inline-link">
+        <a href={apiTokensSettingsHref(authorized?.team.id)} className="settings-inline-link">
           Team settings &rarr; API Tokens
         </a>
         , hand it out-of-band to whoever owns your IdP setup, and revoke it when done.

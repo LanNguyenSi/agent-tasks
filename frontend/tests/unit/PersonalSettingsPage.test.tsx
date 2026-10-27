@@ -5,7 +5,9 @@
  * Covers the split from team settings:
  *   - Only the per-user sections render (Account, Appearance, GitHub, Agent
  *     Permissions); API tokens and the Enterprise SSO entry moved to
- *     /settings/team, so the page loads no teams/tokens/scopes either.
+ *     /settings/team, so the page loads no tokens/scopes of its own. It
+ *     reads the shell's one team list (TeamListProvider) for no data, only
+ *     to resolve the team the "Open team settings" link carries.
  *   - Old `#api-tokens` / `#sso` links are forwarded client-side to the
  *     matching /settings/team section (the hash never reaches the server);
  *     any other hash stays put.
@@ -15,11 +17,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { User } from "../../src/lib/api";
+import type { Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+let searchQuery = "";
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
+  usePathname: () => "/settings",
+  useSearchParams: () => new URLSearchParams(searchQuery),
 }));
 
 vi.mock("../../src/lib/api", () => ({
@@ -31,7 +36,9 @@ vi.mock("../../src/lib/api", () => ({
   getGithubTokenHealth: vi.fn(),
 }));
 
-import SettingsPage from "../../src/app/settings/page";
+import SettingsPageRaw from "../../src/app/settings/page";
+import { withTeamList } from "./helpers/withTeamList";
+const SettingsPage = withTeamList(SettingsPageRaw);
 import {
   getCurrentUser,
   getTeams,
@@ -89,12 +96,20 @@ async function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  searchQuery = "";
+  window.localStorage.clear();
   mockGetCurrentUser.mockResolvedValue(makeUser());
   mockGetGithubTokenHealth.mockResolvedValue({ state: "healthy", lastCheckedAt: null });
+  // The shell's team list: ready with two teams unless a test overrides.
+  vi.mocked(getTeams).mockResolvedValue([
+    { id: "t1", name: "Alpha", slug: "alpha", role: "ADMIN", createdAt: "x" },
+    { id: "t2", name: "Beta", slug: "beta", role: "MEMBER", createdAt: "x" },
+  ] as Team[]);
 });
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 
@@ -121,16 +136,68 @@ describe("SettingsPage (personal)", () => {
       "Team settings",
     ]);
 
-    // The Team settings card is the in-app entry to /settings/team.
-    expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
-      "href",
-      "/settings/team",
+    // The Team settings card is the in-app entry to /settings/team, and it
+    // carries the team the shell resolves (no remembered team, no ?teamId:
+    // the first team), so /settings/team opens it without rewriting the URL.
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
+        "href",
+        "/settings/team?teamId=t1",
+      ),
     );
 
-    // No team or token data is fetched for personal settings.
-    expect(getTeams).not.toHaveBeenCalled();
+    // No token data is fetched for personal settings, and the team list is
+    // only the shell's single lookup, never a page-owned second one.
+    await waitFor(() => expect(getTeams).toHaveBeenCalledTimes(1));
     expect(getAgentTokens).not.toHaveBeenCalled();
     expect(getAvailableScopes).not.toHaveBeenCalled();
+  });
+
+  describe("the Open team settings link", () => {
+    it("carries the remembered team when the URL names none", async () => {
+      window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+      await renderPage();
+      await waitFor(() =>
+        expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
+          "href",
+          "/settings/team?teamId=t2",
+        ),
+      );
+    });
+
+    it("the URL's ?teamId wins over the remembered team", async () => {
+      window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
+      searchQuery = "teamId=t1";
+      await renderPage();
+      await waitFor(() =>
+        expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
+          "href",
+          "/settings/team?teamId=t1",
+        ),
+      );
+    });
+
+    it("stays bare when the user has no teams", async () => {
+      vi.mocked(getTeams).mockResolvedValue([]);
+      await renderPage();
+      await waitFor(() =>
+        expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
+          "href",
+          "/settings/team",
+        ),
+      );
+    });
+
+    it("stays bare while the team list failed to load", async () => {
+      vi.mocked(getTeams).mockRejectedValue(new Error("teams unavailable"));
+      await renderPage();
+      await waitFor(() =>
+        expect(screen.getByRole("link", { name: "Open team settings" })).toHaveAttribute(
+          "href",
+          "/settings/team",
+        ),
+      );
+    });
   });
 
   it("forwards /settings#api-tokens to the team settings API tokens section", async () => {

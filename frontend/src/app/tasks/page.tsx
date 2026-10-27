@@ -642,7 +642,14 @@ function TasksPageInner() {
     return (
       <PageShell variant="wide" flush>
         <PageHeader title="All Tasks">
-          <Button href={projectsHref()} variant="ghost" size="sm">
+          {/* The team the URL names is still known while the boot failed (the
+              URL needs no lookup), so the link carries it: /projects opens
+              that team and writes nothing into its own URL. Bare without one. */}
+          <Button
+            href={projectsHref({ teamId: searchParams.get("teamId") ?? undefined })}
+            variant="ghost"
+            size="sm"
+          >
             Projects
           </Button>
         </PageHeader>
@@ -986,6 +993,7 @@ function TasksPageInner() {
         open={newTaskOpen}
         onClose={() => setNewTaskOpen(false)}
         projects={projects}
+        teamId={selectedTeamId}
         onTaskCreated={() => setRetryToken((t) => t + 1)}
         onEditTask={(id) => router.push(taskHref(id, { from: listHref }))}
       />

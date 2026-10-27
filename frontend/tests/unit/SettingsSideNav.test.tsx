@@ -11,6 +11,8 @@ import type { User } from "../../src/lib/api";
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
+  usePathname: () => "/settings",
+  useSearchParams: () => new URLSearchParams(""),
 }));
 
 vi.mock("../../src/lib/api", () => ({
@@ -22,8 +24,10 @@ vi.mock("../../src/lib/api", () => ({
   getGithubTokenHealth: vi.fn(),
 }));
 
-import SettingsPage from "../../src/app/settings/page";
-import { getCurrentUser } from "../../src/lib/api";
+import SettingsPageRaw from "../../src/app/settings/page";
+import { withTeamList } from "./helpers/withTeamList";
+const SettingsPage = withTeamList(SettingsPageRaw);
+import { getCurrentUser, getTeams } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);
 
@@ -66,6 +70,8 @@ function navLink(name: string): HTMLElement {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The shell list under the provider: no teams is enough for the scroll spy.
+  vi.mocked(getTeams).mockResolvedValue([]);
   mockGetCurrentUser.mockResolvedValue({
     id: "u-1",
     login: "lan",

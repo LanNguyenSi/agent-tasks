@@ -31,12 +31,16 @@ vi.mock("../../src/lib/api", () => ({
 
 vi.mock("../../src/lib/teamSwitch", () => ({
   useCurrentTeam: () => ({ team: null, teams: [], setTeam: vi.fn() }),
+  // /settings resolves the team its team-settings link carries; the loading
+  // frame renders before any list answer exists.
+  useResolvedTeam: () => null,
 }));
 
 import WorkflowRedirectPage from "../../src/app/projects/workflow/page";
-import SettingsPage from "../../src/app/settings/page";
-import TeamSettingsPageRaw from "../../src/app/settings/team/page";
+import SettingsPageRaw from "../../src/app/settings/page";
 import { withTeamList } from "./helpers/withTeamList";
+const SettingsPage = withTeamList(SettingsPageRaw);
+import TeamSettingsPageRaw from "../../src/app/settings/team/page";
 const TeamSettingsPage = withTeamList(TeamSettingsPageRaw);
 import ProjectSettingsPage from "../../src/app/projects/[id]/settings/page";
 import { getCurrentUser, getTeams, getProject } from "../../src/lib/api";
@@ -59,6 +63,9 @@ function setSearch(search: string) {
 beforeEach(() => {
   vi.mocked(getCurrentUser).mockReset();
   vi.mocked(getTeams).mockReset();
+  // The shell list under the provider stays pending in every frame here
+  // (tests that need an answer set their own).
+  vi.mocked(getTeams).mockReturnValue(pending<Awaited<ReturnType<typeof getTeams>>>());
   vi.mocked(getProject).mockReset();
 });
 
