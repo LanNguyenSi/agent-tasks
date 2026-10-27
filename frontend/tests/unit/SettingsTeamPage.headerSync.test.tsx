@@ -236,15 +236,22 @@ describe("/settings/team follows the header team", () => {
   it("never mounts the token section for the new team with the old team's tokens", async () => {
     renderBoth();
     await screen.findByText("alpha-bot");
-    // One mount so far: the section of the first team.
-    expect(vi.mocked(getAvailableScopes)).toHaveBeenCalledTimes(1);
+    // One mount so far: the section of the first team. getAvailableScopes is
+    // called from the section's passive mount effect, which can run after the
+    // DOM update findByText saw, so wait for it instead of reading the count.
+    await waitFor(() => expect(vi.mocked(getAvailableScopes)).toHaveBeenCalledTimes(1));
 
     pick("Beta");
     expect(await screen.findByText("beta-bot")).toBeInTheDocument();
 
     // Exactly one more mount: Beta's own, once its tokens had arrived. A
     // Beta section seeded with Alpha's tokens (before Beta's load started)
-    // would be a third.
+    // would be a third. Wait for the second call, then let pending effects
+    // and promises settle and require that no third call follows.
+    await waitFor(() => expect(vi.mocked(getAvailableScopes)).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(vi.mocked(getAvailableScopes)).toHaveBeenCalledTimes(2);
   });
 
