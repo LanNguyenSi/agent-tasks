@@ -47,6 +47,12 @@ export interface UnseenSecret {
   teamId: string;
   token: AgentToken;
   rawToken: string;
+  /**
+   * The dialog had already masked the secret (mask-after-copy) when it handed
+   * it over, so the parent must not show it in clear again. Absent or false:
+   * the secret was not masked.
+   */
+  masked?: boolean;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
@@ -230,6 +236,7 @@ export default function ConnectAgentModal({
     clearMaskTimer();
     maskTimerRef.current = setTimeout(() => {
       setTokenMasked(true);
+      if (shownRef.current) shownRef.current = { ...shownRef.current, masked: true };
       maskTimerRef.current = null;
     }, revealMaskDelayMs);
     // Perform the clipboard write.
@@ -239,6 +246,7 @@ export default function ConnectAgentModal({
   function revealToken() {
     clearMaskTimer();
     setTokenMasked(false);
+    if (shownRef.current) shownRef.current = { ...shownRef.current, masked: false };
   }
 
   const snippet = token

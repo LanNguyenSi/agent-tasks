@@ -13,6 +13,7 @@
  * error handling.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -568,6 +569,85 @@ describe("ConnectAgentModal: a result the dialog cannot show", () => {
       expect.objectContaining({ teamId: "team-1", rawToken: SECRET}),
     );
     expect(created).toHaveBeenCalledTimes(1);
+  });
+
+  it("copied and masked, then unmounted: the secret is handed over marked masked", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+    await user.click(screen.getByRole("button", { name: /copy snippet/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "true"),
+    );
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(
+      expect.objectContaining({ rawToken: SECRET, masked: true }),
+    );
+  });
+
+  it("never copied, then unmounted: the secret is handed over not masked", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen.mock.calls[0][0]).not.toHaveProperty("masked", true);
+  });
+
+  it("copied, masked and revealed again, then unmounted: the secret is handed over not masked", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+    await user.click(screen.getByRole("button", { name: /copy snippet/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "true"),
+    );
+    await user.click(screen.getByTestId("connect-reveal"));
+    expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "false");
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen.mock.calls[0][0]).not.toHaveProperty("masked", true);
+  });
+
+  // React StrictMode runs every effect twice (mount, cleanup, mount). The
+  // dialog must come out of that still alive: it shows its own secret and
+  // hands it over exactly once when it is unmounted for real.
+  it("under StrictMode the dialog still shows its own secret and hands nothing over", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    render(<StrictMode>{dialog({ onSecretUnseen: unseen })}</StrictMode>);
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+
+    expect((await screen.findByTestId("connect-snippet")).textContent).toContain(SECRET);
+    expect(unseen).not.toHaveBeenCalled();
+  });
+
+  it("under StrictMode an unmount while it shows the secret hands it over exactly once", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(<StrictMode>{dialog({ onSecretUnseen: unseen })}</StrictMode>);
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(expect.objectContaining({ rawToken: SECRET }));
   });
 
   it("closed by the user while it shows the secret: nothing is handed over, the secret is gone", async () => {

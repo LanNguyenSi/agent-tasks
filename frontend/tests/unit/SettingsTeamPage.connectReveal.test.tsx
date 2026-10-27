@@ -10,6 +10,7 @@
  * shown naming that team and the token. The header and the page are rendered
  * together on one in-memory history (tests/setup/fakeNavigation.ts).
  */
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, within, act } from "@testing-library/react";
 import type { AgentToken, Team, User } from "../../src/lib/api";
@@ -525,5 +526,73 @@ describe("connect-agent secret: it stays in React state", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
     expect(screen.getByText(SECRET_A)).toBeInTheDocument();
+  });
+});
+
+describe("connect-agent secret: a secret the dialog had masked", () => {
+  function stubClipboard() {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+  }
+
+  it("is handed over masked: the page reveal does not show it in clear until Reveal", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    stubClipboard();
+    mockCreate.mockResolvedValue({ token: token("tok-c", NAME_A), rawToken: SECRET_A });
+    renderBoth();
+    await screen.findByText("alpha-bot");
+    connectAndGenerate();
+    await screen.findByTestId("connect-snippet");
+    fireEvent.click(screen.getByRole("button", { name: "Copy snippet" }));
+    await act(async () => void vi.advanceTimersByTime(31_000));
+    expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "true");
+
+    pick("Beta");
+    await screen.findByText("beta-bot");
+
+    const banner = revealBanner(`Token "${NAME_A}" created for Alpha (shown once)`);
+    expect(within(banner).queryByText(SECRET_A)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(SECRET_A);
+    fireEvent.click(within(banner).getByRole("button", { name: "Reveal" }));
+    expect(within(banner).getByText(SECRET_A)).toBeInTheDocument();
+  });
+
+  it("a secret that was never masked is handed over in clear, with no Reveal button", async () => {
+    mockCreate.mockResolvedValue({ token: token("tok-c", NAME_A), rawToken: SECRET_A });
+    renderBoth();
+    await screen.findByText("alpha-bot");
+    connectAndGenerate();
+    await screen.findByTestId("connect-snippet");
+
+    pick("Beta");
+    await screen.findByText("beta-bot");
+
+    const banner = revealBanner(`Token "${NAME_A}" created for Alpha (shown once)`);
+    expect(within(banner).getByText(SECRET_A)).toBeInTheDocument();
+    expect(within(banner).queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
+  });
+});
+
+describe("connect-agent secret under React StrictMode", () => {
+  it("a team change after the response keeps the secret as one foreign reveal", async () => {
+    mockCreate.mockResolvedValue({ token: token("tok-c", NAME_A), rawToken: SECRET_A });
+    render(
+      <StrictMode>
+        <AppHeader user={{ login: "lan", avatarUrl: null }} teams={TEAMS} />
+        <TeamSettingsPage />
+      </StrictMode>,
+    );
+    await screen.findByText("alpha-bot");
+    connectAndGenerate();
+    expect((await screen.findByTestId("connect-snippet")).textContent).toContain(SECRET_A);
+
+    pick("Beta");
+    expect(await screen.findByText("beta-bot")).toBeInTheDocument();
+
+    const banner = revealBanner(`Token "${NAME_A}" created for Alpha (shown once)`);
+    expect(within(banner).getByText(SECRET_A)).toBeInTheDocument();
+    expect(document.body.textContent?.split(SECRET_A).length).toBe(2);
   });
 });

@@ -193,8 +193,9 @@ export default function ApiTokensSection({
   // it is unmounted while still showing it). The team comes from the request,
   // never from what the page shows now. The secret goes to the page's reveals,
   // like the custom-token flow above.
-  function handleConnectSecretUnseen({ teamId, token, rawToken }: UnseenSecret) {
-    reveals.show(teamId, teamNameOf(teamId), token.name, rawToken);
+  function handleConnectSecretUnseen({ teamId, token, rawToken, masked }: UnseenSecret) {
+    // A secret the dialog had masked stays masked (Reveal is available).
+    reveals.show(teamId, teamNameOf(teamId), token.name, rawToken, masked === true);
     // The dialog may have announced the token already (it was unmounted while
     // showing the secret): adding it by id is idempotent.
     if (mountedRef.current) setTokens((prev) => mergeById(prev, [token]));
