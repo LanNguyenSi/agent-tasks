@@ -11,7 +11,6 @@ import {
   deleteProject,
   syncTeamFromGitHub,
   type User,
-  type Team,
   type Project,
 } from "../../lib/api";
 import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
@@ -21,7 +20,8 @@ import {
   resolveInitialView,
   type TeamsViewMode,
 } from "../../lib/teamsPrefs";
-import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { needsOnboarding } from "../../lib/access";
+import { accessContextForTeams, usePageTeams } from "../../lib/teamList";
 import { useCurrentTeam } from "../../lib/teamSwitch";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import { boardHref, settingsHref } from "../../lib/routes";
@@ -223,10 +223,13 @@ const NO_PROJECTS: Project[] = [];
 export default function ProjectsPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
+  // The shell's team list (one lookup for the header and the pages), not a
+  // copy of this page's own. `teamsHeld`: ?teamId names a team that list
+  // lacks and its one refresh is pending.
+  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams();
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so a switch and back/forward always agree.
-  const selectedTeam = useCurrentTeam(teams);
+  const selectedTeam = useCurrentTeam(teams, { hold: teamsHeld });
   // The loaded project list is tagged with its team, so a list of another
   // team is never shown (or acted on) under the current team's name.
   const [projectsState, setProjectsState] = useState<{
@@ -294,24 +297,35 @@ export default function ProjectsPage() {
         return;
       }
       setUser(me);
+    })();
+  }, [router]);
 
-      const ctx = await getAccessContext();
+  // Access decision once the user and the shell's team list are known.
+  // `error` (the list could not be loaded) keeps the page loading, as the
+  // page's own failed lookup did.
+  useEffect(() => {
+    if (!user || teamsStatus !== "ready") return;
+    if (teams.length > 0) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ctx = await accessContextForTeams(teams);
+      if (cancelled) return;
       if (needsOnboarding(ctx)) {
         router.replace("/onboarding");
         return;
       }
-      const userTeams = ctx.teams;
-      if (userTeams.length === 0) {
-        // No team but shared projects: list them (no create or sync, those
-        // need a team) and offer to create a team.
-        setSharedProjects(ctx.sharedProjects);
-        setLoading(false);
-        return;
-      }
-      setTeams(userTeams);
+      // No team but shared projects: list them (no create or sync, those
+      // need a team) and offer to create a team.
+      setSharedProjects(ctx.sharedProjects);
       setLoading(false);
     })();
-  }, [router]);
+    return () => {
+      cancelled = true;
+    };
+  }, [user, teamsStatus, teams, router]);
 
   // Read the persisted explicit choice once on the client (SSR-safe). Applying
   // it to viewMode immediately avoids a table->cards flash for a returning user

@@ -54,7 +54,9 @@ vi.mock("../../src/lib/api", () => ({
   getAvailableScopes: vi.fn(),
 }));
 
-import TeamSettingsPage from "../../src/app/settings/team/page";
+import TeamSettingsPageRaw from "../../src/app/settings/team/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TeamSettingsPage = withTeamList(TeamSettingsPageRaw);
 import { nav, router as routerMocks } from "../setup/fakeNavigation";
 import {
   getCurrentUser,
@@ -421,6 +423,8 @@ describe("TeamSettingsPage — page shell", () => {
     mockGetCurrentUser.mockResolvedValue(null);
     render(<TeamSettingsPage />);
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
-    expect(mockGetTeams).not.toHaveBeenCalled();
+    // The shell's team list loads for the header regardless; the page itself
+    // loads nothing without a session.
+    expect(mockGetAgentTokens).not.toHaveBeenCalled();
   });
 });

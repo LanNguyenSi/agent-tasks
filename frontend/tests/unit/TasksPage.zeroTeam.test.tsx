@@ -28,7 +28,9 @@ vi.mock("../../src/lib/api", () => ({
 
 vi.mock("../../src/components/tasks/NewTaskFlow", () => ({ default: () => null }));
 
-import TasksPage from "../../src/app/tasks/page";
+import TasksPageRaw from "../../src/app/tasks/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TasksPage = withTeamList(TasksPageRaw);
 import { getCurrentUser, getProjects, getTeams, getTeamTasks } from "../../src/lib/api";
 
 const USER = { id: "u-1", login: "lan" } as User;

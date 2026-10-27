@@ -35,7 +35,9 @@ vi.mock("../../src/lib/api", () => ({
   logout: vi.fn(),
 }));
 
-import ProjectsPage from "../../src/app/projects/page";
+import ProjectsPageRaw from "../../src/app/projects/page";
+import { withTeamList } from "./helpers/withTeamList";
+const ProjectsPage = withTeamList(ProjectsPageRaw);
 import AppHeader from "../../src/components/AppHeader";
 import { nav } from "../setup/fakeNavigation";
 import { getCurrentUser, getTeams, getProjects, getTasks } from "../../src/lib/api";

@@ -28,7 +28,9 @@ vi.mock("../../src/lib/api", () => ({
   logout: vi.fn(),
 }));
 
-import HomeDashboardPage from "../../src/app/home/page";
+import HomeDashboardPageRaw from "../../src/app/home/page";
+import { withTeamList } from "./helpers/withTeamList";
+const HomeDashboardPage = withTeamList(HomeDashboardPageRaw);
 import AppHeader from "../../src/components/AppHeader";
 import { nav } from "../setup/fakeNavigation";
 import { getCurrentUser, getTeams, getTeamTasks } from "../../src/lib/api";

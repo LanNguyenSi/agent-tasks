@@ -22,9 +22,15 @@ interface AppHeaderProps {
    * empty list means the user has no team.
    */
   teams?: Team[] | null;
+  /**
+   * Called with the team id the URL (or a pending switch) names when the
+   * known `teams` lack it, so the owner of the list can reload it. The owner
+   * decides how often (AppChrome's provider: once per id).
+   */
+  onMissingTeam?: (teamId: string) => void;
 }
 
-export default function AppHeader({ user, teams }: AppHeaderProps) {
+export default function AppHeader({ user, teams, onMissingTeam }: AppHeaderProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -59,6 +65,14 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   }, [pathname, urlTeamId]);
   const targetTeamId = switchedTeamId ?? urlTeamId;
   const currentTeam = useResolvedTeam(teams, targetTeamId);
+  // The list may be older than the URL (a membership change since it was
+  // loaded): ask its owner to reload, so the header resolves the team the
+  // page resolves instead of a fallback.
+  const targetMissing =
+    !!teams && !!targetTeamId && !teams.some((t) => t.id === targetTeamId);
+  useEffect(() => {
+    if (targetMissing && targetTeamId) onMissingTeam?.(targetTeamId);
+  }, [targetMissing, targetTeamId, onMissingTeam]);
   // The team the URL names (or the pending switch navigates to), if it is one
   // of the caller's teams. Picking it changes nothing; picking any other team,
   // including one shown only through the remembered-team fallback, switches.

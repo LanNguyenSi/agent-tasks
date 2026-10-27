@@ -15,6 +15,7 @@ const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks,
   useParams: () => ({ id: "proj-1" }),
+  useSearchParams: () => new URLSearchParams(""),
 }));
 
 vi.mock("../../src/lib/api", () => ({
@@ -34,7 +35,9 @@ vi.mock("../../src/lib/teamSwitch", () => ({
 
 import WorkflowRedirectPage from "../../src/app/projects/workflow/page";
 import SettingsPage from "../../src/app/settings/page";
-import TeamSettingsPage from "../../src/app/settings/team/page";
+import TeamSettingsPageRaw from "../../src/app/settings/team/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TeamSettingsPage = withTeamList(TeamSettingsPageRaw);
 import ProjectSettingsPage from "../../src/app/projects/[id]/settings/page";
 import { getCurrentUser, getTeams, getProject } from "../../src/lib/api";
 

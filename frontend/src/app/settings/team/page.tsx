@@ -8,13 +8,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
-  getTeams,
   getAgentTokens,
-  type Team,
   type AgentToken,
 } from "../../../lib/api";
 import { settingsHref, ssoSettingsHref } from "../../../lib/routes";
 import { useCurrentTeam } from "../../../lib/teamSwitch";
+import { usePageTeams } from "../../../lib/teamList";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
@@ -35,15 +34,18 @@ const SECTIONS = [
 
 export default function TeamSettingsPage() {
   const router = useRouter();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The shell's team list (one lookup for the header and the pages), not a
+  // copy of this page's own. `teamsHeld`: ?teamId names a team that list
+  // lacks and its one refresh is pending.
+  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams();
+  const [userReady, setUserReady] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("api-tokens");
 
   // The current team is derived from the URL, the same input the header
   // switcher uses (?teamId, then the remembered team, then the first team).
   // The page keeps no team state of its own: a switch, back/forward and a
   // pasted link all re-resolve it.
-  const team = useCurrentTeam(teams);
+  const team = useCurrentTeam(teams, { hold: teamsHeld });
   const teamId = team?.id ?? null;
 
   // Tokens of the team that was loaded last, tagged with that team so the
@@ -96,10 +98,14 @@ export default function TeamSettingsPage() {
         return;
       }
 
-      setTeams(await getTeams());
-      setLoading(false);
+      setUserReady(true);
     })();
   }, [router]);
+
+  // Loading until the user is known and the shell's team list has answered.
+  // A failed list lookup keeps the page loading, as the page's own failed
+  // lookup did.
+  const loading = !userReady || teamsStatus !== "ready";
 
   // Load the current team's tokens. The effect is keyed on the resolved team,
   // so the last resolution always wins: leaving a team (a later switch, back,

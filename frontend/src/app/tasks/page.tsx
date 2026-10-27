@@ -6,13 +6,13 @@ import {
   getCurrentUser,
   getTeamTasks,
   updateTask,
-  type Team,
   type TeamTasksCounts,
   type TeamTasksProject,
 } from "../../lib/api";
 import { projectsHref, taskHref } from "../../lib/routes";
 import { useCurrentTeam } from "../../lib/teamSwitch";
-import { getAccessContext, needsOnboarding } from "../../lib/access";
+import { needsOnboarding } from "../../lib/access";
+import { accessContextForTeams, usePageTeams } from "../../lib/teamList";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageShell } from "../../components/ui/PageShell";
 import { Button } from "../../components/ui/Button";
@@ -187,10 +187,18 @@ function TasksPageInner() {
   const listQuery = searchParams.toString();
   const listHref = listQuery ? `/tasks?${listQuery}` : "/tasks";
 
-  const [teams, setTeams] = useState<Team[]>([]);
+  // The shell's team list (one lookup for the header and the pages), not a
+  // copy of this page's own. `teamsHeld`: ?teamId names a team that list
+  // lacks and its one refresh is pending.
+  const {
+    teams,
+    status: teamsStatus,
+    error: teamsError,
+    held: teamsHeld,
+  } = usePageTeams();
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so a switch and back/forward always agree.
-  const selectedTeam = useCurrentTeam(teams);
+  const selectedTeam = useCurrentTeam(teams, { hold: teamsHeld });
   const selectedTeamId = selectedTeam?.id ?? null;
   // The rows, projects and counts on screen are tagged with the team they
   // were loaded for and only shown under that team: after a team change the
@@ -303,27 +311,44 @@ function TasksPageInner() {
 
   // ── Bootstrap: auth + teams ───────────────────────────────────
 
+  const [userReady, setUserReady] = useState(false);
   useEffect(() => {
     void (async () => {
       try {
         const me = await getCurrentUser();
         if (!me) { router.replace("/auth"); return; }
-        const ctx = await getAccessContext();
-        if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
-        const fetchedTeams = ctx.teams;
-        if (fetchedTeams.length === 0) {
-          setNoTeam(true);
-          setLoading(false);
-          return;
-        }
-        setTeams(fetchedTeams);
-        setLoading(false);
+        setUserReady(true);
       } catch (err) {
         setBootError(err instanceof Error ? err.message : "Failed to load. Please retry.");
         setLoading(false);
       }
     })();
   }, [router]);
+
+  // Access decision once the user and the shell's team list are known; a
+  // failed list lookup is the boot error.
+  useEffect(() => {
+    if (!userReady) return;
+    if (teamsStatus === "error") {
+      setBootError(teamsError?.message ?? "Failed to load. Please retry.");
+      setLoading(false);
+      return;
+    }
+    if (teamsStatus !== "ready") return;
+    if (teams.length > 0) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ctx = await accessContextForTeams(teams);
+      if (cancelled) return;
+      if (needsOnboarding(ctx)) { router.replace("/onboarding"); return; }
+      setNoTeam(true);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [userReady, teamsStatus, teamsError, teams, router]);
 
   // Re-sync the search box when the URL query changes from outside.
   useEffect(() => {

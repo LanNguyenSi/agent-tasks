@@ -95,8 +95,18 @@ export function useResolvedTeam<T extends { id: string }>(
  * count as the user's choice: the team it names is not remembered. A team
  * the URL names in any other way (a switch, a link, back/forward) is
  * remembered (existing convention). `null` for an empty list.
+ *
+ * `hold` (from `usePageTeams`: `?teamId` names a team the shell's list lacks
+ * and its one refresh is pending) suspends the URL write only: the fallback
+ * team this hook resolves stays on screen, but is not put into the URL while
+ * the refresh may still bring the team the URL names. The write then follows
+ * the refresh's outcome, so a refresh that finds the team is not undone by a
+ * fallback written before it answered.
  */
-export function useCurrentTeam<T extends { id: string }>(teams: T[]): T | null {
+export function useCurrentTeam<T extends { id: string }>(
+  teams: T[],
+  opts?: { hold?: boolean },
+): T | null {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -104,6 +114,7 @@ export function useCurrentTeam<T extends { id: string }>(teams: T[]): T | null {
   const urlTeamId = searchParams?.get("teamId") ?? null;
   const team = useResolvedTeam(teams, urlTeamId);
   const teamId = team?.id ?? null;
+  const hold = opts?.hold === true;
   // The team id this hook last wrote into the URL, until the URL shows it.
   const writtenTeamIdRef = useRef<string | null>(null);
 
@@ -119,12 +130,12 @@ export function useCurrentTeam<T extends { id: string }>(teams: T[]): T | null {
   // No valid team in the URL: write the resolved one there, so the header and
   // the page read the same `?teamId` from now on.
   useEffect(() => {
-    if (!teamId || teamId === urlTeamId) return;
+    if (hold || !teamId || teamId === urlTeamId) return;
     const next = new URLSearchParams(query);
     next.set("teamId", teamId);
     writtenTeamIdRef.current = teamId;
     router.replace(`${pathname}?${next.toString()}${window.location.hash}`, { scroll: false });
-  }, [teamId, urlTeamId, query, pathname, router]);
+  }, [hold, teamId, urlTeamId, query, pathname, router]);
 
   return team;
 }

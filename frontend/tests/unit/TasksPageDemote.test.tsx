@@ -30,7 +30,9 @@ vi.mock("../../src/lib/api", () => ({
 
 vi.mock("../../src/components/tasks/NewTaskFlow", () => ({ default: () => null }));
 
-import TasksPage from "../../src/app/tasks/page";
+import TasksPageRaw from "../../src/app/tasks/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TasksPage = withTeamList(TasksPageRaw);
 import { getCurrentUser, getTeams, getTeamTasks, updateTask } from "../../src/lib/api";
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);

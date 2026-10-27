@@ -32,7 +32,9 @@ vi.mock("../../src/lib/api", () => ({
   logout: vi.fn(),
 }));
 
-import TeamSettingsPage from "../../src/app/settings/team/page";
+import TeamSettingsPageRaw from "../../src/app/settings/team/page";
+import { withTeamList } from "./helpers/withTeamList";
+const TeamSettingsPage = withTeamList(TeamSettingsPageRaw);
 import AppHeader from "../../src/components/AppHeader";
 import { nav } from "../setup/fakeNavigation";
 import { getCurrentUser, getTeams, getAgentTokens, getAvailableScopes } from "../../src/lib/api";

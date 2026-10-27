@@ -1,0 +1,393 @@
+/** @vitest-environment jsdom */
+/**
+ * The shell owns one team list: AppChrome loads it once and both the header
+ * and the team-scoped pages read it (lib/teamList). The tests run the real
+ * AppChrome with a page below it on one in-memory history
+ * (tests/setup/fakeNavigation.ts).
+ *
+ * When `?teamId` names a team the list lacks (a membership change since it
+ * loaded), the provider reloads the list once for that id, whoever asked
+ * (header, page, or both); header and page then show the same team. If the id
+ * is still missing afterwards, or the reload fails, both show the same
+ * fallback (the remembered team, else the first one) and nothing loops.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
+import type { Task, Team, TeamTasksProject, User } from "../../src/lib/api";
+
+vi.mock("next/navigation", async () => {
+  const m = await import("../setup/fakeNavigation");
+  return {
+    usePathname: m.usePathname,
+    useRouter: m.useRouter,
+    useSearchParams: m.useSearchParams,
+  };
+});
+
+vi.mock("../../src/lib/api", () => ({
+  getCurrentUser: vi.fn(),
+  getTeams: vi.fn(),
+  getTeamTasks: vi.fn(),
+  createTeam: vi.fn(),
+  logout: vi.fn(),
+}));
+
+import AppChrome from "../../src/components/AppChrome";
+import AppHeader from "../../src/components/AppHeader";
+import HomeDashboardPage from "../../src/app/home/page";
+import TasksPage from "../../src/app/tasks/page";
+import { TeamListProvider, useTeamList } from "../../src/lib/teamList";
+import { nav, router } from "../setup/fakeNavigation";
+import { createTeam, getCurrentUser, getTeams, getTeamTasks } from "../../src/lib/api";
+
+vi.mock("../../src/components/tasks/NewTaskFlow", () => ({ default: () => null }));
+
+function team(id: string, name: string): Team {
+  return { id, name, slug: id, role: "ADMIN", createdAt: "2026-01-01T00:00:00Z" };
+}
+const A = team("t1", "Alpha Team");
+const B = team("t2", "Beta Team");
+const X = team("t9", "Xray Team");
+
+const COUNTS = { open: 0, review: 0, done: 0, priority: 0, mine: 0, total: 0 };
+const PROJECT = { id: "p1", name: "Proj", slug: "proj", accessSource: "team" } as TeamTasksProject;
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** The team the header shows (switcher label, or the single-team label). */
+function headerTeam(): string {
+  const trigger = screen.queryByRole("button", { name: /Switch team/ });
+  if (trigger) {
+    return /current team (.+)$/.exec(trigger.getAttribute("aria-label") ?? "")?.[1] ?? "";
+  }
+  return document.querySelector(".app-team-label")?.textContent?.replace(/^Team: /, "") ?? "";
+}
+
+/** Let pending promise callbacks and effects run. */
+async function settleAll() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  window.localStorage.clear();
+  nav.reset("/home");
+  vi.mocked(getCurrentUser).mockResolvedValue({ id: "u-1", login: "lan", avatarUrl: null } as User);
+  vi.mocked(getTeamTasks).mockImplementation(
+    async () =>
+      ({ tasks: [] as Task[], projects: [PROJECT], counts: COUNTS, filteredTotal: 0 }) as never,
+  );
+});
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
+
+describe("one team list for the header and the page", () => {
+  it("loads the teams once per shell mount; header and page show the same team", async () => {
+    vi.mocked(getTeams).mockResolvedValue([A, B]);
+    nav.reset("/home?teamId=t2");
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+
+    expect(await screen.findByRole("heading", { name: "Beta Team" })).toBeInTheDocument();
+    await settleAll();
+
+    expect(getTeams).toHaveBeenCalledTimes(1);
+    expect(headerTeam()).toBe("Beta Team");
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("a bare URL gets the resolved team written, still from one request", async () => {
+    vi.mocked(getTeams).mockResolvedValue([A, B]);
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+
+    expect(await screen.findByRole("heading", { name: "Alpha Team" })).toBeInTheDocument();
+    await settleAll();
+
+    expect(nav.url).toBe("/home?teamId=t1");
+    expect(getTeams).toHaveBeenCalledTimes(1);
+    expect(headerTeam()).toBe("Alpha Team");
+  });
+
+  it("a team the list lacks: one refresh, then header and page show the team the URL names", async () => {
+    const second = deferred<Team[]>();
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockReturnValueOnce(second.promise);
+    nav.reset("/home?teamId=t9");
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+
+    // Until the refresh answers, the URL is left alone (the fallback the page
+    // resolves is not written over the team the refresh may bring).
+    await waitFor(() => expect(getTeams).toHaveBeenCalledTimes(2));
+    await settleAll();
+    expect(nav.url).toBe("/home?teamId=t9");
+    expect(router.replace).not.toHaveBeenCalled();
+
+    await act(async () => {
+      second.resolve([A, B, X]);
+    });
+
+    expect(await screen.findByRole("heading", { name: "Xray Team" })).toBeInTheDocument();
+    await settleAll();
+    expect(headerTeam()).toBe("Xray Team");
+    expect(nav.url).toBe("/home?teamId=t9");
+    expect(router.replace).not.toHaveBeenCalled();
+    // Header and page both asked for t9; the provider reloaded once.
+    expect(getTeams).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t9");
+  });
+
+  it("the same works on /tasks (the page loads the team's list)", async () => {
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockResolvedValue([A, B, X]);
+    nav.reset("/tasks?teamId=t9");
+    render(<AppChrome><TasksPage /></AppChrome>);
+
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("t9", expect.anything()));
+    await waitFor(() => expect(headerTeam()).toBe("Xray Team"));
+    expect(getTeams).toHaveBeenCalledTimes(2);
+    expect(nav.url).toBe("/tasks?teamId=t9");
+  });
+
+  it.each([
+    ["the remembered team", "t2", "Beta Team", "t2"],
+    ["the first team when none is remembered", null, "Alpha Team", "t1"],
+  ])(
+    "a team still missing after the refresh: header and page both show %s, no further request",
+    async (_label, remembered, name, id) => {
+      if (remembered) window.localStorage.setItem("agent-tasks:lastTeamId", remembered);
+      vi.mocked(getTeams).mockResolvedValue([A, B]);
+      nav.reset("/home?teamId=ghost");
+      render(<AppChrome><HomeDashboardPage /></AppChrome>);
+
+      expect(await screen.findByRole("heading", { name })).toBeInTheDocument();
+      await waitFor(() => expect(nav.url).toBe(`/home?teamId=${id}`));
+      await settleAll();
+
+      expect(headerTeam()).toBe(name);
+      // The first lookup plus one refresh for "ghost"; nothing after that.
+      expect(getTeams).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("a failed refresh keeps the old list, shows the same fallback in both, and does not retry", async () => {
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockRejectedValue(new Error("down"));
+    nav.reset("/home?teamId=t9");
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+
+    expect(await screen.findByRole("heading", { name: "Alpha Team" })).toBeInTheDocument();
+    await waitFor(() => expect(nav.url).toBe("/home?teamId=t1"));
+    await settleAll();
+
+    expect(headerTeam()).toBe("Alpha Team");
+    expect(screen.getByRole("button", { name: /Switch team/ })).toBeInTheDocument();
+    expect(getTeams).toHaveBeenCalledTimes(2);
+  });
+
+  it("a team that is on the list is never refreshed for", async () => {
+    vi.mocked(getTeams).mockResolvedValue([A, B]);
+    nav.reset("/home?teamId=t1");
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+    await screen.findByRole("heading", { name: "Alpha Team" });
+
+    act(() => nav.push("/home?teamId=t2"));
+    await screen.findByRole("heading", { name: "Beta Team" });
+    await settleAll();
+
+    expect(getTeams).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed first lookup is the /tasks boot error and leaves the header without teams", async () => {
+    vi.mocked(getTeams).mockRejectedValue(new Error("teams are down"));
+    nav.reset("/tasks");
+    render(<AppChrome><TasksPage /></AppChrome>);
+
+    expect(await screen.findByText("teams are down")).toBeInTheDocument();
+    expect(document.querySelector(".app-team-label, .app-team-trigger")).toBeNull();
+    expect(getTeams).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("who asks for a refresh", () => {
+  it("a page asks on its own, without a header", async () => {
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockResolvedValue([A, B, X]);
+    nav.reset("/home?teamId=t9");
+    render(<TeamListProvider enabled><HomeDashboardPage /></TeamListProvider>);
+
+    expect(await screen.findByRole("heading", { name: "Xray Team" })).toBeInTheDocument();
+    expect(getTeams).toHaveBeenCalledTimes(2);
+  });
+
+  it("the header asks on its own, naming the missing id", () => {
+    const onMissingTeam = vi.fn();
+    nav.reset("/home?teamId=t9");
+    render(<AppHeader user={{ login: "lan" }} teams={[A, B]} onMissingTeam={onMissingTeam} />);
+    expect(onMissingTeam).toHaveBeenCalledTimes(1);
+    expect(onMissingTeam).toHaveBeenCalledWith("t9");
+  });
+
+  it("the header asks when the known list is empty", () => {
+    const onMissingTeam = vi.fn();
+    nav.reset("/home?teamId=t9");
+    render(<AppHeader user={{ login: "lan" }} teams={[]} onMissingTeam={onMissingTeam} />);
+    expect(onMissingTeam).toHaveBeenCalledWith("t9");
+  });
+
+  it.each([
+    ["a team on the list", "/home?teamId=t2", [A, B]],
+    ["no team in the URL", "/home", [A, B]],
+    ["an unknown list", "/home?teamId=t9", null],
+  ] as const)("the header does not ask for %s", (_label, url, teams) => {
+    const onMissingTeam = vi.fn();
+    nav.reset(url);
+    render(
+      <AppHeader user={{ login: "lan" }} teams={teams ? [...teams] : null} onMissingTeam={onMissingTeam} />,
+    );
+    expect(onMissingTeam).not.toHaveBeenCalled();
+  });
+});
+
+describe("creating a team refreshes the shared list", () => {
+  it("the header and the new team's Home see the team from one extra request", async () => {
+    const C = team("t3", "Gamma Team");
+    const reload = deferred<Team[]>();
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockReturnValueOnce(reload.promise);
+    vi.mocked(createTeam).mockResolvedValue(C);
+    nav.reset("/home?teamId=t1");
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+    await screen.findByRole("heading", { name: "Alpha Team" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account menu for lan" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "New team" }));
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "Gamma Team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+
+    // The Home of the new team opens only once the list has been reloaded.
+    await waitFor(() => expect(getTeams).toHaveBeenCalledTimes(2));
+    await settleAll();
+    expect(nav.url).toBe("/home?teamId=t1");
+    await act(async () => {
+      reload.resolve([A, B, C]);
+    });
+
+    expect(await screen.findByRole("heading", { name: "Gamma Team" })).toBeInTheDocument();
+    await settleAll();
+    expect(headerTeam()).toBe("Gamma Team");
+    // First lookup plus the refresh after the create: the page named the new
+    // team only once the list had it, so it needed no further reload.
+    expect(getTeams).toHaveBeenCalledTimes(2);
+    expect(nav.url).toBe("/home?teamId=t3");
+  });
+
+  it("a failed reload still opens the new team's Home", async () => {
+    const C = team("t3", "Gamma Team");
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockRejectedValueOnce(new Error("down"));
+    vi.mocked(getTeams).mockResolvedValue([A, B, C]);
+    vi.mocked(createTeam).mockResolvedValue(C);
+    nav.reset("/home?teamId=t1");
+    render(<AppChrome><HomeDashboardPage /></AppChrome>);
+    await screen.findByRole("heading", { name: "Alpha Team" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account menu for lan" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "New team" }));
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "Gamma Team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+
+    // The failed reload leaves the old list; the URL names the new team, so
+    // the one refresh for the missing id brings it in.
+    expect(await screen.findByRole("heading", { name: "Gamma Team" })).toBeInTheDocument();
+    await settleAll();
+    expect(nav.url).toBe("/home?teamId=t3");
+    expect(getTeams).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("TeamListProvider", () => {
+  function Probe({ id }: { id?: string }) {
+    const list = useTeamList();
+    return (
+      <div>
+        <span data-testid="status">{list.status}</span>
+        <span data-testid="count">{list.teams?.length ?? "none"}</span>
+        <button type="button" onClick={() => void list.refreshTeams()}>refresh</button>
+        <button
+          type="button"
+          onClick={() => {
+            list.refreshForTeam(id ?? "x");
+            list.refreshForTeam(id ?? "x");
+          }}
+        >
+          ask twice
+        </button>
+      </div>
+    );
+  }
+
+  it("asks for a missing id once, however often it is asked", async () => {
+    vi.mocked(getTeams).mockResolvedValue([A]);
+    render(<TeamListProvider enabled><Probe /></TeamListProvider>);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
+    expect(getTeams).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "ask twice" }));
+    await settleAll();
+    fireEvent.click(screen.getByRole("button", { name: "ask twice" }));
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(2);
+
+    // An explicit refresh is never guarded.
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks again for an id that was on the list and went missing later", async () => {
+    vi.mocked(getTeams).mockResolvedValueOnce([A]).mockResolvedValueOnce([A, X]).mockResolvedValue([A]);
+    render(<TeamListProvider enabled><Probe id="t9" /></TeamListProvider>);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
+
+    fireEvent.click(screen.getByRole("button", { name: "ask twice" }));
+    await waitFor(() => expect(screen.getByTestId("count")).toHaveTextContent("2"));
+    expect(getTeams).toHaveBeenCalledTimes(2);
+
+    // t9 left the list again (third lookup): a new ask is allowed.
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    await waitFor(() => expect(screen.getByTestId("count")).toHaveTextContent("1"));
+    fireEvent.click(screen.getByRole("button", { name: "ask twice" }));
+    await settleAll();
+    expect(getTeams).toHaveBeenCalledTimes(4);
+  });
+
+  it("does nothing while the shell is suppressed", async () => {
+    render(<TeamListProvider enabled={false}><Probe /></TeamListProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "ask twice" }));
+    await settleAll();
+    expect(getTeams).not.toHaveBeenCalled();
+    expect(screen.getByTestId("status")).toHaveTextContent("loading");
+  });
+
+  it("a failed refresh keeps the list; a failed first lookup is an error", async () => {
+    vi.mocked(getTeams).mockResolvedValueOnce([A, B]).mockRejectedValueOnce(new Error("down"));
+    const { unmount } = render(<TeamListProvider enabled><Probe /></TeamListProvider>);
+    await waitFor(() => expect(screen.getByTestId("count")).toHaveTextContent("2"));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    await settleAll();
+    expect(screen.getByTestId("status")).toHaveTextContent("ready");
+    expect(screen.getByTestId("count")).toHaveTextContent("2");
+    unmount();
+
+    vi.mocked(getTeams).mockRejectedValueOnce(new Error("down"));
+    render(<TeamListProvider enabled><Probe /></TeamListProvider>);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("error"));
+    expect(screen.getByTestId("count")).toHaveTextContent("none");
+  });
+});

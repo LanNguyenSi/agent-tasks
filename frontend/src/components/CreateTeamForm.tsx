@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createTeam } from "../lib/api";
 import { rememberTeam } from "../lib/currentTeam";
 import { sectionHref } from "../lib/teamSwitch";
+import { useOptionalTeamList } from "../lib/teamList";
 import AlertBanner from "./ui/AlertBanner";
 import { Button } from "./ui/Button";
 import FormField from "./ui/FormField";
@@ -34,6 +35,9 @@ function slugFromName(name: string): string {
  */
 export default function CreateTeamForm({ onCancel, onCreated }: CreateTeamFormProps) {
   const router = useRouter();
+  // The shell's team list, when there is one (the dialog); the first-team
+  // page sits outside the shell and its Home loads the list afresh.
+  const teamList = useOptionalTeamList();
   const [teamName, setTeamName] = useState("");
   const [teamSlug, setTeamSlug] = useState("");
   const [creating, setCreating] = useState(false);
@@ -53,6 +57,10 @@ export default function CreateTeamForm({ onCancel, onCreated }: CreateTeamFormPr
     setError(null);
     try {
       const team = await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
+      // The shell's list predates the new team: reload it before opening the
+      // team's Home, so the header and the page both know the team the URL
+      // names. Never rejects; a failed reload leaves the list as it was.
+      await teamList?.refreshTeams();
       // Switch to the new team: remember it and open its Home.
       rememberTeam(team.id);
       router.replace(sectionHref("home", team.id));

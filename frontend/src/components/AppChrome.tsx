@@ -17,7 +17,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import AppHeader from "./AppHeader";
-import { getCurrentUser, getTeams, type Team } from "../lib/api";
+import { getCurrentUser } from "../lib/api";
+import { TeamListProvider, useTeamList } from "../lib/teamList";
 import type { ReactNode } from "react";
 
 interface User {
@@ -36,21 +37,29 @@ function isShellSuppressed(pathname: string): boolean {
   );
 }
 
+/**
+ * The header with the shell's team list. `teams` is null while unknown (not
+ * loaded, or the first lookup failed): the header then shows no team
+ * switcher and no team-dependent menu entries. A team id the URL names that
+ * the list lacks makes the provider reload the list once.
+ */
+function ShellHeader({ user }: { user: User | null }) {
+  const { teams, refreshForTeam } = useTeamList();
+  return <AppHeader user={user} teams={teams} onMissingTeam={refreshForTeam} />;
+}
+
 export default function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const showHeader = !isShellSuppressed(pathname);
   const [user, setUser] = useState<User | null>(null);
-  // null = unknown (not loaded, or the lookup failed): the header then shows
-  // no team switcher and no team-dependent menu entries.
-  const [teams, setTeams] = useState<Team[] | null>(null);
 
   useEffect(() => {
     if (!showHeader) {
       // Shell suppressed (for example after logout to /): drop the previous
-      // account's identity and teams so a later login on this mounted shell
-      // never shows them while its own lookups are in flight.
+      // account's identity so a later login on this mounted shell never
+      // shows it while its own lookup is in flight. The team list is dropped
+      // by its provider on the same condition.
       setUser(null);
-      setTeams(null);
       return;
     }
     // A response that arrives after the shell was suppressed again (or the
@@ -63,28 +72,22 @@ export default function AppChrome({ children }: { children: ReactNode }) {
       .catch(() => {
         if (!cancelled) setUser(null);
       });
-    // One team lookup per shell mount (the chrome outlives route changes).
-    getTeams()
-      .then((t) => {
-        if (!cancelled) setTeams(t);
-      })
-      .catch(() => {
-        if (!cancelled) setTeams(null);
-      });
     return () => {
       cancelled = true;
     };
   }, [showHeader]);
 
+  // The provider outlives route changes: one team lookup per shell mount,
+  // shared by the header and the team-scoped pages below it.
   return (
-    <>
+    <TeamListProvider enabled={showHeader}>
       {showHeader && (
         // The header reads ?teamId (useSearchParams), which needs a boundary.
         <Suspense fallback={null}>
-          <AppHeader user={user} teams={teams} />
+          <ShellHeader user={user} />
         </Suspense>
       )}
       {children}
-    </>
+    </TeamListProvider>
   );
 }
