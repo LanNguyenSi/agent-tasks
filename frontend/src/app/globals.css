@@ -1400,7 +1400,9 @@ input[type="checkbox"] {
   justify-content: space-between;
   gap: var(--space-4);
   flex-shrink: 0;
-  padding: var(--space-6) var(--space-6) var(--space-4);
+  /* Tighter on the right so the close button sits near the card corner;
+     the left inset stays aligned with .modal-body. */
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
 }
 
@@ -1712,7 +1714,7 @@ input[type="checkbox"] {
     padding: 0;
   }
   .modal-header {
-    padding: var(--space-4) var(--space-4) var(--space-3);
+    padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
   }
   .modal-body {
     padding: var(--space-3) var(--space-4) var(--space-4);
