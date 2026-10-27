@@ -4,7 +4,7 @@
 // revoke) and the Enterprise SSO entry. Personal settings (account,
 // appearance, GitHub, agent permissions) live at /settings.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
@@ -22,6 +22,10 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { PageShell } from "../../../components/ui/PageShell";
 import { SkeletonList } from "../../../components/ui/Skeleton";
 import ApiTokensSection from "../../../components/settings/ApiTokensSection";
+import {
+  TokenRevealBanner,
+  useTokenReveals,
+} from "../../../components/settings/TokenReveal";
 
 // Section ids for the sticky side-nav anchors.
 const SECTIONS = [
@@ -53,6 +57,32 @@ export default function TeamSettingsPage() {
     message: string;
   } | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+
+  // One-time secrets of created tokens live here, not in the section: the
+  // section remounts on a team switch, and a create that is still in flight
+  // then answers after its section is gone. Each reveal is tagged with the
+  // team it was created in.
+  const reveals = useTokenReveals();
+  // Creates that failed after their section was gone, naming their team.
+  const [createFailures, setCreateFailures] = useState<
+    { id: number; teamName: string; message: string }[]
+  >([]);
+  const failureSeq = useRef(0);
+  const teamIdRef = useRef<string | null>(null);
+  teamIdRef.current = teamId;
+  const handleCreateFailed = useCallback(
+    (_teamId: string, teamName: string, message: string) => {
+      failureSeq.current += 1;
+      const id = failureSeq.current;
+      setCreateFailures((prev) => [...prev, { id, teamName, message }]);
+    },
+    [],
+  );
+  // A token created for the team now on screen, while its section was gone,
+  // is not in the list loaded since: load it again.
+  const handleCreatedAway = useCallback((createdTeamId: string) => {
+    if (createdTeamId === teamIdRef.current) setRetryToken((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -91,6 +121,8 @@ export default function TeamSettingsPage() {
       cancelled = true;
     };
   }, [teamId, retryToken]);
+
+  const foreignReveals = reveals.reveals.filter((r) => r.teamId !== teamId);
 
   const tokensForTeam =
     loadedTokens && loadedTokens.teamId === teamId ? loadedTokens.tokens : null;
@@ -174,11 +206,30 @@ export default function TeamSettingsPage() {
           <div className="settings-section-group">
             <p className="settings-group-eyebrow">Developer</p>
 
+            {createFailures.map((f) => (
+              <AlertBanner
+                key={f.id}
+                tone="danger"
+                title={`Failed to create token for ${f.teamName}`}
+                onDismiss={() =>
+                  setCreateFailures((prev) => prev.filter((x) => x.id !== f.id))
+                }
+              >
+                {f.message}
+              </AlertBanner>
+            ))}
+            {foreignReveals.map((r) => (
+              <TokenRevealBanner key={r.teamId} reveal={r} api={reveals} foreign />
+            ))}
+
             {!team ? (
               <ApiTokensSection
                 teams={teams}
                 selectedTeamId=""
                 initialTokens={[]}
+                reveals={reveals}
+                onCreateFailed={handleCreateFailed}
+                onCreatedAway={handleCreatedAway}
               />
             ) : tokensForTeam ? (
               <ApiTokensSection
@@ -186,6 +237,9 @@ export default function TeamSettingsPage() {
                 teams={teams}
                 selectedTeamId={team.id}
                 initialTokens={tokensForTeam}
+                reveals={reveals}
+                onCreateFailed={handleCreateFailed}
+                onCreatedAway={handleCreatedAway}
               />
             ) : (
               <Card>
