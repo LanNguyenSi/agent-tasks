@@ -56,7 +56,12 @@
 // alias), the v1 backlog-routing pair -- see backlogRoutingEnforcedError and
 // backlogNotPromotedError below. Plus merge_in_progress (409, a claim or
 // status write refused while a pull request merge holds the task) -- see
-// mergeInProgressError below. Every other backend error degrades to the
+// mergeInProgressError below. Plus recipe branches for the grounding write
+// verbs' (pull_requests_create, pull_requests_merge, task_merge,
+// task_finish) 403 `forbidden`: re-mint guidance for a message naming a
+// missing `github:*` scope, a precondition list when the backend sent no
+// message, both under the backend's own `forbidden` code -- see
+// groundingForbiddenError below. Every other backend error degrades to the
 // generic shape (status-derived code, message passthrough, recipe ->
 // workflow_primer, and now also a clamped passthrough of any structured
 // body.details — see genericDegrade) rather than being forwarded as raw
@@ -827,6 +832,53 @@ function mergeInProgressError(message: string): TeachingError {
   });
 }
 
+// 7e. Grounding write precondition 403s. pull_requests_create,
+// pull_requests_merge, task_merge and task_finish answer 403 `forbidden`
+// when one of their preconditions is unmet (backend/src/routes/
+// grounding-github.ts, backend/src/routes/grounding-task-completion.ts):
+// the token lacks a required scope, the caller has no write access to the
+// project, or, on a finish or merge, it holds neither the work claim nor
+// the review claim. The backend messages name the precondition, and the
+// ordinary message passthrough (generic degrade) carries them unchanged;
+// this entry adds only the two teachings passthrough alone cannot give:
+//  - A message naming a missing `github:*` scope (the backend's own
+//    "Token missing scope: ..." wording) has no self-service corrective:
+//    an existing token never gains a new scope, so only a team admin can
+//    re-mint one carrying it -- an admin wall, so `allowedNext` is empty
+//    by the same convention as force_admin_only above.
+//  - A body with NO message (a backend predating the precondition
+//    messages) gets the precondition list as the recipe. This branch is
+//    not verb-ambiguous: a bare `{error:"forbidden"}` body with no
+//    message is emitted only by those Grounding routes (every legacy 403
+//    carries a message), and verb-gating was infeasible anyway because
+//    two of the four verbs call wrap() without a verbContext.
+// A message without a `github:*` scope returns undefined: it falls
+// through to the generic degrade path unchanged, which is the required
+// "backend message is passed through" behavior (same code `forbidden`,
+// message verbatim, recipe -> workflow_primer).
+const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
+
+function groundingForbiddenError(body: BackendErrorBody, message: string): TeachingError | undefined {
+  if (typeof body.message === "string" && body.message.length > 0) {
+    const missing = TOKEN_MISSING_SCOPE_PATTERN.exec(body.message)?.[1];
+    return missing?.includes("github:")
+      ? buildTeachingError({
+          code: "forbidden",
+          message,
+          recipe: `a team admin must re-mint this agent token with the missing scope (${missing}); existing tokens never gain new scopes`,
+          allowedNext: [],
+        })
+      : undefined;
+  }
+  return buildTeachingError({
+    code: "forbidden",
+    message,
+    recipe:
+      "the backend sent no detail: check this verb's token scopes (see workflow_primer), write access to the project, and, for a finish or merge, the work or review claim on the task",
+    allowedNext: ["workflow_primer"],
+  });
+}
+
 // 8. task_finish `result` (and the deprecated tasks_update's) as plain
 // string. Unlike the other catalog entries, the backend performs NO
 // validation of this today (`result` is stored verbatim as free text) —
@@ -1593,6 +1645,13 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 403 && code === "forbidden" && FORCE_ADMIN_ONLY_PATTERN.test(message)) {
     return forceAdminOnlyError(message);
+  }
+  if (status === 403 && code === "forbidden") {
+    // not_claimed and force_admin_only above are the earlier, more specific
+    // pattern matches of this same status/code pair; this entry adds the
+    // grounding write precondition teachings (see groundingForbiddenError).
+    const groundingForbidden = groundingForbiddenError(body, message);
+    if (groundingForbidden) return groundingForbidden;
   }
   if (status === 409 && code === "already_claimed") {
     return alreadyClaimedError(body, message);

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppVariables } from "../types/hono.js";
 import type { Actor } from "../types/auth.js";
 import { GroundingGithubMergeService } from "../services/grounding-github-merge.js";
-import { GroundingAccessError, groundingAuthority, unavailable } from "../services/grounding-context.js";
+import { GroundingAccessError, groundingAuthority, tokenScopeMessage, unavailable } from "../services/grounding-context.js";
 import { selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { groundingProjectEnforced } from "../services/grounding-scope.js";
@@ -66,7 +66,7 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
   const router = new Hono<{ Variables: AppVariables }>();
   router.post("/pull-requests", async (c, next) => {
     const actor = agent(c, ["tasks:update", "github:pr_create"]);
-    if (!actor) return c.json({ error: "forbidden" }, 403);
+    if (!actor) return c.json({ error: "forbidden", message: tokenScopeMessage(c.get("actor"), ["tasks:update", "github:pr_create"]) }, 403);
     let taskId = "";
     try {
       const raw = await readJson(c);
@@ -112,7 +112,7 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
   });
   router.post("/pull-requests/:prNumber/merge", async (c, next) => {
     const actor = agent(c, ["tasks:transition", "github:pr_merge"]);
-    if (!actor) return c.json({ error: "forbidden" }, 403);
+    if (!actor) return c.json({ error: "forbidden", message: tokenScopeMessage(c.get("actor"), ["tasks:transition", "github:pr_merge"]) }, 403);
     let taskId = "";
     try {
       if (!(deps.service instanceof GroundingGithubMergeService)) unavailable();
@@ -153,7 +153,7 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       const buildTransport = (idempotencyKey: string) => ({ endpoint: "github_merge" as const, body: { ...parsed.data, idempotencyKey, prNumber } });
       const previous = keyValue ? await service.lookupRouteOperation(taskId, actor, keyValue, buildTransport(keyValue)) : null;
       if (!previous) {
-        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
+        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403, "No write access to this project");
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         // Reached only when durable history named a key that no longer
         // resolves; an UNPROVISIONED task is never merged fresh here.

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type GroundingGithubCreateOperation, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import type { Actor, AgentActor } from "../types/auth.js";
-import { canonicalGroundingJson, GroundingAccessError, groundingAuthority, type GroundingTask } from "./grounding-context.js";
+import { canonicalGroundingJson, tokenScopeMessage, GroundingAccessError, groundingAuthority, type GroundingTask } from "./grounding-context.js";
 import { groundingTransaction, lockGroundingTask, assertNoGroundingReservation, invalidateGroundingContext, GroundingDecisionError } from "./grounding-transaction.js";
 import { acquireGithubFence, assertGithubFenceOwned, releaseGithubFence, withGithubFenceWrites, canonicalGithubRepo, GithubFenceError, type GithubFenceOwner } from "./grounding-github-fence.js";
 import { findDelegationUser } from "./github-delegation.js";
@@ -12,7 +12,7 @@ import { normalizeGithubCreateRequest, githubCreateProof, hasGithubCreateCorrela
 const storedProof = z.object({ repo: z.string(), number: z.number().int().positive().max(2147483647), url: z.string(), title: z.string().max(4096), sourceRepo: z.string(), headRef: z.string(), headSha: z.string().regex(/^[0-9a-f]{40}$/), baseRef: z.string() }).strict();
 function fingerprint(request: GithubCreateRequest) { return createHash("sha256").update(canonicalGroundingJson(request)).digest("hex"); }
 function agent(actor: Actor): AgentActor {
-  if (actor.type !== "agent" || !actor.scopes.includes("tasks:update") || !actor.scopes.includes("github:pr_create")) throw new GroundingAccessError("forbidden", 403);
+  if (actor.type !== "agent" || !actor.scopes.includes("tasks:update") || !actor.scopes.includes("github:pr_create")) throw new GroundingAccessError("forbidden", 403, tokenScopeMessage(actor, ["tasks:update", "github:pr_create"]));
   return actor;
 }
 function conflict(): never { throw new GroundingDecisionError("grounding_operation_conflict"); }

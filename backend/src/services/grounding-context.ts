@@ -22,9 +22,22 @@ export const groundingIntentSchema = z.enum(["finish", "approve", "merge"]);
 export type GroundingIntent = z.infer<typeof groundingIntentSchema>;
 export type GroundingTarget = GroundingReceiptExpectedContext["target"];
 export class GroundingAccessError extends Error {
-  constructor(readonly code: "grounding_task_held" | "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed" | "grounding_history_retained" | "merge_in_progress", readonly status: 403 | 404 | 409) {
-    super(code);
+  /** Optional refusal detail naming the unmet precondition; the completion
+   * routers serialise it as the response's `message`. Absent (the default),
+   * the refusal body stays the bare `{ error: code }`. */
+  readonly detail?: string;
+  constructor(readonly code: "grounding_task_held" | "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed" | "grounding_history_retained" | "merge_in_progress", readonly status: 403 | 404 | 409, message?: string) {
+    super(message ?? code);
+    this.detail = message;
   }
+}
+/** The legacy requireScope wording (backend/src/middleware/auth.ts), naming
+ * every required scope the caller's agent token lacks; a non-agent caller
+ * gets the legacy "Agent token required" refusal instead. */
+export function tokenScopeMessage(actor: Actor | undefined, required: string[]): string {
+  if (actor?.type !== "agent") return "Agent token required";
+  const held = actor.scopes;
+  return `Token missing scope: ${required.filter(scope => !held.includes(scope)).join(", ")}`;
 }
 export function unavailable(): never {
   throw new GroundingReceiptVerificationError("grounding_verification_unavailable");
@@ -57,8 +70,8 @@ export const groundingAuthority: GroundingAuthority = {
 
 /** Standalone task_merge is a project write, independent of claim ownership. */
 export async function requireTaskMergeActor(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, authority: GroundingAuthority = groundingAuthority) {
-  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403);
-  if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
+  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403, "Token missing scope: github:pr_merge");
+  if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403, "No write access to this project");
 }
 
 /** Installed standalone route policy; never selected by a receipt-supplied flag. */

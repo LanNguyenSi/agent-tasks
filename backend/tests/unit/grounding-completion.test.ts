@@ -92,7 +92,7 @@ it.each(["scope", "claim", "state", "review", "ci", "foreign", "consent"])("unre
   if (gate === "consent") await f.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } });
   const before = await f.snapshot();
   try {
-    if (gate === "scope") await expect(f.service.complete(f.taskId, { ...actor, scopes: [] }, "try", { action: "finish" })).rejects.toMatchObject({ code: "forbidden" });
+    if (gate === "scope") await expect(f.service.complete(f.taskId, { ...actor, scopes: [] }, "try", { action: "finish" })).rejects.toMatchObject({ code: "forbidden", detail: "Token missing scope: tasks:transition" });
     else if (["foreign", "consent"].includes(gate)) await expect(f.service.reserveMerge(f.taskId, human, "try", { overrideReason: "grounding only" })).rejects.toBeInstanceOf(Error);
     else await expect(f.service.complete(f.taskId, human, "try", { action: gate === "review" ? "approve" : "finish", overrideReason: "grounding only" })).rejects.toBeInstanceOf(Error);
   } finally { await f.db.user.update({ where: { id: ids.user }, data: { allowAgentPrCreate: true, allowAgentPrMerge: true } }); }

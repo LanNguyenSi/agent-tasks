@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 vi.mock("../../src/services/github-delegation.js", () => ({ findDelegationUser: vi.fn() }));
 vi.mock("../../src/services/team-access.js", () => ({ requireProjectWrite: vi.fn(), hasProjectRole: vi.fn() }));
 import { findDelegationUser } from "../../src/services/github-delegation.js";
-import { canonicalGroundingJson, projectGroundingContext, resolveGroundingTarget, fetchGroundingHead } from "../../src/services/grounding-context.js";
+import { canonicalGroundingJson, projectGroundingContext, requireTaskMergeActor, resolveGroundingTarget, fetchGroundingHead } from "../../src/services/grounding-context.js";
 import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
 import { actor, ids, taskFixture, bindingFixture, workflowDb, headSha } from "../helpers/grounding-fixtures.js";
 
@@ -78,6 +78,17 @@ describe("authorized existing workflow intent", () => {
     await expect(resolveGroundingTarget(workflowDb(), task, actor, "approve", authority)).rejects.toMatchObject({ code: "forbidden" });
     task.claimedByAgentId = ids.user;
     expect((await resolveGroundingTarget(workflowDb(), task, actor, "merge", authority)).target.action).toBe("merge");
+  });
+});
+
+describe("task-merge admission refusals name their precondition", () => {
+  it("names the missing github:pr_merge scope, the missing project write, and passes both checks held", async () => {
+    const holder = { ...actor, scopes: ["github:pr_merge"] };
+    await expect(requireTaskMergeActor({} as never, taskFixture(), { ...actor, scopes: [] }, authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "Token missing scope: github:pr_merge", message: "Token missing scope: github:pr_merge" });
+    authority.canWrite.mockResolvedValue(false);
+    await expect(requireTaskMergeActor({} as never, taskFixture(), holder, authority)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "No write access to this project" });
+    authority.canWrite.mockResolvedValue(true);
+    await expect(requireTaskMergeActor({} as never, taskFixture(), holder, authority)).resolves.toBeUndefined();
   });
 });
 

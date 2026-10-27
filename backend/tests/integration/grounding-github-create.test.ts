@@ -157,8 +157,9 @@ it.each(["scope", "revoked", "consent", "connection", "membership"] as const)("r
 });
 
 it("requires agent scopes, project access and effective repository before any remote effect", async () => {
-  await expect(f.service.createOrResume(f.taskId, { type: "human", userId: f.actor.userId }, "human", f.request)).rejects.toMatchObject({ code: "forbidden" });
-  await expect(f.call("scope", f.request, { ...f.actor, scopes: ["tasks:update"] })).rejects.toMatchObject({ code: "forbidden" });
+  await expect(f.service.createOrResume(f.taskId, { type: "human", userId: f.actor.userId }, "human", f.request)).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "Agent token required" });
+  await expect(f.call("scope", f.request, { ...f.actor, scopes: [] })).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "Token missing scope: tasks:update, github:pr_create" });
+  await expect(f.call("scope", f.request, { ...f.actor, scopes: ["tasks:update"] })).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "Token missing scope: github:pr_create" });
   await expect(f.call("repo", { ...f.request, repo: "foreign" })).rejects.toMatchObject({ status: 409 });
   const foreign = await fixture(); await expect(f.call("access", f.request, foreign.actor)).rejects.toMatchObject({ code: "forbidden" });
   expect(f.create).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled();

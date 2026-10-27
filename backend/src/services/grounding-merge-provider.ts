@@ -14,7 +14,7 @@ export interface GroundingMergeProvider {
   read(input: MergeIdentity, token: string): Promise<MergeProof>;
 }
 export async function groundingMergeConsent(db: Prisma.TransactionClient, actor: Actor, teamId: string): Promise<string> {
-  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403);
+  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403, "Token missing scope: github:pr_merge");
   const delegate = await findDelegationUser(teamId, "allowAgentPrMerge", { preferUserId: actor.userId, db });
   if (!delegate) throw new GroundingAccessError("forbidden", 403);
   return delegate.githubAccessToken;

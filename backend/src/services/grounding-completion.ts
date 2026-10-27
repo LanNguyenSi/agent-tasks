@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { Prisma, type GroundingCohort, type GroundingOperation, type PrismaClient, type Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GroundingReceiptVerificationError, verifyGroundingReceipt } from "./grounding-receipt.js";
-import { canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
+import { canonicalGroundingJson, fetchGroundingHead, groundingAuthority, groundingWorkflow, resolveGroundingTarget, projectGroundingContext, tokenScopeMessage, GroundingAccessError, mismatch, unavailable, type GroundingAuthority, type GroundingHeadProvider, type GroundingTask, type GroundingTarget } from "./grounding-context.js";
 import { groundingSettings, groundingTime } from "./grounding-verification.js";
 import type { GroundingAttemptsConfig } from "./grounding-attempts.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
@@ -45,7 +45,7 @@ export interface GroundingDecision {
 }
 export { clearWork, clearReview };
 function stale(): never { throw new GroundingReceiptVerificationError("grounding_receipt_stale"); }
-function forbidden(): never { throw new GroundingAccessError("forbidden", 403); }
+function forbidden(detail?: string): never { throw new GroundingAccessError("forbidden", 403, detail); }
 function badState(): never { throw new GroundingAccessError("bad_state", 409); }
 
 /** Shared service boundary only; existing HTTP callers are not enrolled or wired here. */
@@ -88,7 +88,7 @@ export class GroundingCompletionService {
     const standalone = this.isTaskMerge(request);
     const head = this.requestHead(request);
     const scope = standalone ? "github:pr_merge" : request.action === "creator_abandon" ? "tasks:update" : ["abandon", "release"].includes(request.action) ? "tasks:claim" : "tasks:transition";
-    if (actor.type === "agent" && !actor.scopes.includes(scope)) forbidden();
+    if (actor.type === "agent" && !actor.scopes.includes(scope)) forbidden(tokenScopeMessage(actor, [scope]));
     await operationAccess(db, task, actor, this.authority);
     if (request.overrideReason !== null && (actor.type !== "human" || !request.overrideReason.trim() || !await this.authority.hasRole(actor, task.projectId, "ADMIN", db))) forbidden();
     const holdsWork = actor.type === "human" ? task.claimedByUserId === actor.userId : task.claimedByAgentId === actor.tokenId;

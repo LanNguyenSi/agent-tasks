@@ -54,7 +54,7 @@ const abandonSchema = z.object({}).strict();
 const keySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 
 export function groundingCompletionErrorResponse(error: unknown, c: Context<{ Variables: AppVariables }>, taskId: string, intent: "finish" | "approve" | "merge") {
-  if (error instanceof GroundingAccessError) return c.json({ error: error.code }, error.status);
+  if (error instanceof GroundingAccessError) return c.json({ error: error.code, ...(error.detail ? { message: error.detail } : {}) }, error.status);
   if (error instanceof GroundingReceiptVerificationError) {
     const status = error.code === "grounding_verification_unavailable" ? 503
       : error.code === "grounding_receipt_invalid" ? 400
@@ -95,12 +95,12 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
       const actor = c.get("actor") as Actor | undefined;
       if (!actor) return c.json({ error: "unauthorized" }, 401);
       const admissionScope = endpoint === "merge" ? SCOPES.GithubPrMerge : endpoint === "abandon" ? SCOPES.TasksClaim : SCOPES.TasksTransition;
-      if (actor.type === "agent" && !actor.scopes.includes(admissionScope)) return c.json({ error: "forbidden" }, 403);
+      if (actor.type === "agent" && !actor.scopes.includes(admissionScope)) return c.json({ error: "forbidden", message: `Token missing scope: ${admissionScope}` }, 403);
       let intent: "finish" | "approve" | "merge" = endpoint === "merge" ? "merge" : "finish";
       try {
         const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
         if (!task) return c.json({ error: "not_found" }, 404);
-        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
+        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403, "No write access to this project");
         let raw: unknown;
         try { raw = await c.req.json(); } catch { raw = undefined; }
         const remote = endpoint === "merge" || (endpoint === "finish" && typeof raw === "object" && raw !== null && "autoMerge" in raw && raw.autoMerge === true);
@@ -150,7 +150,7 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         const body = parsed.data as z.infer<typeof finishSchema>;
         const holdsWork = actor.type === "agent" ? task.claimedByAgentId === actor.tokenId : task.claimedByUserId === actor.userId;
         const holdsReview = actor.type === "agent" ? task.reviewClaimedByAgentId === actor.tokenId : task.reviewClaimedByUserId === actor.userId;
-        if (!holdsWork && !holdsReview) throw new GroundingAccessError("forbidden", 403);
+        if (!holdsWork && !holdsReview) throw new GroundingAccessError("forbidden", 403, "You hold neither the work claim nor the review claim on this task");
         const { def } = await groundingWorkflow(deps.db, task);
         const review = holdsReview || isReviewState(def, task.status);
         if ((review && (!body.outcome || body.prUrl !== undefined || body.prNumber !== undefined)) || (!review && body.outcome)) return c.json({ error: "validation_error", message: "Review finish requires outcome; work finish accepts result and the pre-bound PR." }, 400);

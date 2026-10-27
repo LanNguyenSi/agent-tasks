@@ -442,6 +442,8 @@ describe("WORKFLOW_PRIMER's trap list stays in sync with errors.ts's catalog cod
   const TRAP_LIST_EXCLUSIONS: Record<string, string> = {
     github_error:
       "pull_requests_create-specific upstream passthrough preserving GitHub failure identity, not a reusable workflow trap",
+    forbidden:
+      "the backend's own generic 403 code, kept verbatim by groundingForbiddenError's recipe branches for backward compatibility; not a new trap - every refusal already names the unmet precondition in its message",
   };
 
   function catalogCodes(): Set<string> {
