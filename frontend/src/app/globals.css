@@ -4284,6 +4284,17 @@ html[data-theme="light"] {
   margin-top: var(--space-2);
 }
 
+/* Dismissed load error with no list for the team: compact inline retry
+   inside the table region, so the region is never blank. */
+.tasks-load-failed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+}
+
 /* Pagination row below the table */
 .tasks-pagination {
   margin-top: var(--space-1);
