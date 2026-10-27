@@ -41,7 +41,7 @@ vi.mock("../../src/lib/api", () => ({
 
 import AuthPage from "../../src/app/auth/page";
 import { safeRedirect } from "../../src/lib/routes";
-import { getCurrentUser, getProjects, getTeams, login } from "../../src/lib/api";
+import { getCurrentUser, getProjects, getTeams, login, register } from "../../src/lib/api";
 
 const USER = { id: "u-1", login: "lan" } as User;
 const TEAM = { id: "t1", name: "Team", slug: "team", role: "ADMIN", createdAt: "x" } as Team;
@@ -96,6 +96,10 @@ describe("safeRedirect rejected", () => {
     ["rule f: not on the allowlist", "/home"],
     ["rule f: not on the allowlist (tasks)", "/tasks"],
     ["rule f: not on the allowlist (other)", "/other"],
+    ["resolves to itself: encoded ? hides dot segments", "/projects/p1%3f/../../settings"],
+    ["resolves to itself: encoded # hides dot segments", "/projects/p1%23/../../auth"],
+    ["resolves to itself: encoded ? in an invite path", "/invite/x%3F/../../home"],
+    ["resolves to itself: encoded ? then //", "/projects/p1%3F/../..//evil.com"],
   ])("%s", (_label, value) => {
     expect(safeRedirect(value)).toBeNull();
   });
@@ -136,6 +140,18 @@ describe("/auth redirect after an actual login submit", () => {
     await waitFor(() =>
       expect(routerMocks.replace).toHaveBeenCalledWith("/projects/p1/board?taskId=t1&view=list"),
     );
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("a /projects/ target is used after a successful register too", async () => {
+    search.current = `redirect=${encodeURIComponent("/projects/p1/board")}`;
+    vi.mocked(register).mockResolvedValue(undefined as never);
+    render(<AuthPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "Create one" }));
+    await userEvent.type(screen.getByLabelText("Email"), "a@b.co");
+    await userEvent.type(screen.getByLabelText("Password"), "password123");
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/projects/p1/board"));
     expect(routerMocks.replace).toHaveBeenCalledTimes(1);
   });
 

@@ -142,7 +142,9 @@ const PROJECTS_REDIRECT = /^\/projects\/[^/?#]+(\/[^?#]*)?(\?[^#]*)?$/;
  * null/empty no; a bad char in raw no; one decodeURIComponent (a throw no;
  * a bad char, a // prefix or a // in the decoded path part no); raw must
  * start with exactly one /; no . or .. segment in the decoded path; then
- * only the two allowed prefixes. Anchored checks only, never includes().
+ * raw must resolve as a URL to itself on the same origin (an encoded ? or #
+ * would otherwise hide dot segments from the checks above); then only the
+ * two allowed prefixes. Anchored checks only, never includes().
  * Lives here (not in the auth page) because Next rejects extra exports
  * from a page file; the page imports this.
  */
@@ -161,6 +163,18 @@ export function safeRedirect(raw: string | null): string | null {
   if (decodedPath.includes("//")) return null;
   if (!raw.startsWith("/") || raw.startsWith("//")) return null;
   if (decodedPath.split("/").some((s) => s === "." || s === "..")) return null;
+  // The router receives raw, where an encoded ? or # is a plain path
+  // character, so the checks above (cut at the first decoded ? or #) do not
+  // see the whole path the router resolves. Require raw to resolve to
+  // itself: same origin, and no dot segment or other normalisation.
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, "http://redirect.invalid");
+  } catch {
+    return null;
+  }
+  if (resolved.origin !== "http://redirect.invalid") return null;
+  if (resolved.pathname + resolved.search !== raw) return null;
   if (raw.startsWith("/invite/")) return raw;
   if (PROJECTS_REDIRECT.test(raw)) return raw;
   return null;
