@@ -28,6 +28,8 @@ vi.mock("../../src/lib/api", () => ({
   getCurrentUser: vi.fn(),
   getTeams: vi.fn(),
   getTeamTasks: vi.fn(),
+  getProjects: vi.fn(),
+  getTasks: vi.fn(),
   createTeam: vi.fn(),
   logout: vi.fn(),
 }));
@@ -35,10 +37,18 @@ vi.mock("../../src/lib/api", () => ({
 import AppChrome from "../../src/components/AppChrome";
 import AppHeader from "../../src/components/AppHeader";
 import HomeDashboardPage from "../../src/app/home/page";
+import ProjectsPage from "../../src/app/projects/page";
 import TasksPage from "../../src/app/tasks/page";
 import { TeamListProvider, useTeamList } from "../../src/lib/teamList";
 import { nav, router } from "../setup/fakeNavigation";
-import { createTeam, getCurrentUser, getTeams, getTeamTasks } from "../../src/lib/api";
+import {
+  createTeam,
+  getCurrentUser,
+  getProjects,
+  getTasks,
+  getTeams,
+  getTeamTasks,
+} from "../../src/lib/api";
 
 vi.mock("../../src/components/tasks/NewTaskFlow", () => ({ default: () => null }));
 
@@ -83,6 +93,8 @@ beforeEach(() => {
   window.localStorage.clear();
   nav.reset("/home");
   vi.mocked(getCurrentUser).mockResolvedValue({ id: "u-1", login: "lan", avatarUrl: null } as User);
+  vi.mocked(getProjects).mockResolvedValue([]);
+  vi.mocked(getTasks).mockResolvedValue([]);
   vi.mocked(getTeamTasks).mockImplementation(
     async () =>
       ({ tasks: [] as Task[], projects: [PROJECT], counts: COUNTS, filteredTotal: 0 }) as never,
@@ -204,6 +216,33 @@ describe("one team list for the header and the page", () => {
 
     expect(getTeams).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ["/home", HomeDashboardPage],
+    ["/projects", ProjectsPage],
+    ["/tasks", TasksPage],
+  ])(
+    "%s waits for the shell's list: no zero-team lookup and no onboarding redirect while it loads",
+    async (path, Page) => {
+      const first = deferred<Team[]>();
+      vi.mocked(getTeams).mockReturnValue(first.promise);
+      nav.reset(path);
+      render(<AppChrome><Page /></AppChrome>);
+
+      // The user is known long before the list answers.
+      await waitFor(() => expect(getCurrentUser).toHaveBeenCalled());
+      await settleAll();
+      expect(getProjects).not.toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        first.resolve([A, B]);
+      });
+      await waitFor(() => expect(nav.url).toBe(`${path}?teamId=t1`));
+      expect(getProjects).not.toHaveBeenCalledWith();
+      expect(router.replace).not.toHaveBeenCalledWith("/onboarding");
+    },
+  );
 
   it("a failed first lookup is the /tasks boot error and leaves the header without teams", async () => {
     vi.mocked(getTeams).mockRejectedValue(new Error("teams are down"));
