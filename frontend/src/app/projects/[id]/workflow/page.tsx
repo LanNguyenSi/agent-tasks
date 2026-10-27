@@ -34,13 +34,12 @@ import {
   getCurrentUser,
   getEffectiveWorkflow,
   getProject,
-  getTeams,
+  isProjectAdminRole,
   getWorkflowRules,
   listWorkflowTemplates,
   resetProjectWorkflow,
   updateWorkflow,
   type EffectiveWorkflow,
-  type Team,
   type WorkflowDefinition,
   type WorkflowRule,
   type WorkflowState,
@@ -70,7 +69,7 @@ export default function WorkflowEditorPage() {
   const projectId = params.id;
   const router = useRouter();
 
-  const [team, setTeam] = useState<Team | null>(null);
+  const [accessRole, setAccessRole] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<EffectiveWorkflow | null>(null);
   const [rules, setRules] = useState<WorkflowRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,10 +102,9 @@ export default function WorkflowEditorPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const [me, proj, teams, wf, catalog, tpls] = await Promise.all([
+        const [me, proj, wf, catalog, tpls] = await Promise.all([
           getCurrentUser(),
           getProject(projectId),
-          getTeams(),
           getEffectiveWorkflow(projectId),
           getWorkflowRules(),
           listWorkflowTemplates(),
@@ -116,9 +114,10 @@ export default function WorkflowEditorPage() {
           router.replace("/auth");
           return;
         }
-        // Identify the team by matching the project's teamId so we get the
-        // caller's role for the correct team (not just the first one).
-        setTeam(teams.find((t) => t.id === proj.teamId) ?? null);
+        // GET /projects/:id carries the caller's effective `accessRole`
+        // (team ADMIN or per-project PROJECT_ADMIN), mirroring the backend
+        // `isProjectAdmin` gate on every workflow write route.
+        setAccessRole(proj.accessRole ?? null);
         setWorkflow(wf);
         setRules(catalog);
         setTemplates(tpls);
@@ -133,7 +132,7 @@ export default function WorkflowEditorPage() {
     };
   }, [projectId, router]);
 
-  const isAdmin = team?.role === "ADMIN";
+  const isAdmin = isProjectAdminRole(accessRole);
 
   const ruleLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -473,9 +472,9 @@ export default function WorkflowEditorPage() {
           ? "This project inherits the built-in default workflow. It applies to every project that hasn't defined its own."
           : canEdit
             ? "Edit states and gates below, then click Save. Use Reset to drop the custom workflow entirely."
-            : "This project has its own workflow. Only team admins can edit."}
+            : "This project has its own workflow. Only project admins can edit."}
         {isDefault && !isAdmin && (
-          <span className="wf-table-hint"> Only team admins can customize.</span>
+          <span className="wf-table-hint"> Only project admins can customize.</span>
         )}
       </AlertBanner>
 

@@ -6,7 +6,8 @@
  * never redirected, so /home and /onboarding cannot bounce each other:
  * without shared projects the form is shown alone; with shared projects the
  * form stays (team creation is optional but reachable) plus a "Skip for now"
- * link to /home.
+ * link to /home; when the shared lookup fails the form stays plus a hint with
+ * a Retry button (covered in the "shared-lookup hint" block below).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
@@ -28,7 +29,7 @@ vi.mock("../../src/lib/api", () => ({
 
 import OnboardingPage from "../../src/app/onboarding/page";
 import { createTeam, getCurrentUser, getProjects, getTeams } from "../../src/lib/api";
-import { fireEvent } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 
 const USER = { id: "u-1", login: "lan", name: "Lan", avatarUrl: null } as User;
 const TEAM = { id: "t1", name: "Pandora", slug: "pandora", role: "ADMIN", createdAt: "x" } as Team;
@@ -68,11 +69,13 @@ describe("/onboarding", () => {
     expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 
-  it("no teams, shared lookup fails: the form without a skip link, no redirect", async () => {
+  it("no teams, shared lookup fails: hint with Retry, form without a skip link, no redirect", async () => {
     vi.mocked(getTeams).mockResolvedValue([]);
     vi.mocked(getProjects).mockRejectedValue(new Error("projects unavailable"));
     render(<OnboardingPage />);
     await screen.findByLabelText("Team name");
+    expect(screen.getByText(/couldn't check for projects shared with you/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
     expect(screen.getByRole("button", { name: "Create team" })).toBeInTheDocument();
     expect(routerMocks.replace).not.toHaveBeenCalled();
@@ -94,6 +97,83 @@ describe("/onboarding", () => {
     render(<OnboardingPage />);
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
     expect(getTeams).not.toHaveBeenCalled();
+  });
+});
+
+describe("/onboarding shared-lookup hint", () => {
+  it.each([
+    { label: "with shared projects", shared: [SHARED] as Project[] },
+    { label: "without shared projects", shared: [] as Project[] },
+  ])("lookup succeeds $label: no hint, no Retry", async ({ shared }) => {
+    setAccess([], shared);
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    expect(screen.queryByText(/couldn't check for projects shared with you/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("retry succeeds with projects: hint goes away, Skip for now appears", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects)
+      .mockRejectedValueOnce(new Error("projects unavailable"))
+      .mockResolvedValueOnce([SHARED]);
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("link", { name: "Skip for now" });
+    expect(screen.queryByText(/couldn't check for projects shared with you/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("retry succeeds without projects: hint goes away, no skip link", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects)
+      .mockRejectedValueOnce(new Error("projects unavailable"))
+      .mockResolvedValueOnce([]);
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/couldn't check for projects shared with you/i)).toBeNull(),
+    );
+    expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
+  });
+
+  it("retry fails again: the hint stays, shown once, Retry usable again", async () => {
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects)
+      .mockRejectedValueOnce(new Error("projects unavailable"))
+      .mockRejectedValueOnce(new Error("still unavailable"));
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(retry).toBeEnabled();
+    expect(screen.getAllByText(/couldn't check for projects shared with you/i)).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create team" })).toBeInTheDocument();
+  });
+
+  it("while the retry is in flight the button is busy and disabled", async () => {
+    let settle: (projects: Project[]) => void = () => {};
+    vi.mocked(getTeams).mockResolvedValue([]);
+    vi.mocked(getProjects)
+      .mockRejectedValueOnce(new Error("projects unavailable"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<Project[]>((resolve) => {
+            settle = resolve;
+          }),
+      );
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const busy = await screen.findByRole("button", { name: /retry/i });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    act(() => settle([SHARED]));
+    await screen.findByRole("link", { name: "Skip for now" });
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 
