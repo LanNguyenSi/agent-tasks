@@ -1,8 +1,9 @@
 /**
- * Home widget links (`.widget-link`) render as text on the dark surfaces, so
- * they must use the accent *text* token (not the raw `--primary` fill, which
- * is 4.05:1 on `--surface` and fails WCAG 1.4.3 AA), and that token must
- * clear 4.5:1 on every dark surface step. Settings inline links sit inside
+ * Home widget footer links (`.home-widget-footer-link`) render as text on the
+ * dark surfaces, so they use the secondary/muted text tokens at rest and the
+ * accent *text* token on hover (never the raw `--primary` fill, which is
+ * 4.05:1 on `--surface` and fails WCAG 1.4.3 AA), and each token must clear
+ * 4.5:1 on every dark surface step. Settings inline links sit inside
  * `--muted` prose where their colour alone is 1.44:1 against the surrounding
  * text, so they must carry an underline (axe link-in-text-block) in every
  * theme; the underline lives on the base rule, not only on hover.
@@ -45,16 +46,56 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** The rgba() form of a dark token (the hover fill). */
+function rgbaToken(name: string): [number, number, number, number] {
+  const m = new RegExp(`--${name}:\\s*rgba\\((\\d+),\\s*(\\d+),\\s*(\\d+),\\s*([\\d.]+)\\)\\s*;`).exec(rootBlock);
+  expect(m, `dark token --${name} must be an rgba() colour in :root`).not.toBeNull();
+  return [Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])] as [number, number, number, number];
+}
+
+/** --primary-muted composited over hex surface `base`, as the browser paints it. */
+function fillOver(base: string): string {
+  const [r, g, b, a] = rgbaToken("primary-muted");
+  const [br, bg, bb] = [1, 3, 5].map((i) => parseInt(base.slice(i, i + 2), 16)) as [number, number, number];
+  const hex = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${hex(a * r + (1 - a) * br)}${hex(a * g + (1 - a) * bg)}${hex(a * b + (1 - a) * bb)}`;
+}
+
 const SURFACES = ["bg", "surface", "surface-raised", "surface-hover", "surface-active"];
 
-describe("home .widget-link text colour", () => {
-  it("uses the accent text token, not the raw --primary fill", () => {
-    const color = /(?:^|;)\s*color:\s*([^;]+);/.exec(ruleBody(".widget-link"))?.[1]?.trim();
-    expect(["var(--primary-text)", "var(--link)"], `${color ?? "(no color)"} is not the text token`).toContain(color);
+describe("home .home-widget-footer-link text colour", () => {
+  it("at rest uses the secondary text token, not the raw --primary fill", () => {
+    const color = /(?:^|;)\s*color:\s*([^;]+);/.exec(ruleBody(".home-widget-footer-link"))?.[1]?.trim();
+    expect(color, "rest colour must be --text-secondary").toBe("var(--text-secondary)");
   });
 
-  it.each(SURFACES)("the token resolves to >= 4.5:1 on dark --%s", (surface) => {
-    expect(contrast(token("primary-text"), token(surface))).toBeGreaterThanOrEqual(4.5);
+  it("on hover uses the accent text token, not the raw --primary fill", () => {
+    const hover = /\.home-widget-footer-link:hover\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const color = /color:\s*([^;]+);/.exec(hover)?.[1]?.trim();
+    expect(color, "hover colour must be --primary-text").toBe("var(--primary-text)");
+  });
+
+  it("the quieter variant uses the muted token", () => {
+    const color = /(?:^|;)\s*color:\s*([^;]+);/.exec(ruleBody(".home-widget-footer-link--quiet"))?.[1]?.trim();
+    expect(color, "quiet colour must be --muted").toBe("var(--muted)");
+  });
+
+  it.each(["surface", "surface-raised"])(
+    "the hover pairing (--primary-text on --primary-muted) composites to >= 4.5:1 over dark --%s",
+    (surface) => {
+      // The hover rule paints --primary-muted (a translucent fill) over the
+      // surface, so the effective background is the composite, not the raw
+      // surface or the fill colour alone (7.04:1 over --surface, 6.56:1 over
+      // --surface-raised).
+      const painted = fillOver(token(surface));
+      expect(contrast(token("primary-text"), painted), `--primary-text on the hover fill over --${surface}`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each(SURFACES)("the rest, quiet and hover tokens resolve to >= 4.5:1 on dark --%s", (surface) => {
+    for (const name of ["text-secondary", "muted", "primary-text"]) {
+      expect(contrast(token(name), token(surface)), `--${name} on --${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 

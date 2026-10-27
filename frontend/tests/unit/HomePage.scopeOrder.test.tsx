@@ -271,12 +271,16 @@ describe("home page — widget plumbing", () => {
     const doneWidget = widgets[5]; // Six widgets total, Done is last
     if (!doneWidget) throw new Error("Done widget not found");
 
-    // Check for the older done link
-    const olderLinks = Array.from(doneWidget.querySelectorAll(".widget-link")) as HTMLAnchorElement[];
-    const olderLink = olderLinks.find((link) => link.href.includes("recency=older"));
-    expect(olderLink).not.toBeNull();
-    expect(olderLink?.href).toContain("scope=done");
-    expect(olderLink?.href).toContain("recency=older");
+    // The footer row holds the older-than link: named with the widget title,
+    // pointing at the older slice with the exact href.
+    const footerLinks = Array.from(
+      doneWidget.querySelectorAll(".home-widget-footer a.home-widget-footer-link"),
+    ) as HTMLAnchorElement[];
+    const olderLink = footerLinks.find((link) => (link.getAttribute("href") ?? "").includes("recency=older"));
+    expect(olderLink).toBeDefined();
+    expect(olderLink?.getAttribute("href")).toBe("/tasks?teamId=team-1&scope=done&recency=older");
+    expect(olderLink?.getAttribute("aria-label")).toBe("Done \u00b7 14 days: 1 older than 14 days");
+    expect(olderLink?.textContent).toBe("1 older than 14 days");
 
     // The header's View all link stays in the recent window even while the
     // older-done link shows (exact href the old "N total →" link had), named

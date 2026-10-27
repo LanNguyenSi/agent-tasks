@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * /home counts and rows: every widget is filled by its own scoped request, the
- * "+N more" link counts rows not shown, the stale-data alert exists only while
+ * "N more in Tasks" footer link counts rows not shown, the stale-data alert exists only while
  * the warning is active, and the labels carry the shared "Active" definition
  * and the done window.
  *
@@ -280,13 +280,14 @@ describe("home page: more than 500 team tasks", () => {
     await renderHome();
 
     expect(headerTotal("Backlog")).toBe("15");
-    expect(footerLinks("Backlog")).toEqual(["+5 more →"]);
+    expect(footerLinks("Backlog")).toEqual(["5 more in Tasks"]);
     expect(headerTotal("Active Tasks")).toBe("12");
-    expect(footerLinks("Active Tasks")).toEqual(["+2 more →"]);
+    expect(footerLinks("Active Tasks")).toEqual(["2 more in Tasks"]);
     expect(headerTotal("Done · 14 days")).toBe("520");
-    expect(footerLinks("Done · 14 days")[0]).toBe("+510 more →");
-    // 3 rows of 3: nothing more to show.
+    expect(footerLinks("Done · 14 days")[0]).toBe("510 more in Tasks");
+    // 3 rows of 3: nothing more to show, and no footer row at all.
     expect(footerLinks("In Review")).toEqual([]);
+    expect(widget("In Review").querySelector(".home-widget-footer")).toBeNull();
   });
 
   it("renders the header count as plain text and View all as the header's only link", async () => {
@@ -354,8 +355,8 @@ describe("home page: header View all links of all six widgets", () => {
   });
 });
 
-describe("home page: +N more is the total minus the rows shown", () => {
-  it("total 15 with 3 rows loaded shows +12 more", async () => {
+describe("home page: N more in Tasks is the total minus the rows shown", () => {
+  it("total 15 with 3 rows loaded shows 12 more in Tasks", async () => {
     // The backend reports 15 backlog tasks but this response carries 3 rows.
     mockGetTeamTasks.mockImplementation(async (_teamId, opts) => {
       const base = serve([], opts);
@@ -369,15 +370,15 @@ describe("home page: +N more is the total minus the rows shown", () => {
 
     expect(rowCount("Backlog")).toBe(3);
     expect(headerTotal("Backlog")).toBe("15");
-    expect(footerLinks("Backlog")).toEqual(["+12 more →"]);
+    expect(footerLinks("Backlog")).toEqual(["12 more in Tasks"]);
   });
 
-  it("total 15 with 10 rows shows +5 more", async () => {
+  it("total 15 with 10 rows shows 5 more in Tasks", async () => {
     serveDataset(many(15, () => ({ status: "backlog" as const })));
     await renderHome();
 
     expect(rowCount("Backlog")).toBe(10);
-    expect(footerLinks("Backlog")).toEqual(["+5 more →"]);
+    expect(footerLinks("Backlog")).toEqual(["5 more in Tasks"]);
   });
 
   it("shows no link when every row of the total is on screen", async () => {

@@ -296,8 +296,12 @@ describe("home page — Your projects strip empty state", () => {
     const empty = document.querySelector(".home-projects-empty");
     expect(empty).not.toBeNull();
     expect(stripItems()).toHaveLength(0);
-    const link = empty!.querySelector("a");
-    expect(link?.getAttribute("href")).toBe("/projects?teamId=team-1");
+    // Plain inline link (settings inline style): named "Go to Projects",
+    // no arrow glyph, same href as before.
+    const link = screen.getByRole("link", { name: "Go to Projects" });
+    expect(empty!.contains(link)).toBe(true);
+    expect(link.getAttribute("href")).toBe("/projects?teamId=team-1");
+    expect(link.textContent).toBe("Go to Projects");
   });
 
   it("does not render (no empty-state flash) while the aggregation is in flight", async () => {
