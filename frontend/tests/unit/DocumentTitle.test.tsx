@@ -6,6 +6,7 @@
  * page keeps its own.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { expectDocumentTitle } from "./helpers/documentTitle";
 import { render, cleanup } from "@testing-library/react";
 
 const nav = vi.hoisted(() => ({ pathname: "/", search: "" }));
@@ -48,11 +49,11 @@ describe("formatDocumentTitle", () => {
 });
 
 describe("<DocumentTitle>", () => {
-  it("sets and updates the tab title", () => {
+  it("sets and updates the tab title", async () => {
     const { rerender } = render(<DocumentTitle title="Fix the bug" />);
-    expect(document.title).toBe("Fix the bug - agent-tasks");
+    await expectDocumentTitle("Fix the bug - agent-tasks");
     rerender(<DocumentTitle title="Other" />);
-    expect(document.title).toBe("Other - agent-tasks");
+    await expectDocumentTitle("Other - agent-tasks");
   });
 
   it("does not set the title again while title and route stay the same", async () => {
@@ -60,12 +61,12 @@ describe("<DocumentTitle>", () => {
     // history.replaceState and do not re-render the document head, so the
     // title needs no re-apply; nothing here overwrites a later title either.
     const { rerender } = render(<DocumentTitle title="Board" />);
-    expect(document.title).toBe("Board - agent-tasks");
+    await expectDocumentTitle("Board - agent-tasks");
     document.title = "set elsewhere";
     nav.search = "taskId=t1";
     rerender(<DocumentTitle title="Board" />);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(document.title).toBe("set elsewhere");
+    await expectDocumentTitle("set elsewhere");
   });
 });
 
@@ -77,10 +78,10 @@ describe("segment layout titles", () => {
     [TeamSettingsLayout, "/settings/team", "Team settings - agent-tasks"],
     [TeamSettingsLayout, "/settings/team/sso", "Single sign-on - agent-tasks"],
     [ProjectsLayout, "/projects", "Projects - agent-tasks"],
-  ])("%o on %s sets %s", (Layout, pathname, expected) => {
+  ])("%o on %s sets %s", async (Layout, pathname, expected) => {
     nav.pathname = pathname;
     render(<Layout>{null}</Layout>);
-    expect(document.title).toBe(expected);
+    await expectDocumentTitle(expected);
   });
 
   it.each([
@@ -88,10 +89,10 @@ describe("segment layout titles", () => {
     [SettingsLayout, "/settings/team"],
     [ProjectsLayout, "/projects/p1/board"],
     [HomeLayout, "/home/anything"],
-  ])("%o leaves the title of a deeper page %s alone", (Layout, pathname) => {
+  ])("%o leaves the title of a deeper page %s alone", async (Layout, pathname) => {
     nav.pathname = pathname;
     render(<Layout>{null}</Layout>);
-    expect(document.title).toBe("stale");
+    await expectDocumentTitle("stale");
   });
 });
 

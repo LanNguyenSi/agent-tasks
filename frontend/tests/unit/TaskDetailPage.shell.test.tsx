@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import type { Task, User, Team, Project } from "../../src/lib/api";
+import { expectDocumentTitle } from "./helpers/documentTitle";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -103,8 +104,10 @@ describe("/tasks/[id] page frame", () => {
 describe("/tasks/[id] document title", () => {
   it("reads 'Task - agent-tasks' while loading and '<task title> - agent-tasks' once loaded", async () => {
     render(<TaskDetailPage />);
-    expect(document.title).toBe("Task - agent-tasks");
+    await expectDocumentTitle("Task - agent-tasks");
     await screen.findByText("task body");
-    expect(document.title).toBe("A task - agent-tasks");
+    // The title is set by a passive effect of the commit that brought the
+    // loaded task in, which can run after the DOM update findByText saw.
+    await expectDocumentTitle("A task - agent-tasks");
   });
 });

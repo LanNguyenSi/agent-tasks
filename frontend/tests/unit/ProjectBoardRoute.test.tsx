@@ -8,6 +8,7 @@
  * navigation from either component.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { expectDocumentTitle } from "./helpers/documentTitle";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiRequestError, type User, type Project, type Task } from "../../src/lib/api";
@@ -133,11 +134,11 @@ describe("board route (hub layout + board page)", () => {
       await userEvent.click(await screen.findByRole("button", { name: /Deep-linked task/ }));
       await screen.findByRole("dialog");
       await waitFor(() => expect(window.location.search).toBe("?taskId=k-1"));
-      expect(document.title).toBe("Project One · Board - agent-tasks");
+      await expectDocumentTitle("Project One · Board - agent-tasks");
 
       await userEvent.click(screen.getByRole("button", { name: "Close" }));
       await waitFor(() => expect(window.location.search).toBe(""));
-      expect(document.title).toBe("Project One · Board - agent-tasks");
+      await expectDocumentTitle("Project One · Board - agent-tasks");
 
       expect(replaceState).toHaveBeenCalledTimes(2);
       expect(window.history.length).toBe(entries);
