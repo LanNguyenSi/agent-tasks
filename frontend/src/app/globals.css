@@ -732,23 +732,6 @@ input[type="checkbox"] {
   }
 }
 
-/* Compact text links inside the home widgets ("+N more", "older done").
-   Given a real hit area and the accent text token (not the
-   raw --primary fill, which is 4.05:1 on dark surfaces) so they read as the
-   affordances they are, with an underline on hover. */
-.widget-link {
-  display: inline-block;
-  padding: 0.2rem 0.15rem;
-  color: var(--primary-text);
-  font-weight: 600;
-  text-decoration: none;
-  border-radius: var(--radius-sm);
-}
-
-.widget-link:hover {
-  text-decoration: underline;
-}
-
 /* Quiet "View all" link (ViewAllLink component): secondary text with a
    quiet accent fill on hover, a 28px hit area like .home-scope-link, and
    the app's standard focus ring (the global `:focus-visible` rule restated
@@ -4028,11 +4011,48 @@ html[data-theme="light"] {
   gap: var(--space-1);
 }
 
-/* "+N more →" / "older done →" footer link */
+/* Widget overflow footer (TaskWidget): one full-width flex row at the bottom
+   of the card, separated from the rows by a hairline. */
 .home-widget-footer {
-  text-align: right;
+  display: flex;
+  align-items: stretch;
   margin-top: var(--space-2);
-  font-size: var(--text-xs);
+  border-top: 1px solid var(--border);
+}
+
+/* Footer links ("N more in Tasks", "N older than M days"): secondary text
+   with the task row's quiet accent fill on hover (mirroring
+   .home-task-row:hover), never the raw --primary fill (fails WCAG 1.4.3 on
+   dark surfaces); the standard focus ring (as .view-all-link) reads against
+   the hover fill in both themes. */
+.home-widget-footer-link {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-base);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+
+.home-widget-footer-link:hover {
+  color: var(--primary-text);
+  background: var(--primary-muted);
+}
+
+/* The older-than link is one step quieter than the main overflow link
+   (--muted clears 4.5:1 on every dark surface; see its token comment). */
+.home-widget-footer-link--quiet {
+  color: var(--muted);
+}
+
+.home-widget-footer-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Task row: flex strip inside a widget (replaces open-task-row) */

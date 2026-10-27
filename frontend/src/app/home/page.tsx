@@ -34,6 +34,7 @@ import EmptyState from "../../components/ui/EmptyState";
 import { StatusChip } from "../../components/ui/StatusChip";
 import { PriorityLabel } from "../../components/ui/PriorityLabel";
 import { ViewAllLink } from "../../components/ui/ViewAllLink";
+import { Icon } from "../../components/ui/Icon";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
 import {
   WIDGET_LIMIT,
@@ -157,16 +158,9 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
       </div>
 
       {displayTotal === 0 ? (
-        <>
-          {emptyState}
-          {olderCount > 0 && (
-            <p className="home-widget-footer">
-              <Link href={olderHref} className="widget-link">
-                Show {olderCount} older done &rarr;
-              </Link>
-            </p>
-          )}
-        </>
+        /* The older-done reveal (when this widget has one) rides in the
+           EmptyState action slot, like every other empty state on Home. */
+        emptyState
       ) : (
         <>
           <div className="home-widget-tasks">
@@ -174,19 +168,35 @@ function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount
               <TaskRow key={task.id} task={task} teamId={teamId} />
             ))}
           </div>
-          {moreCount > 0 && (
-            <p className="home-widget-footer">
-              <Link href={moreHref} className="widget-link">
-                +{moreCount} more &rarr;
-              </Link>
-            </p>
-          )}
-          {olderCount > 0 && (
-            <p className="home-widget-footer">
-              <Link href={olderHref} className="widget-link">
-                +{olderCount} older done &rarr;
-              </Link>
-            </p>
+          {/* One full-width footer row at the bottom of the card for the
+              overflow links, no text-arrow glyphs (the arrow is the
+              aria-hidden `arrow-right` Icon). Accessible names contain the
+              widget title and the full visible text (WCAG 2.5.3), so links
+              that differ in href never share a name. */}
+          {(moreCount > 0 || olderCount > 0) && (
+            <div className="home-widget-footer">
+              {moreCount > 0 && (
+                <Link
+                  href={moreHref}
+                  className="home-widget-footer-link"
+                  aria-label={`${title}: ${moreCount} more in Tasks`}
+                >
+                  <span>{moreCount} more in Tasks</span>
+                  <Icon name="arrow-right" size={12} />
+                </Link>
+              )}
+              {olderCount > 0 && (
+                <Link
+                  href={olderHref}
+                  className="home-widget-footer-link home-widget-footer-link--quiet"
+                  aria-label={`${title}: ${olderCount} older than ${DONE_RECENT_DAYS} days`}
+                >
+                  <span>
+                    {olderCount} older than {DONE_RECENT_DAYS} days
+                  </span>
+                </Link>
+              )}
+            </div>
           )}
         </>
       )}
@@ -247,10 +257,13 @@ function ProjectsStrip({ projects, teamId, activeCounts }: ProjectsStripProps) {
         </ViewAllLink>
       </div>
       {projects.length === 0 ? (
+        /* Inline prose link, no arrow glyph: the settings inline-link style
+           (underlined --link in both themes) so it reads as a link inside
+           the sentence. */
         <p className="home-projects-empty">
           No projects in this team yet.{" "}
-          <Link href={projectsHref({ teamId })} className="widget-link">
-            Go to Projects &rarr;
+          <Link href={projectsHref({ teamId })} className="settings-inline-link">
+            Go to Projects
           </Link>
         </p>
       ) : (
@@ -595,7 +608,28 @@ export default function HomeDashboardPage() {
       total: counts?.doneRecent ?? recentlyDone.length,
       href: `/tasks?teamId=${teamId}&scope=done`,
       olderCount: olderDoneCount,
-      emptyState: <EmptyState title={`No tasks completed in the last ${DONE_RECENT_DAYS} days.`} />,
+      // When the recent window is empty but older done tasks exist, the
+      // reveal lives in the EmptyState action slot like the other empty
+      // states' actions (a ghost Button; with href it renders an anchor).
+      // It only shows while the widget is empty, because the empty state
+      // only renders then; the non-empty footer row is TaskWidget's job.
+      emptyState: (
+        <EmptyState
+          title={`No tasks completed in the last ${DONE_RECENT_DAYS} days.`}
+          action={
+            olderDoneCount > 0 ? (
+              <Button
+                href={`/tasks?teamId=${teamId}&scope=done&recency=older`}
+                variant="ghost"
+                size="sm"
+                aria-label={`Show ${olderDoneCount} older done tasks in ${DONE_LABEL}`}
+              >
+                Show {olderDoneCount} older done
+              </Button>
+            ) : undefined
+          }
+        />
+      ),
     },
   ];
 
