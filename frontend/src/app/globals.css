@@ -2675,6 +2675,20 @@ input[type="checkbox"] {
   flex-shrink: 0;
 }
 
+/* Opt-in (PageHeader truncateSummary): a summary that carries a user-chosen
+   name shrinks with an ellipsis and the title keeps its full width, instead
+   of the nowrap summary widening the band past the viewport. */
+.page-header--summary-truncates .page-header-title {
+  flex-shrink: 0;
+}
+
+.page-header--summary-truncates .page-header-summary {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .page-header-actions {
   display: flex;
   align-items: center;

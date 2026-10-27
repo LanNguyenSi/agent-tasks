@@ -60,3 +60,21 @@ describe("/home widgets", () => {
     expect(rule(".home-widgets-grid")).toMatch(/align-items:\s*start/);
   });
 });
+
+describe("PageHeader summary truncation (opt-in)", () => {
+  it("the opt-in lets the summary shrink with an ellipsis and keeps the title at full width", () => {
+    const summary = rule(".page-header--summary-truncates .page-header-summary");
+    expect(summary).toMatch(/flex-shrink:\s*1/);
+    expect(summary).toMatch(/min-width:\s*0/);
+    expect(summary).toMatch(/overflow:\s*hidden/);
+    expect(summary).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule(".page-header--summary-truncates .page-header-title")).toMatch(/flex-shrink:\s*0/);
+  });
+
+  it("every other PageHeader keeps the one-line summary at its natural width", () => {
+    const base = rule(".page-header-summary");
+    expect(base).toMatch(/white-space:\s*nowrap/);
+    expect(base).toMatch(/flex-shrink:\s*0/);
+    expect(base).not.toMatch(/overflow|text-overflow/);
+  });
+});

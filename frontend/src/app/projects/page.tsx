@@ -656,21 +656,20 @@ export default function ProjectsPage() {
   );
 
   if (loading) {
-    return <FullPageLoader variant="shell" label="Loading teams…" />;
+    return <FullPageLoader variant="shell" label="Loading teams…" headerActions={2} />;
   }
 
   // One band for both states: the title is the page, the summary carries
   // the team and its project count (or the shared-project count), and the
   // actions sit on the right like on /tasks and /settings.
+  const teamProjectCount = selectedTeam
+    ? (selectedTeam.projectCount ?? projects.length)
+    : 0;
+  const summary = selectedTeam
+    ? `${selectedTeam.name} · ${teamProjectCount} ${teamProjectCount === 1 ? "project" : "projects"}`
+    : `${sharedProjects.length} shared ${sharedProjects.length === 1 ? "project" : "projects"}`;
   const header = (
-    <PageHeader
-      title="Projects"
-      summary={
-        selectedTeam
-          ? `${selectedTeam.name} · ${selectedTeam.projectCount ?? projects.length} projects`
-          : `${sharedProjects.length} shared ${sharedProjects.length === 1 ? "project" : "projects"}`
-      }
-    >
+    <PageHeader title="Projects" summary={summary} truncateSummary>
       {selectedTeam ? (
         <>
           {!user?.githubConnected ? (

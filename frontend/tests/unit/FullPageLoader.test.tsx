@@ -35,4 +35,15 @@ describe("FullPageLoader", () => {
     expect(main).toHaveAttribute("role", "status");
     expect(main).toHaveTextContent("Loading settings…");
   });
+
+  it("shell: no action skeletons by default, headerActions adds that many to the band's actions slot", () => {
+    const { rerender } = render(<FullPageLoader variant="shell" />);
+    const band = () => screen.getByRole("main").querySelector(":scope > .page-header") as HTMLElement;
+    expect(band().querySelector(".page-header-actions")).toBeNull();
+    rerender(<FullPageLoader variant="shell" headerActions={2} />);
+    const actions = band().querySelector(".page-header-actions") as HTMLElement;
+    expect(actions.querySelectorAll(".skeleton")).toHaveLength(2);
+    // The band is decorative: nothing in it is exposed to assistive tech.
+    expect(band()).toHaveAttribute("aria-hidden", "true");
+  });
 });

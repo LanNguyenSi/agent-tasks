@@ -77,7 +77,7 @@ describe("/projects: heading", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.queryByRole("heading", { level: 2, name: TEAM.name })).toBeNull();
     await waitFor(() =>
-      expect(document.querySelector(".page-header-summary")).toHaveTextContent(`${TEAM.name} · 1 projects`),
+      expect(document.querySelector(".page-header-summary")).toHaveTextContent(`${TEAM.name} · 1 project`),
     );
   });
 });

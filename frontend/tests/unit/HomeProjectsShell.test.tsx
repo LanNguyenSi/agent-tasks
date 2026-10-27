@@ -7,7 +7,7 @@
  * same frame as the loaded page.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, within, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, within, fireEvent, waitFor } from "@testing-library/react";
 import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -91,6 +91,8 @@ describe("/home frame", () => {
     const { main, band } = expectDefaultFrame();
     expect(main).toHaveAttribute("aria-busy", "true");
     expect(within(band).queryByRole("heading")).toBeNull();
+    // Home's loaded band has no actions, so its skeleton reserves none.
+    expect(band.querySelector(".page-header-actions")).toBeNull();
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
@@ -125,8 +127,11 @@ describe("/projects frame", () => {
     setAccess([TEAM], []);
     vi.mocked(getCurrentUser).mockReturnValue(new Promise(() => {}));
     render(<ProjectsPage />);
-    const { main } = expectDefaultFrame();
+    const { main, band } = expectDefaultFrame();
     expect(main).toHaveAttribute("aria-busy", "true");
+    // The loaded band has two action buttons, which wrap below the title on
+    // a phone; the skeleton band reserves them so the content does not jump.
+    expect(band.querySelectorAll(".page-header-actions .skeleton")).toHaveLength(2);
   });
 
   it("with a team: 'Projects' is the only heading in the band, the team sits in the summary", async () => {
@@ -139,7 +144,7 @@ describe("/projects frame", () => {
     expect(band).toContainElement(h1);
     // The team name is plain summary text, not an H2 subtitle.
     expect(screen.queryByRole("heading", { level: 2, name: "Pandora" })).toBeNull();
-    expect(band.querySelector(".page-header-summary")).toHaveTextContent("Pandora · 1 projects");
+    expect(band.querySelector(".page-header-summary")).toHaveTextContent("Pandora · 1 project");
     // Actions live in the band's action area.
     const actions = band.querySelector(".page-header-actions") as HTMLElement;
     expect(within(actions).getByRole("button", { name: "Sync GitHub" })).toBeInTheDocument();
@@ -155,6 +160,55 @@ describe("/projects frame", () => {
     expect(band.querySelector(".page-header-summary")).toHaveTextContent("1 shared project");
     expect(band.querySelector(".page-header-actions")).toContainElement(
       screen.getByRole("link", { name: "Create a team" }),
+    );
+  });
+});
+
+describe("/projects band summary", () => {
+  const SECOND = { ...OWN, id: "p2", name: "Second Project", slug: "second" } as Project;
+
+  async function summaryFor(team: Team, loaded: Project[]): Promise<string> {
+    vi.mocked(getTeams).mockResolvedValue([team]);
+    vi.mocked(getProjects).mockImplementation(async (teamId?: string) => (teamId ? loaded : []));
+    render(<ProjectsPage />);
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
+    await waitFor(() => expect(document.querySelector(".page-header-summary")).toHaveTextContent(/Pandora · /));
+    return document.querySelector(".page-header-summary")!.textContent ?? "";
+  }
+
+  it("projectCount present and different from the loaded list: the team's projectCount wins", async () => {
+    expect(await summaryFor({ ...TEAM, projectCount: 7 } as Team, [OWN])).toBe("Pandora · 7 projects");
+  });
+
+  it("projectCount 0 is a real count, not absent: it wins over a non-empty loaded list", async () => {
+    expect(await summaryFor({ ...TEAM, projectCount: 0 } as Team, [OWN, SECOND])).toBe("Pandora · 0 projects");
+  });
+
+  it("projectCount absent: falls back to the loaded list length", async () => {
+    expect(await summaryFor(TEAM, [OWN, SECOND])).toBe("Pandora · 2 projects");
+  });
+
+  it("one project is singular, from either source", async () => {
+    expect(await summaryFor({ ...TEAM, projectCount: 1 } as Team, [OWN, SECOND])).toBe("Pandora · 1 project");
+    cleanup();
+    expect(await summaryFor(TEAM, [OWN])).toBe("Pandora · 1 project");
+  });
+
+  it("two projects are plural", async () => {
+    expect(await summaryFor({ ...TEAM, projectCount: 2 } as Team, [OWN])).toBe("Pandora · 2 projects");
+  });
+
+  it("a very long team name stays whole in the DOM and the band opts into summary truncation", async () => {
+    const name = "A Very Long Team Name That Keeps Going And Going For Real And Then Some More Text Here Please Thanks";
+    expect(name.length).toBe(100);
+    vi.mocked(getTeams).mockResolvedValue([{ ...TEAM, name, projectCount: 3 } as Team]);
+    vi.mocked(getProjects).mockImplementation(async (teamId?: string) => (teamId ? [OWN] : []));
+    render(<ProjectsPage />);
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
+    const band = document.querySelector(".pshell > .page-header") as HTMLElement;
+    expect(band).toHaveClass("page-header--summary-truncates");
+    await waitFor(() =>
+      expect(band.querySelector(".page-header-summary")?.textContent).toBe(`${name} · 3 projects`),
     );
   });
 });
