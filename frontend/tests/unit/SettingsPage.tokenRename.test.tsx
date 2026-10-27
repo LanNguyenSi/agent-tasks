@@ -299,6 +299,7 @@ describe("TeamSettingsPage — page shell", () => {
     // The side-nav lists exactly the team sections.
     const nav = screen.getByRole("complementary", { name: "Team settings sections" });
     expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "Team name",
       "API Tokens",
       "Enterprise SSO",
     ]);

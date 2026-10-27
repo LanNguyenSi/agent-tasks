@@ -414,6 +414,15 @@ export async function createTeam(body: { name: string; slug: string }): Promise<
   return data.team;
 }
 
+/** Rename a team (team admins only). The slug never changes. */
+export async function renameTeam(teamId: string, name: string): Promise<Team> {
+  const data = await request<{ team: Team }>(`/api/teams/${teamId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  return data.team;
+}
+
 export interface AgentToken {
   id: string;
   name: string;
