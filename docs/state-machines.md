@@ -52,7 +52,7 @@ These run on every state-write path (transition, PATCH `{ status }`, `task_finis
 |---|---|---|---|
 | `AUTONOMOUS` | allowed | allowed | none |
 | `AWAITS_CONFIRMATION` | allowed | allowed | `self_merge_notice` signal to every human team member |
-| `REQUIRES_DISTINCT_REVIEWER` | rejected with `403 forbidden` (audit `task.review_rejected_self_reviewer`) | rejected with `403 self_merge_blocked` (audit `task.pr_merged.blocked_self_merge`) on a task not enrolled in Grounding; on a task enrolled in Grounding (any Grounding cohort, including admin-migrated tasks), `403 forbidden` with the message `Self-merge is blocked: a distinct reviewer must merge` (no audit entry) | none |
+| `REQUIRES_DISTINCT_REVIEWER` | rejected with `403 forbidden` (audit `task.review_rejected_self_reviewer`) | rejected with `403 self_merge_blocked` (audit `task.pr_merged.blocked_self_merge`) on a task the legacy handler serves (not enrolled in Grounding and outside the enforced Grounding scope; inside that scope a merge of an unenrolled task answers `409 grounding_enrollment_required`); on a task enrolled in Grounding (any Grounding cohort, including admin-migrated tasks), `403 forbidden` with the message `Self-merge is blocked: a distinct reviewer must merge` (no audit entry) | none |
 
 `AWAITS_CONFIRMATION` is the async-HITL middle ground: the agent is not blocked, but every human on the team gets a notification they can act on.
 
