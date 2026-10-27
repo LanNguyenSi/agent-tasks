@@ -68,6 +68,10 @@ const TEAM: Team = { id: "team-1", name: "Pandora", slug: "pandora", role: "ADMI
  *  preventDefault marker (the page's listener was registered first). */
 let seen: { key: string; prevented: boolean }[];
 
+function recordKey(e: KeyboardEvent): void {
+  seen.push({ key: e.key, prevented: e.defaultPrevented });
+}
+
 /** Open the account menu and wait for its first item to hold focus. */
 async function openAccountMenu(): Promise<void> {
   await userEvent.click(screen.getByRole("button", { name: "Account menu for lan" }));
@@ -97,10 +101,11 @@ beforeEach(async () => {
   // Wait for the loaded state: page shortcuts only act once teamDataReady.
   await screen.findByRole("button", { name: /New task/ });
   seen = [];
-  window.addEventListener("keydown", (e) => seen.push({ key: e.key, prevented: e.defaultPrevented }));
+  window.addEventListener("keydown", recordKey);
 });
 
 afterEach(() => {
+  window.removeEventListener("keydown", recordKey);
   cleanup();
   window.localStorage.clear();
 });

@@ -283,14 +283,26 @@ function TasksPageInner() {
   // render) receives focus from the effect below, once it exists.
   const focusInlineRetryRef = useRef(false);
   // A row action that may drop its row (Promote/Discard/demote): where the
-  // row sat among the actionable rows, so its focus can be handed to the
-  // neighbouring row when the refreshed list no longer contains it (the
-  // trigger itself unmounts, and focus would fall to the document body).
+  // row sat among the actionable rows, and the retryToken value the action's
+  // refresh bumps to, so its focus can be handed to the neighbouring row
+  // when that refreshed list no longer contains it (the trigger itself
+  // unmounts, and focus would fall to the document body). `token` ties the
+  // entry to the action's own refresh: fetches completing under a different
+  // token (the 30 s poll, a filter change, a Retry after a failed action)
+  // must not consume it, and a failed action clears the entry outright.
   const rowFocusRecoveryRef = useRef<{
     taskId: string;
     teamId: string | null;
     triggerIndex: number;
+    token: number;
   } | null>(null);
+  // Set when the action's refreshed list completed without the row: the
+  // effect below moves focus once that list has committed, i.e. once the
+  // trigger is really gone from the DOM. It must not be a timer started next
+  // to setLoaded: in a real browser a setTimeout(0) fires before React
+  // commits the removal, when the actioned trigger is still mounted and
+  // focused.
+  const rowFocusHandoffRef = useRef<number | null>(null);
 
   // ── Parse URL params ──────────────────────────────────────────
 
@@ -434,9 +446,22 @@ function TasksPageInner() {
           filteredTotal: r.filteredTotal ?? r.tasks.length,
           counts: r.counts ?? null,
         });
-        // Row-action focus recovery: this completed fetch is the refreshed
-        // list a pending row action was waiting for (no-op when none is).
-        recoverRowActionFocus(teamId, tasks);
+        // Row-action focus recovery: this fetch ran under the retryToken the
+        // pending action bumped, so it is the action's own refresh (no other
+        // fetch matches that token). Row still in the list -> focus already
+        // stayed on its own trigger; row gone -> record the handoff for the
+        // post-commit effect below, where the trigger is really unmounted.
+        const pendingRecovery = rowFocusRecoveryRef.current;
+        if (
+          pendingRecovery &&
+          pendingRecovery.teamId === teamId &&
+          pendingRecovery.token === retryToken
+        ) {
+          rowFocusRecoveryRef.current = null;
+          if (!tasks.some((t) => t.id === pendingRecovery.taskId)) {
+            rowFocusHandoffRef.current = pendingRecovery.triggerIndex;
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setFetchErrorState({
@@ -462,8 +487,8 @@ function TasksPageInner() {
   // banner and the inline message. Clearing the error re-arms the loading
   // state; bumping retryToken starts a fresh request. The Retry button that
   // was clicked unmounts with the error it retries (banner or inline
-  // message), so focus moves to the results region first: it stays mounted
-  // and announces its new loading content.
+  // message), so focus moves to the results region first: focus lands on a
+  // container that stays mounted across the refetch it starts.
   function retryFetch(): void {
     tableRegionRef.current?.focus();
     setFetchErrorState(null);
@@ -480,43 +505,42 @@ function TasksPageInner() {
     (retry ?? tableRegionRef.current)?.focus();
   });
 
-  // Remember where the actioned row sits among the actionable rows, so
-  // recoverRowActionFocus can hand focus to the row that takes its slot when
-  // the action drops it (noteRowAction runs before every action that PATCHes
-  // a status and refreshes the list: Promote, Discard, Move to backlog).
+  // Remember where the actioned row sits among the actionable rows, and the
+  // retryToken the action's refresh will bump to (every handler below bumps
+  // it once on success), so the fetch running under that token hands focus
+  // to the row that takes the slot when the action drops the row.
+  // noteRowAction runs before every action that PATCHes a status and
+  // refreshes the list: Promote, Discard, Move to backlog.
   function noteRowAction(task: EnrichedTask): void {
     const actionable = serverTasks.filter(isActionableRow);
     rowFocusRecoveryRef.current = {
       taskId: task.id,
       teamId: selectedTeamId,
       triggerIndex: Math.max(0, actionable.findIndex((t) => t.id === task.id)),
+      token: retryToken + 1,
     };
   }
 
-  // Called when a list fetch completes for the actioned row's team: the
-  // first completed fetch after the action is the action's own refresh.
-  // Row still in the list -> focus already stayed on its own trigger; row
-  // gone -> its trigger unmounted, so after the commit that removes it
-  // (next macrotask) focus moves to the trigger occupying its slot (the next
-  // row, or the last row when it was the last one), or to the results region
-  // when the table is now empty. Guarded on focus having fallen to the body,
-  // so it never pulls focus the user has moved elsewhere in the meantime.
-  function recoverRowActionFocus(teamId: string, tasks: EnrichedTask[]): void {
-    const pending = rowFocusRecoveryRef.current;
-    rowFocusRecoveryRef.current = null;
-    if (!pending || pending.teamId !== teamId) return;
-    if (tasks.some((t) => t.id === pending.taskId)) return;
-    const { triggerIndex } = pending;
-    window.setTimeout(() => {
-      if (document.activeElement !== document.body) return;
-      const triggers = document.querySelectorAll<HTMLButtonElement>(".tasks-row-actions-btn");
-      if (triggers.length === 0) {
-        tableRegionRef.current?.focus();
-        return;
-      }
-      triggers[Math.min(triggerIndex, triggers.length - 1)]?.focus();
-    }, 0);
-  }
+  // Row-action focus recovery, run after the commit of the action's
+  // refreshed list (rowFocusHandoffRef is set by that fetch's completion
+  // above): the actioned row's trigger is now really unmounted, so focus has
+  // fallen to the body. Move it to the trigger occupying the removed row's
+  // slot (the next row, or the last row when it was the last one), or to the
+  // results region when the table is now empty. Guarded on focus having
+  // fallen to the body, so it never pulls focus the user has moved elsewhere
+  // in the meantime.
+  useEffect(() => {
+    const triggerIndex = rowFocusHandoffRef.current;
+    if (triggerIndex === null) return;
+    rowFocusHandoffRef.current = null;
+    if (document.activeElement !== document.body) return;
+    const triggers = document.querySelectorAll<HTMLButtonElement>(".tasks-row-actions-btn");
+    if (triggers.length === 0) {
+      tableRegionRef.current?.focus();
+      return;
+    }
+    triggers[Math.min(triggerIndex, triggers.length - 1)]?.focus();
+  }, [loaded]);
 
   // "/" focuses the search input, "C" opens the create flow (the New-task
   // button advertises the shortcut via its KeyHint chip).
@@ -600,6 +624,9 @@ function TasksPageInner() {
       await updateTask(task.id, { status: "open" });
       setRetryToken((t) => t + 1);
     } catch (err) {
+      // The action failed: it will not drop the row, so a pending focus
+      // recovery must not survive to a later refresh.
+      rowFocusRecoveryRef.current = null;
       setRowActionErrorState({
         teamId,
         message: err instanceof Error ? err.message : "Failed to promote task.",
@@ -623,6 +650,7 @@ function TasksPageInner() {
       await updateTask(task.id, { status: "backlog" });
       setRetryToken((t) => t + 1);
     } catch (err) {
+      rowFocusRecoveryRef.current = null;
       setRowActionErrorState({
         teamId,
         message: err instanceof Error ? err.message : "Failed to move task to backlog.",
@@ -648,6 +676,7 @@ function TasksPageInner() {
       setDiscardTarget(null);
       setRetryToken((t) => t + 1);
     } catch (err) {
+      rowFocusRecoveryRef.current = null;
       setRowActionErrorState({
         teamId,
         message: err instanceof Error ? err.message : "Failed to discard task.",
