@@ -133,14 +133,21 @@ export interface BacklogRowActionHandlers {
 // done rows would carry a permanently empty column. With no column
 // declaring a width the table stays in auto layout (see the note on
 // TASK_PAGE_COLUMNS), so no percentage-width scaling can clip the trigger.
+// Whether a rendered row gets a row-actions trigger: backlog or open. The
+// one definition of "actionable", shared by the column below and by the
+// page's row-action focus recovery (page.tsx), which locates the trigger
+// the removed row's slot now holds among `document`'s `.tasks-row-actions-btn`
+// (same row order as the actionable rows here).
+export function isActionableRow(t: EnrichedTask): boolean {
+  const status = normalizeStatus(t.status);
+  return status === "backlog" || status === "open";
+}
+
 export function buildTaskPageColumns(
   handlers: BacklogRowActionHandlers,
   rows: EnrichedTask[],
 ): ColumnDef<EnrichedTask>[] {
-  const hasActionRow = rows.some((t) => {
-    const status = normalizeStatus(t.status);
-    return status === "backlog" || status === "open";
-  });
+  const hasActionRow = rows.some(isActionableRow);
   if (!hasActionRow) return TASK_PAGE_COLUMNS;
   return [
     ...TASK_PAGE_COLUMNS,
@@ -161,13 +168,10 @@ export function buildTaskPageColumns(
 // row. Disabled while the row's action is in flight: every item of a busy
 // row is disabled, and once the menu is open the trigger follows suit so a
 // second click only ever closes it.
-// While the menu is open, the wrapper stops keydown from bubbling on: the
-// row no longer needs it (Table ignores events from outside its DOM), but
-// the page's window-level shortcuts ("/" focuses search, "C" opens the
-// create flow, page.tsx) would otherwise fire on a key typed inside the
-// open menu. The wrapper sits above the DropdownMenu (not inside its
-// children), so the panel div keeps handling ArrowUp/ArrowDown/Home/End/
-// Escape before the event is stopped here.
+// The page's window-level shortcuts ("/" focuses search, "C" opens the create
+// flow, page.tsx) must not fire on a key typed inside the open menu; the
+// DropdownMenu panel isolates keydown while it is open (see its handleKeyDown),
+// so nothing extra is needed here.
 function TaskRowActionsMenu({
   task,
   handlers,
@@ -184,7 +188,10 @@ function TaskRowActionsMenu({
   // Closing the menu removes the focused item, so focus goes back to the
   // trigger instead of falling to the page: the row stays when the action
   // keeps it in the current filter, and the Discard confirm dialog returns
-  // focus to the trigger when it closes.
+  // focus to the trigger when it closes. When the action instead drops the
+  // row from the refreshed list (e.g. Promote under the Backlog chip), the
+  // trigger unmounts and the page's row-action focus recovery moves focus to
+  // the next row's trigger, the previous one, or the table region (page.tsx).
   const run = (fn: (task: EnrichedTask) => void) => () => {
     setMenuOpen(false);
     menuBtnRef.current?.focus();
@@ -194,12 +201,7 @@ function TaskRowActionsMenu({
   const blockedHint = status === "open" ? demoteBlockedHint(task) : null;
 
   return (
-    <div
-      className="tasks-row-actions"
-      // Only while open: closed, the trigger's own Enter/Space guards below
-      // are enough, and global key shortcuts keep working from the trigger.
-      onKeyDown={menuOpen ? (e: KeyboardEvent<HTMLDivElement>) => e.stopPropagation() : undefined}
-    >
+    <div className="tasks-row-actions">
       <button
         ref={menuBtnRef}
         type="button"
