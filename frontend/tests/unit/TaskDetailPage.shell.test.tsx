@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 /**
  * /tasks/[id] page frame: loading, error and loaded states each render
- * exactly one <main> whose content slot is the wide, flush variant (the task
- * detail frame, .td-page, owns the 1200px column and the gutter), and the
- * loading/error wrappers sit inside it.
+ * exactly one <main> on the default (centred 1200px) column whose content
+ * slot is flush (the task detail frame, .td-page, owns the gutter), and the
+ * loading/error wrappers sit inside it, so every state starts on the same x.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
@@ -60,41 +60,42 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-function expectWideFlushFrame(): HTMLElement {
+function expectDefaultFlushFrame(): HTMLElement {
   const mains = screen.getAllByRole("main");
   expect(mains).toHaveLength(1);
   const main = mains[0]!;
+  expect(main).toHaveClass("pshell--default");
+  expect(main).not.toHaveClass("pshell--wide");
   const slots = main.querySelectorAll(":scope > .pshell-content");
   expect(slots).toHaveLength(1);
   const slot = slots[0]!;
-  expect(slot).toHaveClass("pshell-content--wide", "pshell-content--flush");
-  expect(slot).not.toHaveClass("pshell-content--default");
-  expect(slot).not.toHaveClass("pshell-content--narrow");
+  expect(slot).toHaveClass("pshell-content--default", "pshell-content--flush");
+  expect(slot).not.toHaveClass("pshell-content--wide");
   return main;
 }
 
 describe("/tasks/[id] page frame", () => {
-  it("loading: one <main>, wide + flush slot, skeleton inside the loading wrapper", () => {
+  it("loading: one <main>, default + flush slot, skeleton inside the loading wrapper", () => {
     vi.mocked(getTask).mockReturnValue(new Promise(() => {}));
     const { container } = render(<TaskDetailPage />);
-    const main = expectWideFlushFrame();
+    const main = expectDefaultFlushFrame();
     expect(main.querySelector(".pshell-content > .td-loading-wrap .td-skeleton")).not.toBeNull();
     expect(container.querySelectorAll("main")).toHaveLength(1);
   });
 
-  it("error: one <main>, wide + flush slot, banner inside the error wrapper", async () => {
+  it("error: one <main>, default + flush slot, banner inside the error wrapper", async () => {
     vi.mocked(getTask).mockRejectedValue(new Error("Task not found"));
     render(<TaskDetailPage />);
     const banner = await screen.findByText("Task not found");
-    const main = expectWideFlushFrame();
+    const main = expectDefaultFlushFrame();
     expect(banner.closest(".pshell-content > .td-error-wrap")).not.toBeNull();
     expect(main).toContainElement(banner);
   });
 
-  it("loaded: one <main>, wide + flush slot holding the task detail frame", async () => {
+  it("loaded: one <main>, default + flush slot holding the task detail frame", async () => {
     render(<TaskDetailPage />);
     const body = await screen.findByText("task body");
-    const main = expectWideFlushFrame();
+    const main = expectDefaultFlushFrame();
     expect(main.querySelector(".pshell-content > .td-page")).toBe(body);
   });
 });

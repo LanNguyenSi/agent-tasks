@@ -4,7 +4,8 @@
  * project falls back to the Projects page (never to the bare /dashboard,
  * which resumes the last board and could loop back to the same project),
  * and the board tab renders in the wide, flush content slot while the
- * other tabs sit in the 1200px column; every tab renders the hub band and
+ * other tabs sit in the centred 1200px column (the band follows the tab's
+ * --page-column through the <main> variant class); every tab renders the hub band and
  * body inside exactly one <main>. The band's crumb is `Projects / <project picker>`:
  * the Projects link goes through the routes builder, the picker lists the
  * team's projects (or the shared ones for a user without a team) and keeps
@@ -116,6 +117,7 @@ describe("project hub layout", () => {
     const slot = screen.getByText("tab body").closest(".pshell-content");
     expect(slot).toHaveClass("pshell-content--wide", "pshell-content--flush");
     expect(slot).not.toHaveClass("pshell-content--default");
+    expect(screen.getByRole("main")).toHaveClass("pshell--wide");
   });
 
   it("offers Skip to board first on the board tab, before the hub band, aimed at the page's board region", async () => {
@@ -153,6 +155,11 @@ describe("project hub layout", () => {
     const slot = screen.getByText("tab body").closest(".pshell-content");
     expect(slot).toHaveClass("pshell-content--default");
     expect(slot).not.toHaveClass("pshell-content--wide", "pshell-content--flush");
+    // The hub band is a direct child of <main>, so it takes the tab's column.
+    const main = screen.getByRole("main");
+    expect(main).toHaveClass("pshell--default");
+    expect(main.querySelector(":scope > .proj-hub-header")).not.toBeNull();
+    expect(main.querySelector(":scope > .proj-subnav")).not.toBeNull();
   });
 
   it.each(["board", "members", "workflow", "settings"])(

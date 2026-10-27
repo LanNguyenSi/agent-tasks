@@ -184,7 +184,7 @@ export default function SsoSettingsPage() {
 
   return (
     <PageShell
-      variant="narrow"
+      contentClassName="sso-content"
       header={
         <PageHeader
           breadcrumb={

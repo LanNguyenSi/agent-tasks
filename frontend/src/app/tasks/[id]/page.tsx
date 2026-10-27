@@ -146,7 +146,9 @@ export default function TaskDetailPage() {
   }
 
   return (
-    <PageShell variant="wide" flush>
+    // Default (centred 1200px) column; flush because .td-page owns the gutter
+    // and the layout below it owns the bottom spacing.
+    <PageShell flush>
       {/* Visually hidden H1 for the document outline when the task hasn't
           loaded yet; once loaded, TaskDetail renders the real task-title H1. */}
       {loading && <h1 className="sr-only">Task Details</h1>}
