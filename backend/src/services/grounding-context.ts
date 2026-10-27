@@ -136,7 +136,7 @@ export async function resolveGroundingTarget(
     if (!holdsWork || holdsReview) throw new GroundingAccessError("forbidden", 403, WORK_CLAIM_REFUSAL);
   }
   if (intent === "merge" && !checkSelfMergeGate(task, actor, task.project).allowed)
-    throw new GroundingAccessError("forbidden", 403);
+    throw new GroundingAccessError("forbidden", 403, SELF_MERGE_REFUSAL);
   const outgoing = def.transitions.filter(t => t.from === task.status);
   const reviewEdges = outgoing.filter(t => isReviewState(def, t.to));
   const candidates = intent === "finish" && reviewEdges.length > 0

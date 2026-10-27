@@ -688,8 +688,8 @@ describe("mapBackendError catalog", () => {
   });
   // Per-verb recipe for a 403 whose body carries no message, pinned verbatim.
   const NO_DETAIL: Record<string, string> = {
-    task_merge: "no detail sent; this verb is refused for: a missing github:pr_merge scope or write access, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent (see workflow_primer)",
-    pull_requests_merge: "no detail sent; this verb is refused for: a missing tasks:transition or github:pr_merge scope, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent (see workflow_primer)",
+    task_merge: "no detail sent; this verb is refused for: the github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent (see workflow_primer)",
+    pull_requests_merge: "no detail sent; this verb is refused for: the tasks:transition or github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent (see workflow_primer)",
     task_finish: "no detail sent; this verb is refused for: a missing tasks:transition scope, write access, a work or review claim, review approval, the transition role (autoMerge: github:pr_merge, self-merge gate, allowAgentPrMerge) (see workflow_primer)",
     task_abandon: "no detail sent; this verb is refused for: a missing tasks:claim scope, project write access, or holding neither the work claim nor the review claim (see workflow_primer)",
     pull_requests_create: "no detail sent; this verb is refused for: a missing tasks:update or github:pr_create scope, project access, or no allowAgentPrCreate consent from a team member with a connected GitHub account (see workflow_primer)",
@@ -712,6 +712,8 @@ describe("mapBackendError catalog", () => {
     expect(NO_DETAIL.pull_requests_create).toContain("allowAgentPrCreate");
     expect(NO_DETAIL.pull_requests_create).not.toContain("allowAgentPrMerge");
     for (const verb of ["task_merge", "pull_requests_merge", "task_finish"]) expect(NO_DETAIL[verb]).toContain("allowAgentPrMerge");
+    // A merge can carry tasks linked to the PR from other projects; write access to each one's project is a precondition.
+    for (const verb of ["task_merge", "pull_requests_merge"]) expect(NO_DETAIL[verb]).toContain("write access to the project of every task linked to the PR");
   });
   it("grounding 403: an unknown or absent verbContext, or one outside the table, makes no causal claim (generic recipe, no list)", () => {
     for (const verb of [undefined, "task_grounding_receipt_upload", "tasks_claim", "toString", "constructor"] as const) {

@@ -223,11 +223,11 @@ const projectTasksIncludeSchema = z
 // place that decides the wire format for every verb's failure path;
 // tests/errors.test.ts pins the equality with serializeResult directly.
 //
-// `verbContext`, forwarded to mapBackendError, is this call's own tool name
-// — passed only at the handful of call sites where the resulting recipe
-// actually depends on it (see errors.ts's precondition_failed entry);
-// every other call site omits it and gets the verb-independent catalog
-// entries (or the generic degrade path) unaffected.
+// `verbContext`, forwarded to mapBackendError, is this call's own tool name,
+// passed wherever a catalog entry branches on it (precondition_failed,
+// cross_repo_pr_rejected, github_error, the grounding forbidden table; see
+// errors.ts), and also at task_respec, task_submit_pr and
+// task_grounding_receipt_upload for explicitness. Other call sites omit it.
 async function wrap<T>(fn: () => Promise<T>, verbContext?: string): Promise<T> {
   try {
     return await fn();
@@ -773,7 +773,7 @@ export function buildTools(
     def({
       name: "task_merge",
       description:
-        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project's governanceMode is not AUTONOMOUS (the legacy soloMode=true flag is only a fallback while governanceMode is unset), refuses with 403 if the caller also holds the work claim: `forbidden` with the message `Self-merge is blocked: a distinct reviewer must merge` on a task under external grounding, `self_merge_blocked` otherwise. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
+        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project's governanceMode is not AUTONOMOUS (the legacy soloMode=true flag is only a fallback while governanceMode is unset), refuses with 403 if the caller also holds the work claim: `forbidden` with the message `Self-merge is blocked: a distinct reviewer must merge` on a task enrolled in Grounding (any Grounding cohort, including admin-migrated tasks), `self_merge_blocked` on a task not enrolled in Grounding. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),

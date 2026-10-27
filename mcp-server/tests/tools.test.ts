@@ -791,8 +791,8 @@ describe("buildTools", () => {
   // The Grounding write verbs thread their own name into wrap(), so a bare 403
   // from the backend gets THAT verb's precondition list rather than another verb's.
   const BARE_403_ARGS: Array<[string, Record<string, unknown>, string]> = [
-    ["task_merge", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "a missing github:pr_merge scope or write access"],
-    ["pull_requests_merge", { taskId: "55555555-5555-5555-5555-555555555555", owner: "acme", repo: "r", prNumber: 4, idempotencyKey: "k1" }, "a missing tasks:transition or github:pr_merge scope"],
+    ["task_merge", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "the github:pr_merge scope, write access to the project of every task linked to the PR"],
+    ["pull_requests_merge", { taskId: "55555555-5555-5555-5555-555555555555", owner: "acme", repo: "r", prNumber: 4, idempotencyKey: "k1" }, "the tasks:transition or github:pr_merge scope"],
     ["task_finish", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "a work or review claim"],
     ["task_abandon", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "holding neither the work claim nor the review claim"],
     ["pull_requests_create", { taskId: "55555555-5555-5555-5555-555555555555", owner: "acme", repo: "r", head: "feat/x", title: "t", idempotencyKey: "k1" }, "allowAgentPrCreate consent"],

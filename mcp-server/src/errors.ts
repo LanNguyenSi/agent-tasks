@@ -29,14 +29,14 @@
 // mapBackendError(status, body, verbContext?) is the single entry point:
 // tools.ts's wrap() is its only call site (mirrors receipt.ts's relationship
 // to the receipt-projection helpers). `verbContext`, when supplied, is the
-// calling tool's own registered name (e.g. "task_finish") — used only where
-// the correct recipe genuinely depends on which verb was called (today:
-// `precondition_failed`, which the live backend can raise from task_start,
-// task_finish, and two deprecated v1 routes with different correct retry
-// targets; and `cross_repo_pr_rejected`, whose pull_requests_create emit
-// site sends owner/repo rather than a prUrl, so the default task_submit_pr
-// recipe would misdirect it). Every other catalog entry is verb-independent
-// by construction.
+// calling tool's own registered name (e.g. "task_finish"). Four catalog
+// entries branch on it: `precondition_failed` (raised from task_start,
+// task_finish and deprecated v1 routes with different correct retry
+// targets), `cross_repo_pr_rejected` (pull_requests_create's emit site sends
+// owner/repo rather than a prUrl, so the default task_submit_pr recipe would
+// misdirect it), `github_error` (pull_requests_create only) and the grounding
+// forbidden table (one precondition list per verb, see 7e). Every other
+// catalog entry is verb-independent by construction.
 //
 // Catalog seed (docs/response-contract-v1.md's "Catalog seed" list, plus
 // pr_author_mismatch from the read_first context on backend/src/routes/
@@ -646,11 +646,11 @@ function preconditionFailedError(body: BackendErrorBody, verbContext: string | u
   });
   const needsSubmitPr = rules.includes("branchPresent") || rules.includes("prPresent");
   // task_finish is the contract's own documented context for this trap
-  // ("blocks task_finish with 422 precondition_failed") and the correct
-  // fallback for every call site this module does not thread verbContext
-  // through today (only task_start, task_finish, tasks_claim, tasks_update,
-  // and tasks_transition can actually raise this error; see tools.ts's
-  // wrap() call sites for those five).
+  // ("blocks task_finish with 422 precondition_failed") and the fallback
+  // for a call without a verbContext. Only task_start, task_finish,
+  // tasks_claim, tasks_update and tasks_transition can raise this error,
+  // and each passes its own name to wrap() (tools.ts; wrap()'s comment
+  // there lists every call site that passes one).
   const retryVerb = verbContext ?? "task_finish";
   const recipe = needsSubmitPr
     ? `run \`gh pr create\`, call task_submit_pr with the branch/PR metadata, then retry ${retryVerb}`
@@ -852,13 +852,13 @@ function mergeInProgressError(message: string): TeachingError {
 //    or a deliberately bare no-access answer) gets that verb's own list of
 //    possible preconditions as the recipe, from GROUNDING_FORBIDDEN_
 //    PRECONDITIONS. The table is keyed by the verbContext the tool passes
-//    to wrap() (tools.ts passes it at task_merge, pull_requests_merge,
-//    task_finish, task_abandon, pull_requests_create and
-//    task_grounding_attempt_create, the six verbs whose Grounding routes
-//    answer this 403, and at the other Grounding-routed verbs for
-//    explicitness); each list names only the preconditions that verb's
-//    route can refuse on. A verbContext outside the table, or none, makes
-//    no causal claim: the result falls through to the generic degrade.
+//    to wrap(); its keys are the six verbs whose Grounding routes answer
+//    this 403 (task_merge, pull_requests_merge, task_finish, task_abandon,
+//    pull_requests_create, task_grounding_attempt_create), each of which
+//    passes its own name. Each list names only the preconditions that
+//    verb's route can refuse on. A verbContext outside the table (such as
+//    task_grounding_receipt_upload), or none, makes no causal claim: the
+//    result falls through to the generic degrade.
 // Precedence: a present non-empty message wins (the list never applies to
 // it); an empty message counts as absent. A message without a `github:*`
 // scope returns undefined: it falls through to the generic degrade path
@@ -869,9 +869,9 @@ const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
 
 const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
   task_merge:
-    "a missing github:pr_merge scope or write access, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent",
+    "the github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent",
   pull_requests_merge:
-    "a missing tasks:transition or github:pr_merge scope, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent",
+    "the tasks:transition or github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent",
   task_finish:
     "a missing tasks:transition scope, write access, a work or review claim, review approval, the transition role (autoMerge: github:pr_merge, self-merge gate, allowAgentPrMerge)",
   task_abandon:
@@ -1661,8 +1661,8 @@ function genericDegrade(
 /**
  * Maps a backend AgentTasksApiError's (status, body) to the teaching-error
  * shape. `verbContext`, when supplied, is the calling tool's own registered
- * name — see the precondition_failed catalog entry above for the one place
- * it changes the output.
+ * name; it changes the output only in precondition_failed, cross_repo_pr_
+ * rejected, github_error and the grounding forbidden table (see the header).
  */
 export function mapBackendError(status: number, rawBody: unknown, verbContext?: string): TeachingError {
   const body = asBackendBody(rawBody);

@@ -100,7 +100,16 @@ export class GroundingAttemptsService {
     else await this.authorizeTask(task, actor, db);
   }
 
-  /** Pre-parse admission grants only one of the installed route capabilities. */
+  /**
+   * Pre-parse admission grants only one of the installed route capabilities:
+   * the claim and scope check, or else merge eligibility. When merge
+   * eligibility refuses too (a forbidden, or a bad_state because the task is
+   * not in a review state, so the merge route does not apply), the caller
+   * gets the claim and scope refusal: the request's intent is not read yet,
+   * and naming a merge precondition would send an ordinary caller after a
+   * merge scope or gate it does not need. Any other merge-eligibility error
+   * (an ambiguous review workflow, an unavailable definition) is its own answer.
+   */
   async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {
       await this.admit(db, taskId, actor);
@@ -108,7 +117,12 @@ export class GroundingAttemptsService {
       try { await this.authorizeTask(task, actor, db); }
       catch (error) {
         if (!(error instanceof GroundingAccessError) || error.code !== "forbidden") throw error;
-        await resolveTaskMergeTarget(db, task, actor, this.authority);
+        try { await resolveTaskMergeTarget(db, task, actor, this.authority); }
+        catch (fallback) {
+          if (fallback instanceof GroundingAccessError && fallback.code === "forbidden") throw error;
+          if (fallback instanceof GroundingAccessError && fallback.code === "bad_state" && !await isInReviewState(db, task)) throw error;
+          throw fallback;
+        }
       }
     });
   }
