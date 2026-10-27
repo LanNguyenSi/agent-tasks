@@ -26,6 +26,8 @@ import { boardHref, projectsHref } from "../../lib/routes";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
+import { PageHeader } from "../../components/ui/PageHeader";
+import { PageShell } from "../../components/ui/PageShell";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import EmptyState from "../../components/ui/EmptyState";
@@ -581,36 +583,21 @@ export default function HomeDashboardPage() {
     </div>
   );
 
-  const heading = (
-    <div className="home-header">
-      <h1 className="home-header-title">
-        {selectedTeam?.name ?? "Home"}
-      </h1>
-      <p className="home-header-sub">
-        {selectedTeam
-          ? "Task overview across all your projects."
-          : "Projects shared with you."}
-      </p>
-    </div>
+  // The team name is the H1 in the PageHeader band; a user without a team
+  // gets "Home" with the shared-projects hint and the create-team action.
+  const header = selectedTeam ? (
+    <PageHeader title={selectedTeam.name} />
+  ) : (
+    <PageHeader title="Home" summary="Projects shared with you.">
+      <Button href="/onboarding" variant="secondary">
+        Create a team
+      </Button>
+    </PageHeader>
   );
 
   return (
-    <main className="page-shell">
-      {selectedTeam ? (
-        heading
-      ) : (
-        <>
-          <div className="teams-header-row">
-            {heading}
-            <div className="teams-actions">
-              <Button href="/onboarding" variant="secondary">
-                Create a team
-              </Button>
-            </div>
-          </div>
-          <SharedProjectsList projects={sharedProjects} />
-        </>
-      )}
+    <PageShell header={header}>
+      {!selectedTeam && <SharedProjectsList projects={sharedProjects} />}
 
       {selectedTeam && (
         !tasksLoaded ? (
@@ -676,6 +663,6 @@ export default function HomeDashboardPage() {
           </>
         )
       )}
-    </main>
+    </PageShell>
   );
 }

@@ -107,7 +107,7 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
 
     render(<ProjectsPage />);
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
-    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team Two · /)).toBeInTheDocument();
   });
 
   it("a valid ?teamId wins over the remembered team and is remembered", async () => {
@@ -115,7 +115,7 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t1");
 
     render(<ProjectsPage />);
-    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team Two · /)).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
     // URL-selected team becomes the remembered one (same key as the switcher).
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
@@ -126,13 +126,13 @@ describe("/projects page — current-team resolution (lib/currentTeam)", () => {
     window.localStorage.setItem("agent-tasks:lastTeamId", "t2");
 
     render(<ProjectsPage />);
-    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team Two · /)).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
   });
 
   it("has no in-page team select (the header switcher owns switching)", async () => {
     render(<ProjectsPage />);
-    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team One · /)).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Switch team" })).not.toBeInTheDocument();
   });
 });
@@ -181,12 +181,12 @@ describe("/projects page: current team follows the URL", () => {
 
   it("re-resolves the team and reloads its projects when the header switches", async () => {
     renderBoth();
-    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team One · /)).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t1"));
 
     pick("Team Two");
 
-    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team Two · /)).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledWith("t2"));
     expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Agent Tasks")).not.toBeInTheDocument();
@@ -196,13 +196,13 @@ describe("/projects page: current team follows the URL", () => {
 
   it("a URL naming the team already shown, or an unknown team, reloads nothing", async () => {
     renderBoth();
-    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team One · /)).toBeInTheDocument();
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalledTimes(1));
 
     act(() => nav.push("/projects?teamId=t1"));
     act(() => nav.push("/projects?teamId=ghost"));
 
-    expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(screen.getByText(/^Team One · /)).toBeInTheDocument();
     expect(mockGetProjects).toHaveBeenCalledTimes(1);
   });
 
@@ -225,7 +225,7 @@ describe("/projects page: current team follows the URL", () => {
     expect(screen.queryByText("Second Team Project")).not.toBeInTheDocument();
     // A's list must survive B's late answer, not just hide B's.
     expect(screen.getAllByText("Agent Tasks").length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(screen.getByText(/^Team One · /)).toBeInTheDocument();
     expect(headerTeam()).toBe("Team One");
   });
 
@@ -259,11 +259,11 @@ describe("/projects page: current team follows the URL", () => {
 
     pick("Team Two");
 
-    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team Two · /)).toBeInTheDocument();
     expect(screen.queryByText("Agent Tasks")).not.toBeInTheDocument();
     expect(screen.queryByText("No projects yet.")).not.toBeInTheDocument();
     // Nor is the old team's count (one project) carried over.
-    expect(screen.getByText("0 projects")).toBeInTheDocument();
+    expect(screen.getByText("Team Two · 0 projects")).toBeInTheDocument();
     await act(async () => {
       slowB.resolve([T2_PROJECT]);
     });
@@ -278,13 +278,13 @@ describe("/projects page: current team follows the URL", () => {
     expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
 
     act(() => nav.back());
-    expect(await screen.findByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team One · /)).toBeInTheDocument();
     expect((await screen.findAllByText("Agent Tasks")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Second Team Project")).not.toBeInTheDocument();
     expect(headerTeam()).toBe("Team One");
 
     act(() => nav.forward());
-    expect(await screen.findByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Team Two · /)).toBeInTheDocument();
     expect((await screen.findAllByText("Second Team Project")).length).toBeGreaterThan(0);
     expect(headerTeam()).toBe("Team Two");
   });
@@ -304,7 +304,7 @@ describe("/projects page: current team follows the URL", () => {
     });
 
     expect(screen.queryByText("Agent Tasks")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(screen.getByText(/^Team Two · /)).toBeInTheDocument();
     expect(headerTeam()).toBe("Team Two");
   });
 
@@ -357,7 +357,7 @@ describe("/projects page: current team follows the URL", () => {
     expect(mockGetProjects.mock.calls).toHaveLength(loadsBefore);
     expect(screen.getAllByText("Second Team Project").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Loading projects")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(screen.getByText(/^Team Two · /)).toBeInTheDocument();
     // Nor does the old team's sync outcome show up under the new team.
     expect(screen.queryByText("Already up to date")).not.toBeInTheDocument();
   });
@@ -391,7 +391,7 @@ describe("/projects page: current team follows the URL", () => {
       del.resolve();
     });
 
-    expect(screen.getByRole("heading", { name: "Team Two" })).toBeInTheDocument();
+    expect(screen.getByText(/^Team Two · /)).toBeInTheDocument();
     expect(screen.queryByText("Project deleted")).not.toBeInTheDocument();
     expect(screen.queryByText(/Project "Agent Tasks" deleted/)).not.toBeInTheDocument();
     expect(screen.getAllByText("Second Team Project").length).toBeGreaterThan(0);
@@ -472,7 +472,7 @@ describe("/projects page: current team follows the URL", () => {
     renderBoth();
 
     expect(await screen.findByText("projects down")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Team One" })).toBeInTheDocument();
+    expect(screen.getByText(/^Team One · /)).toBeInTheDocument();
     // The list counts as loaded (empty), so the page shows its empty state
     // instead of the loading skeleton.
     expect(await screen.findByText("No projects yet.")).toBeInTheDocument();

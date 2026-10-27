@@ -3,7 +3,8 @@
 // Full-page loading state. All geometry in .full-page-loader-* classes in globals.css.
 // Replaces the assorted bare "Loading…" paragraphs that diverged per page.
 
-import { SkeletonList } from "./Skeleton";
+import { PageShell } from "./PageShell";
+import { Skeleton, SkeletonList } from "./Skeleton";
 
 interface FullPageLoaderProps {
   /** Announced to assistive tech and shown beneath the centered spinner. */
@@ -11,9 +12,10 @@ interface FullPageLoaderProps {
   /**
    * "centered", a spinner vertically centered in the viewport, for whole-page
    * bootstraps that have no content shell yet (settings, teams, auth gate).
-   * "shell", skeleton rows inside the standard `.page-shell` width, so the
-   * placeholder occupies the same column the loaded content will and the
-   * layout does not jump on first paint.
+   * "shell", a PageShell on the default column with a skeleton header band
+   * (the PageHeader geometry) and skeleton rows in the content slot, so the
+   * placeholder occupies the same band and column the loaded content will
+   * and the layout does not jump on first paint.
    */
   variant?: "centered" | "shell";
   /** Shell variant only: number of skeleton rows. */
@@ -32,9 +34,18 @@ export function FullPageLoader({
 }: FullPageLoaderProps) {
   if (variant === "shell") {
     return (
-      <main className="page-shell">
+      <PageShell
+        busy
+        header={
+          <div className="page-header" aria-hidden="true">
+            <div className="page-header-left">
+              <Skeleton width="160px" height="20px" />
+            </div>
+          </div>
+        }
+      >
         <SkeletonList rows={rows} rowHeight="4rem" label={label} />
-      </main>
+      </PageShell>
     );
   }
 
