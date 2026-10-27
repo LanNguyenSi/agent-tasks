@@ -24,6 +24,7 @@ GET  /api/auth/github/callback
 GET  /api/teams
 POST /api/teams
 GET  /api/teams/:id
+PATCH /api/teams/:id              # Rename (team admins; body { name }, trimmed, 1-100 chars; the slug never changes)
 POST /api/teams/:id/members
 POST /api/teams/:id/sync          # GitHub repo sync
 

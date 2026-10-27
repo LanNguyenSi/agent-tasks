@@ -22,6 +22,7 @@ Agents act through team-scoped agent tokens; what a token may do is set by its [
 | Change workflow | no | no | yes | no |
 | Approve review | yes§ | yes§ | yes§ | yes*§ |
 | Create agent token | no | no | yes | no |
+| Rename the team (`PATCH /api/teams/:id`) | no | no | yes | no |
 | Configure team SSO | no | no | no† | token‡ |
 
 `*` Only with the matching token scopes.

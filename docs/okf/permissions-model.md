@@ -13,6 +13,7 @@ sources:
   - backend/src/routes/github.ts
   - backend/src/routes/projects.ts
   - backend/src/routes/invites.ts
+  - backend/src/routes/teams.ts
   - backend/src/routes/agent-tokens.ts
   - backend/src/services/agent-token-service.ts
   - backend/src/routes/sso.ts
@@ -53,6 +54,6 @@ sources:
 
 When the grounding runtime is configured, its routers and services run their own scope checks in their admission code, for example `backend/src/routes/grounding-task-completion.ts` and `backend/src/routes/grounding-direct-tasks.ts`.
 
-**Agent-only and human-only routes**: `requireScope` (`backend/src/middleware/auth.ts`) refuses every non-agent actor with 403 before it checks the scope, so the legacy PR create, merge and comment routes in `backend/src/routes/github.ts` accept agent tokens only; the SSO admin routes likewise accept only an agent token with `sso:admin`, never a session. In the other direction, these routes refuse agent tokens: `PATCH /api/projects/:id` (which then requires the project admin role), share-invite creation and acceptance (`backend/src/routes/invites.ts`), and agent-token creation, rename and revocation, which need a human team `ADMIN` (`canManageTeamTokens`, `backend/src/services/agent-token-service.ts`); listing a team's tokens needs any team role or a token of that team. A share invite requires a human project admin, and a `PROJECT_ADMIN` invite requires a team `ADMIN`. `docs/permissions.md` is the human-facing matrix.
+**Agent-only and human-only routes**: `requireScope` (`backend/src/middleware/auth.ts`) refuses every non-agent actor with 403 before it checks the scope, so the legacy PR create, merge and comment routes in `backend/src/routes/github.ts` accept agent tokens only; the SSO admin routes likewise accept only an agent token with `sso:admin`, never a session. In the other direction, these routes refuse agent tokens: `PATCH /api/projects/:id` (which then requires the project admin role), share-invite creation and acceptance (`backend/src/routes/invites.ts`), agent-token creation, rename and revocation, which need a human team `ADMIN` (`canManageTeamTokens`, `backend/src/services/agent-token-service.ts`), and team rename (`PATCH /api/teams/:id` in `backend/src/routes/teams.ts`, which checks the caller's own `TeamMember` row and needs `ADMIN`: a member of another role gets 403 "Only team admins can rename the team", a non-member 403, an unknown team 404; only the name is written, never the slug); listing a team's tokens needs any team role or a token of that team. A share invite requires a human project admin, and a `PROJECT_ADMIN` invite requires a team `ADMIN`. `docs/permissions.md` is the human-facing matrix.
 
 Related: `auth.md`, `governance-merge.md`, `claim-model.md`, `signals-and-notification-delivery.md`.

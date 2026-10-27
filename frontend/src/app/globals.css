@@ -7469,6 +7469,29 @@ a.proj-chip:hover {
   flex-wrap: wrap;
 }
 
+/* Team name card on /settings/team: the form is a short column, not full width. */
+.settings-team-name-form {
+  max-width: 28rem;
+}
+
+.settings-team-name-feedback {
+  margin-top: var(--space-3);
+}
+
+.settings-team-name-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.settings-team-name-value {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--space-1) 0;
+  overflow-wrap: anywhere;
+}
+
 /* SSO page */
 .settings-breadcrumb {
   color: var(--muted);
