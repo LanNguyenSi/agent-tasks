@@ -63,7 +63,7 @@ describe("/onboarding", () => {
     await screen.findByLabelText("Team name");
     const skip = screen.getByRole("link", { name: "Skip for now" });
     expect(skip.getAttribute("href")).toBe("/home");
-    expect(screen.getByRole("button", { name: "Create Team" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create team" })).toBeInTheDocument();
     // The user is not bounced back to /home: that would loop with /home's own check.
     expect(routerMocks.replace).not.toHaveBeenCalled();
   });
@@ -74,7 +74,7 @@ describe("/onboarding", () => {
     render(<OnboardingPage />);
     await screen.findByLabelText("Team name");
     expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Create Team" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create team" })).toBeInTheDocument();
     expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 
@@ -102,43 +102,38 @@ describe("/onboarding?create=team", () => {
     window.history.replaceState(null, "", "/onboarding?create=team");
   });
 
-  it("a user with a team gets the create form and is not sent to /home", async () => {
+  it("a user with a team is redirected to /home, no form (the New team dialog replaced this entry)", async () => {
     setAccess([TEAM], [SHARED]);
     render(<OnboardingPage />);
-    await screen.findByLabelText("Team name");
-    expect(screen.getByRole("heading", { name: "Create a new team" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Skip for now" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Cancel" }).getAttribute("href")).toBe("/home");
-    expect(routerMocks.replace).not.toHaveBeenCalled();
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
+    expect(screen.queryByLabelText("Team name")).toBeNull();
   });
 
-  it("creating calls the create-team API, remembers the team and opens its Home", async () => {
-    setAccess([TEAM], []);
-    vi.mocked(createTeam).mockResolvedValue({ ...TEAM, id: "t2", name: "Second", slug: "second" });
-    render(<OnboardingPage />);
-    fireEvent.change(await screen.findByLabelText("Team name"), { target: { value: "Second" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Team" }));
-    await waitFor(() =>
-      expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t2"),
-    );
-    expect(createTeam).toHaveBeenCalledWith({ name: "Second", slug: "second" });
-    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
-  });
-
-  it("a failed create shows the error and stays on the form", async () => {
-    setAccess([TEAM], []);
-    vi.mocked(createTeam).mockRejectedValue(new Error("slug taken"));
-    render(<OnboardingPage />);
-    fireEvent.change(await screen.findByLabelText("Team name"), { target: { value: "Second" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Team" }));
-    await screen.findByText("slug taken");
-    expect(routerMocks.replace).not.toHaveBeenCalled();
-  });
-
-  it("without the flag a user with a team is still redirected", async () => {
+  it("another create value makes no difference: a user with a team is redirected", async () => {
     window.history.replaceState(null, "", "/onboarding?create=other");
     setAccess([TEAM], []);
     render(<OnboardingPage />);
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
+  });
+
+  it("a user without a team still gets the first-team form", async () => {
+    setAccess([], []);
+    render(<OnboardingPage />);
+    await screen.findByLabelText("Team name");
+    expect(screen.getByRole("heading", { name: "Create your first team" })).toBeInTheDocument();
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("/onboarding first-team form", () => {
+  it("creating calls the API, remembers the team and opens its Home", async () => {
+    setAccess([], []);
+    vi.mocked(createTeam).mockResolvedValue({ ...TEAM, id: "t2", name: "Second", slug: "second" });
+    render(<OnboardingPage />);
+    fireEvent.change(await screen.findByLabelText("Team name"), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home?teamId=t2"));
+    expect(createTeam).toHaveBeenCalledWith({ name: "Second", slug: "second" });
+    expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
   });
 });

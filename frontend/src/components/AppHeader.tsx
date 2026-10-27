@@ -5,8 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout, type Team } from "../lib/api";
 import { rememberTeam } from "../lib/currentTeam";
-import { FROM_BOARD, newTeamHref, settingsHref, teamSettingsHref } from "../lib/routes";
+import { FROM_BOARD, settingsHref, teamSettingsHref } from "../lib/routes";
 import { sectionHref, teamSwitchHref, useResolvedTeam } from "../lib/teamSwitch";
+import CreateTeamDialog from "./CreateTeamDialog";
 import DropdownMenu from "./ui/DropdownMenu";
 import { Icon } from "./ui/Icon";
 
@@ -32,6 +33,7 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   const checkedTeamItemRef = useRef<HTMLButtonElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const [createTeamOpen, setCreateTeamOpen] = useState(false);
 
   const isHome = pathname.startsWith("/home");
   // A task page opened from the board modal ("Open as full page") belongs to
@@ -78,6 +80,16 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
 
   const teamCount = teams?.length ?? 0;
 
+  // Open the "New team" dialog from a menu entry. The entry unmounts with its
+  // menu, so focus moves to the button that opened the menu first; the dialog
+  // restores focus to it on close.
+  function openCreateTeam(trigger: HTMLButtonElement | null) {
+    setTeamMenuOpen(false);
+    setMenuOpen(false);
+    trigger?.focus();
+    setCreateTeamOpen(true);
+  }
+
   function switchTeam(teamId: string) {
     setTeamMenuOpen(false);
     if (teamId === urlTeam?.id) return;
@@ -91,185 +103,190 @@ export default function AppHeader({ user, teams }: AppHeaderProps) {
   }
 
   return (
-    <header className="app-header">
-      <div className="app-header-inner">
-        <Link href={sectionHref("home", navTeamId)} className="app-brand" aria-label="agent-tasks">
-          <Icon name="board" size={15} />
-          <span className="app-brand-text">agent-tasks</span>
-        </Link>
+    <>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <Link href={sectionHref("home", navTeamId)} className="app-brand" aria-label="agent-tasks">
+            <Icon name="board" size={15} />
+            <span className="app-brand-text">agent-tasks</span>
+          </Link>
 
-        {teams && teamCount === 1 && currentTeam && (
-          <span className="app-team-label" title={currentTeam.name}>
-            <span className="sr-only">Team: </span>
-            {currentTeam.name}
-          </span>
-        )}
-        {teams && teamCount > 1 && currentTeam && (
-          <>
-            <button
-              ref={teamTriggerRef}
-              type="button"
-              className="app-team-trigger"
-              onClick={() => setTeamMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={teamMenuOpen}
-              aria-label={`Switch team, current team ${currentTeam.name}`}
-              title={currentTeam.name}
-            >
-              <span className="app-team-name">{currentTeam.name}</span>
-              <Icon name="chevron-down" size={12} />
-            </button>
-            <DropdownMenu
-              anchorRef={teamTriggerRef}
-              open={teamMenuOpen}
-              onClose={() => setTeamMenuOpen(false)}
-              align="start"
-              minWidth={180}
-            >
-              <div role="menu" aria-label="Teams">
-                {teams.map((team) => (
+          {teams && teamCount === 1 && currentTeam && (
+            <span className="app-team-label" title={currentTeam.name}>
+              <span className="sr-only">Team: </span>
+              {currentTeam.name}
+            </span>
+          )}
+          {teams && teamCount > 1 && currentTeam && (
+            <>
+              <button
+                ref={teamTriggerRef}
+                type="button"
+                className="app-team-trigger"
+                onClick={() => setTeamMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={teamMenuOpen}
+                aria-label={`Switch team, current team ${currentTeam.name}`}
+                title={currentTeam.name}
+              >
+                <span className="app-team-name">{currentTeam.name}</span>
+                <Icon name="chevron-down" size={12} />
+              </button>
+              <DropdownMenu
+                anchorRef={teamTriggerRef}
+                open={teamMenuOpen}
+                onClose={() => setTeamMenuOpen(false)}
+                align="start"
+                minWidth={180}
+              >
+                <div role="menu" aria-label="Teams">
+                  {teams.map((team) => (
+                    <button
+                      key={team.id}
+                      ref={team.id === currentTeam.id ? checkedTeamItemRef : undefined}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={team.id === currentTeam.id}
+                      onClick={() => switchTeam(team.id)}
+                      className="app-dropdown-item app-team-option"
+                    >
+                      <span className="app-team-option-name">{team.name}</span>
+                      {team.id === currentTeam.id && <Icon name="check" size={12} />}
+                    </button>
+                  ))}
                   <button
-                    key={team.id}
-                    ref={team.id === currentTeam.id ? checkedTeamItemRef : undefined}
                     type="button"
-                    role="menuitemradio"
-                    aria-checked={team.id === currentTeam.id}
-                    onClick={() => switchTeam(team.id)}
-                    className="app-dropdown-item app-team-option"
+                    role="menuitem"
+                    onClick={() => openCreateTeam(teamTriggerRef.current)}
+                    className="app-dropdown-item app-team-new"
                   >
-                    <span className="app-team-option-name">{team.name}</span>
-                    {team.id === currentTeam.id && <Icon name="check" size={12} />}
+                    + New team
                   </button>
-                ))}
-                <Link
-                  href={newTeamHref()}
-                  role="menuitem"
-                  onClick={() => setTeamMenuOpen(false)}
-                  className="app-dropdown-item app-team-new"
-                >
-                  + New team
-                </Link>
-              </div>
-            </DropdownMenu>
-          </>
-        )}
+                </div>
+              </DropdownMenu>
+            </>
+          )}
 
-        <nav className="app-nav-links" aria-label="Main">
-          <Link
-            href={sectionHref("home", navTeamId)}
-            className="app-nav-link"
-            aria-current={isHome ? "page" : undefined}
-          >
-            Home
-          </Link>
-          <Link
-            href={sectionHref("projects", navTeamId)}
-            className="app-nav-link"
-            aria-current={isProjects ? "page" : undefined}
-          >
-            Projects
-          </Link>
-          <Link
-            href={sectionHref("tasks", navTeamId)}
-            className="app-nav-link"
-            aria-current={isTasks ? "page" : undefined}
-          >
-            Tasks
-          </Link>
-        </nav>
-
-        <div className="app-nav-spacer" />
-
-        {user && (
-          <>
-            <button
-              ref={triggerRef}
-              type="button"
-              className="app-user-trigger"
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              aria-label={`Account menu for ${user.login}`}
+          <nav className="app-nav-links" aria-label="Main">
+            <Link
+              href={sectionHref("home", navTeamId)}
+              className="app-nav-link"
+              aria-current={isHome ? "page" : undefined}
             >
-              {user.avatarUrl ? (
-                <img
-                  src={user.avatarUrl}
-                  alt={user.login}
-                  className="app-avatar"
-                />
-              ) : (
-                <span className="app-avatar">
-                  {user.login.slice(0, 2).toUpperCase()}
-                </span>
-              )}
-              <span className="app-user-name">{user.login}</span>
-              <Icon name="chevron-down" size={12} />
-            </button>
-
-            <DropdownMenu
-              anchorRef={triggerRef}
-              open={menuOpen}
-              onClose={() => setMenuOpen(false)}
-              align="end"
-              minWidth={190}
+              Home
+            </Link>
+            <Link
+              href={sectionHref("projects", navTeamId)}
+              className="app-nav-link"
+              aria-current={isProjects ? "page" : undefined}
             >
-              <div role="menu">
-                <Link
-                  href={settingsHref()}
-                  role="menuitem"
-                  onClick={() => setMenuOpen(false)}
-                  className="app-dropdown-item"
-                >
-                  Settings
-                </Link>
-                {teams && teamCount > 0 && (
+              Projects
+            </Link>
+            <Link
+              href={sectionHref("tasks", navTeamId)}
+              className="app-nav-link"
+              aria-current={isTasks ? "page" : undefined}
+            >
+              Tasks
+            </Link>
+          </nav>
+
+          <div className="app-nav-spacer" />
+
+          {user && (
+            <>
+              <button
+                ref={triggerRef}
+                type="button"
+                className="app-user-trigger"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label={`Account menu for ${user.login}`}
+              >
+                {user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.login}
+                    className="app-avatar"
+                  />
+                ) : (
+                  <span className="app-avatar">
+                    {user.login.slice(0, 2).toUpperCase()}
+                  </span>
+                )}
+                <span className="app-user-name">{user.login}</span>
+                <Icon name="chevron-down" size={12} />
+              </button>
+
+              <DropdownMenu
+                anchorRef={triggerRef}
+                open={menuOpen}
+                onClose={() => setMenuOpen(false)}
+                align="end"
+                minWidth={190}
+              >
+                <div role="menu">
                   <Link
-                    href={navTeamId ? `${teamSettingsHref()}?teamId=${navTeamId}` : teamSettingsHref()}
+                    href={settingsHref()}
                     role="menuitem"
                     onClick={() => setMenuOpen(false)}
                     className="app-dropdown-item"
                   >
-                    Team settings
+                    Settings
                   </Link>
-                )}
-                {teams && teamCount === 0 && (
-                  <Link
-                    href="/onboarding"
+                  {teams && teamCount > 0 && (
+                    <Link
+                      href={navTeamId ? `${teamSettingsHref()}?teamId=${navTeamId}` : teamSettingsHref()}
+                      role="menuitem"
+                      onClick={() => setMenuOpen(false)}
+                      className="app-dropdown-item"
+                    >
+                      Team settings
+                    </Link>
+                  )}
+                  {teams && teamCount === 0 && (
+                    <Link
+                      href="/onboarding"
+                      role="menuitem"
+                      onClick={() => setMenuOpen(false)}
+                      className="app-dropdown-item"
+                    >
+                      Create a team
+                    </Link>
+                  )}
+                  {teams && teamCount > 0 && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openCreateTeam(triggerRef.current)}
+                      className="app-dropdown-item"
+                    >
+                      New team
+                    </button>
+                  )}
+                  <button
+                    type="button"
                     role="menuitem"
-                    onClick={() => setMenuOpen(false)}
-                    className="app-dropdown-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void logout().then(() => {
+                        router.replace("/");
+                      });
+                    }}
+                    className="app-dropdown-item app-dropdown-item-danger"
                   >
-                    Create a team
-                  </Link>
-                )}
-                {teams && teamCount > 0 && (
-                  <Link
-                    href={newTeamHref()}
-                    role="menuitem"
-                    onClick={() => setMenuOpen(false)}
-                    className="app-dropdown-item"
-                  >
-                    New team
-                  </Link>
-                )}
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    void logout().then(() => {
-                      router.replace("/");
-                    });
-                  }}
-                  className="app-dropdown-item app-dropdown-item-danger"
-                >
-                  Logout
-                </button>
-              </div>
-            </DropdownMenu>
-          </>
-        )}
-      </div>
-    </header>
+                    Logout
+                  </button>
+                </div>
+              </DropdownMenu>
+            </>
+          )}
+        </div>
+      </header>
+      {teams && teamCount > 0 && (
+        <CreateTeamDialog open={createTeamOpen} onClose={() => setCreateTeamOpen(false)} />
+      )}
+    </>
   );
 }
