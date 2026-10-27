@@ -15,6 +15,10 @@ EXPOSE 3001
 CMD ["npm", "run", "dev", "--workspace=backend"]
 
 FROM base AS build
+# openssl lets Prisma detect the libssl version of this image; without it the
+# "native" target resolves to openssl-1.1.x and the prod image (openssl 3) has
+# no matching query engine on arm64.
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN npm run db:generate --workspace=backend
