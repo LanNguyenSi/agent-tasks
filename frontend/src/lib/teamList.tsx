@@ -39,8 +39,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { getProjects, getTeams, type Team } from "./api";
-import type { AccessContext } from "./access";
+import { getTeams, type Team } from "./api";
+import { retrySharedProjects, type AccessContext } from "./access";
 
 /** `loading`: no answer yet; `error`: the first lookup failed (no list). */
 export type TeamListStatus = "loading" | "ready" | "error";
@@ -191,7 +191,7 @@ export function useOptionalTeamList(): TeamListValue | null {
  * - `teams`: the shell's list (`[]` while there is none yet, and until the
  *   page's session check answered: `userReady` false);
  * - `status`: `loading` / `ready` / `error` of the shell's lookup (`loading`
- *   until `userReady`, and while the one retry of a failed list is in flight);
+ *   while the one retry of a failed list is in flight);
  * - `held`: `?teamId` names a team the list lacks and the one refresh for it
  *   is still to start or in flight. The page passes `held` to
  *   `useCurrentTeam`, which then holds back the URL write of the fallback.
@@ -227,16 +227,14 @@ export function usePageTeams(userReady = true): {
   // transient failure does not outlive the page it hit. A failure that
   // arrives after the mount is not retried here (the next page does).
   const [retryPending, setRetryPending] = useState(() => list.status === "error");
-  const retriedRef = useRef(false);
   useEffect(() => {
-    if (!retryPending || !userReady || retriedRef.current) return;
-    retriedRef.current = true;
+    if (!retryPending || !userReady) return;
     void refreshTeams().then(() => setRetryPending(false));
   }, [retryPending, userReady, refreshTeams]);
 
   const held = missing && urlTeamId !== null && (!list.asked.has(urlTeamId) || list.refreshing);
   const status: TeamListStatus =
-    !userReady || (retryPending && list.status === "error") ? "loading" : list.status;
+    retryPending && list.status === "error" ? "loading" : list.status;
   return { teams, status, error: list.error, held };
 }
 
@@ -248,9 +246,5 @@ export function usePageTeams(userReady = true): {
  */
 export async function accessContextForTeams(teams: Team[]): Promise<AccessContext> {
   if (teams.length > 0) return { teams, sharedProjects: [] };
-  try {
-    return { teams, sharedProjects: await getProjects() };
-  } catch {
-    return { teams, sharedProjects: [], sharedProjectsError: true };
-  }
+  return { teams, ...(await retrySharedProjects()) };
 }

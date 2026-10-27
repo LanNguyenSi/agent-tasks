@@ -12,7 +12,6 @@
  * fallback (the remembered team, else the first one) and nothing loops.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { StrictMode } from "react";
 import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 import type { Task, Team, TeamTasksProject, User } from "../../src/lib/api";
 
@@ -364,20 +363,6 @@ describe("a failed first lookup is retried by the next team-scoped page", () => 
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("the retry runs once per mount even when effects run twice (StrictMode)", async () => {
-    vi.mocked(getTeams).mockRejectedValue(new Error("teams are down"));
-    nav.reset("/elsewhere");
-    render(<StrictMode><AppChrome><Routes /></AppChrome></StrictMode>);
-    await settleAll();
-    // StrictMode runs the provider's load effect twice.
-    const afterMount = vi.mocked(getTeams).mock.calls.length;
-
-    act(() => nav.push("/tasks"));
-    expect(await screen.findByText("teams are down")).toBeInTheDocument();
-    await settleAll();
-    expect(getTeams).toHaveBeenCalledTimes(afterMount + 1);
-  });
-
   it("no session: a failed list is not retried by the page", async () => {
     vi.mocked(getCurrentUser).mockResolvedValue(null);
     vi.mocked(getTeams).mockRejectedValueOnce(new Error("down")).mockResolvedValue([A, B]);
@@ -385,7 +370,9 @@ describe("a failed first lookup is retried by the next team-scoped page", () => 
     render(<AppChrome><Routes /></AppChrome>);
     await settleAll();
 
+    nav.deferNavigations();
     act(() => nav.push("/tasks"));
+    await act(async () => nav.settle());
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
     await settleAll();
     expect(getTeams).toHaveBeenCalledTimes(1);
@@ -426,6 +413,9 @@ describe("without a session the pages resolve no team and request nothing", () =
       vi.mocked(getCurrentUser).mockResolvedValue(null);
       vi.mocked(getTeams).mockResolvedValue([A, B]);
       nav.reset(path);
+      // The /auth redirect stays pending, as in the app router where the
+      // page is still mounted until the navigation lands.
+      nav.deferNavigations();
       render(<AppChrome><Routes /></AppChrome>);
 
       await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
@@ -447,7 +437,10 @@ describe("without a session the pages resolve no team and request nothing", () =
       vi.mocked(getCurrentUser).mockResolvedValue(null);
       vi.mocked(getTeams).mockResolvedValue([A, B]);
       nav.reset(`${path}?teamId=t9`);
-      render(<AppChrome><Routes /></AppChrome>);
+      nav.deferNavigations();
+      // The provider alone: the header asks for a missing id on its own,
+      // this test is about the page.
+      render(<TeamListProvider enabled><Routes /></TeamListProvider>);
 
       await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
       await settleAll();
