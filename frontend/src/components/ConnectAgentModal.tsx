@@ -20,10 +20,33 @@ interface ConnectAgentModalProps {
    */
   scopeLabel: string;
   /**
-   * Called once after the backend confirms token creation, so the parent
-   * can insert the new row into its token list without a page reload.
+   * Called once after the backend confirms token creation and this dialog
+   * shows the secret, so the parent can insert the new row into its token
+   * list without a page reload.
    */
   onTokenCreated?: (token: AgentToken) => void;
+  /**
+   * The secret of a created token can no longer be shown here: the dialog was
+   * closed or is gone (its section unmounted) before the response arrived, or
+   * it is unmounted while it still shows the secret. The parent must keep the
+   * secret somewhere that outlives this dialog; it is not stored anywhere else.
+   * `teamId` is the team the request was made for, fixed before the request
+   * started. The token may or may not have been announced through
+   * `onTokenCreated` already, so the parent adds it to its list idempotently.
+   */
+  onSecretUnseen?: (secret: UnseenSecret) => void;
+  /**
+   * A create failed after the dialog was closed or unmounted. Receives the
+   * team the request was made for, so the message is not taken for a failure
+   * of whatever team is shown now.
+   */
+  onCreateFailedUnseen?: (teamId: string, message: string) => void;
+}
+
+export interface UnseenSecret {
+  teamId: string;
+  token: AgentToken;
+  rawToken: string;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
@@ -101,6 +124,8 @@ export default function ConnectAgentModal({
   teamId,
   scopeLabel,
   onTokenCreated,
+  onSecretUnseen,
+  onCreateFailedUnseen,
 }: ConnectAgentModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>("mcp");
   const [token, setToken] = useState<string | null>(null);
@@ -116,9 +141,28 @@ export default function ConnectAgentModal({
     }
   }
 
+  // False once this dialog is gone: a create that finishes later reports to
+  // the parent instead of to state nobody renders any more.
+  const mountedRef = useRef(true);
+  // Bumped whenever the dialog closes. A create belongs to the dialog session
+  // it started in; a response that arrives in a later session (closed, or
+  // closed and reopened) must not write into it.
+  const sessionRef = useRef(0);
+  // The created token while this dialog shows its secret, so it can be handed
+  // over if the dialog is unmounted before the user closes it.
+  const shownRef = useRef<UnseenSecret | null>(null);
+  // Latest callbacks, for the unmount cleanup and for responses that arrive
+  // after the render that started the request (no stale closure).
+  const onSecretUnseenRef = useRef(onSecretUnseen);
+  onSecretUnseenRef.current = onSecretUnseen;
+  const onCreateFailedUnseenRef = useRef(onCreateFailedUnseen);
+  onCreateFailedUnseenRef.current = onCreateFailedUnseen;
+
   // Reset all state when the modal closes so a fresh open starts clean.
   useEffect(() => {
     if (!open) {
+      sessionRef.current += 1;
+      shownRef.current = null;
       setToken(null);
       setError(null);
       setActiveTab("mcp");
@@ -129,9 +173,17 @@ export default function ConnectAgentModal({
   }, [open]);
 
   // Clear any pending timer when the modal unmounts so a stale fire after
-  // route change cannot setState on an unmounted tree.
+  // route change cannot setState on an unmounted tree. A secret still on
+  // screen goes to the parent, which is not unmounted with this dialog.
   useEffect(() => {
-    return () => clearMaskTimer();
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearMaskTimer();
+      const shown = shownRef.current;
+      shownRef.current = null;
+      if (shown) onSecretUnseenRef.current?.(shown);
+    };
   }, []);
 
   async function handleGenerate() {
@@ -139,18 +191,35 @@ export default function ConnectAgentModal({
     setLoading(true);
     setError(null);
 
+    // The team and the dialog session are fixed when the request starts: the
+    // response belongs to them whatever the page shows by the time it arrives.
+    const createdFor = teamId;
+    const session = sessionRef.current;
+    const stillHere = () => mountedRef.current && sessionRef.current === session;
+
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const name = `Agent (${scopeLabel}) — ${stamp}-${randomSuffix()}`;
     const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86_400_000).toISOString();
 
     try {
-      const res = await createAgentToken({ teamId, name, scopes: AGENT_SCOPES, expiresAt });
-      setToken(res.rawToken);
-      onTokenCreated?.(res.token);
+      const res = await createAgentToken({ teamId: createdFor, name, scopes: AGENT_SCOPES, expiresAt });
+      if (stillHere()) {
+        shownRef.current = { teamId: createdFor, token: res.token, rawToken: res.rawToken };
+        setToken(res.rawToken);
+        onTokenCreated?.(res.token);
+      } else {
+        onSecretUnseenRef.current?.({
+          teamId: createdFor,
+          token: res.token,
+          rawToken: res.rawToken,
+        });
+      }
     } catch (err) {
-      setError((err as Error).message || "Could not generate a token.");
+      const message = (err as Error).message || "Could not generate a token.";
+      if (stillHere()) setError(message);
+      else onCreateFailedUnseenRef.current?.(createdFor, message);
     } finally {
-      setLoading(false);
+      if (stillHere()) setLoading(false);
     }
   }
 
