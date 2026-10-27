@@ -106,8 +106,8 @@ describe("/home frame", () => {
     expect(screen.queryByText("Task overview across all your projects.")).toBeNull();
     expect(band.querySelector(".page-header-summary")).toBeNull();
     // The scope tiles stay in the content slot, not the band.
-    expect(band.querySelector(".home-stat-strip")).toBeNull();
-    expect(document.querySelector(".pshell-content .home-stat-strip")).not.toBeNull();
+    expect(band.querySelector(".home-scopes")).toBeNull();
+    expect(document.querySelector(".pshell-content .home-scopes")).not.toBeNull();
   });
 
   it("without a team: 'Home' H1 and the Create a team action live in the band", async () => {

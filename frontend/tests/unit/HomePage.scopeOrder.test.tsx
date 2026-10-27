@@ -5,7 +5,7 @@
  *
  * Both surfaces render the same `homeScopes` list in home/page.tsx, in
  * the D1 order: My Tasks, Priority, Backlog, Open Tasks, In Review,
- * Done (14 days). This test pins the DOM order of the stat-tile labels
+ * Done (14 days). This test pins the DOM order of the scope-link labels
  * and the widget h2 titles so a future edit that reorders one surface
  * (or swaps two entries in the shared list) turns this red.
  *
@@ -128,7 +128,7 @@ async function renderHomePage() {
 
   render(<HomeDashboardPage />);
   await vi.waitFor(() => {
-    expect(document.querySelector(".home-stat-strip")).not.toBeNull();
+    expect(document.querySelector(".home-scopes")).not.toBeNull();
     expect(document.querySelector(".home-widgets-grid")).not.toBeNull();
   });
 }
@@ -146,9 +146,9 @@ describe("home page — shared scope order (stat strip + widget grid)", () => {
   it("renders the stat tiles in D1 order", async () => {
     await renderHomePage();
 
-    const strip = document.querySelector(".home-stat-strip");
+    const strip = document.querySelector(".home-scopes");
     if (!strip) throw new Error("stat strip not found");
-    const labels = Array.from(strip.querySelectorAll(".home-stat-tile-label")).map(
+    const labels = Array.from(strip.querySelectorAll(".home-scope-label")).map(
       (el) => el.textContent,
     );
 
@@ -253,7 +253,7 @@ describe("home page — widget plumbing", () => {
 
     render(<HomeDashboardPage />);
     await vi.waitFor(() => {
-      expect(document.querySelector(".home-stat-strip")).not.toBeNull();
+      expect(document.querySelector(".home-scopes")).not.toBeNull();
       expect(document.querySelector(".home-widgets-grid")).not.toBeNull();
     });
 
@@ -290,7 +290,7 @@ describe("home page — widget plumbing", () => {
 
     render(<HomeDashboardPage />);
     await vi.waitFor(() => {
-      expect(document.querySelector(".home-stat-strip")).not.toBeNull();
+      expect(document.querySelector(".home-scopes")).not.toBeNull();
       expect(document.querySelector(".home-widgets-grid")).not.toBeNull();
     });
 
