@@ -100,6 +100,7 @@ describe("safeRedirect rejected", () => {
     ["resolves to itself: encoded # hides dot segments", "/projects/p1%23/../../auth"],
     ["resolves to itself: encoded ? in an invite path", "/invite/x%3F/../../home"],
     ["resolves to itself: encoded ? then //", "/projects/p1%3F/../..//evil.com"],
+    ["resolves to itself: fragment on an invite path", "/invite/x#y"],
   ])("%s", (_label, value) => {
     expect(safeRedirect(value)).toBeNull();
   });
