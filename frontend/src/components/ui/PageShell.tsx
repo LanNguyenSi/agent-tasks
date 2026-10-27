@@ -1,39 +1,42 @@
 // The page frame: one <main>, a full-width header slot and a content slot.
 // Geometry in .pshell-* classes in globals.css; the side gutter is the single
 // --page-gutter token (24px, 12px under 600px), shared with the app header,
-// PageHeader, the project hub band and the content slot, so every page's
-// first element starts on the same left edge.
+// PageHeader, the project hub band and the content slot.
 //
-// Variants set the max width of the content slot (left-aligned, never centred
-// unless `centered` is set):
+// The column is centred. Each variant puts its column width on <main> as
+// --page-column (class pshell--<variant>):
 //   default  1200px, the standard page column
-//   narrow    760px, single-form pages
-//   wide      none,  tables and boards that use the whole width
+//   wide     100%,   tables and boards that use the whole width (the column
+//                    is the viewport, so everything sits on the gutter)
+// The content slot is capped at the column plus its gutters and centred with
+// auto side margins, so its first child starts at
+// max(gutter, (viewport - column) / 2). Bands in the header slot keep their
+// full-width background and bottom border but pad their inner content with
+// that same expression, so breadcrumb, H1, tabs and the first content child
+// share one left edge at every width. The band formula resolves its
+// percentage against <main>, so a band must stay a direct child of <main>
+// (or of a full-width slot).
 //
-// The header slot is always full width and renders straight into <main> (no
-// wrapper, so a sticky PageHeader keeps <main> as its containing block).
-// Bands rendered in it (PageHeader, the project hub header and tab row) carry
-// their own gutter so their bottom borders can span the viewport. `flush`
-// drops the content slot's gutter for children that own theirs (the board,
-// the tasks table region); a flush slot may also hold its own sticky header,
-// as /tasks does with its PageHeader.
+// The header slot renders straight into <main> (no wrapper, so a sticky
+// PageHeader keeps <main> as its containing block). `flush` drops the
+// content slot's gutter for children that own theirs (the board, the tasks
+// table region, task detail); a flush slot may also hold its own sticky
+// header, as /tasks does with its PageHeader.
 //
 // Usage:
-//   <PageShell variant="narrow" header={<PageHeader title="Settings" />}>
+//   <PageShell header={<PageHeader title="Settings" />}>
 //     ...page body...
 //   </PageShell>
 
 import type { ReactNode } from "react";
 
-export type PageShellVariant = "default" | "narrow" | "wide";
+export type PageShellVariant = "default" | "wide";
 
 interface PageShellProps {
   /** Content max width. Default `default` (1200px). */
   variant?: PageShellVariant;
   /** Full-width band(s) above the content (PageHeader, project hub band). */
   header?: ReactNode;
-  /** Centre the content column instead of left-aligning it. */
-  centered?: boolean;
   /** No gutter on the content slot: the children own their side padding. */
   flush?: boolean;
   /** Extra class on the content slot. */
@@ -46,7 +49,6 @@ interface PageShellProps {
 export function PageShell({
   variant = "default",
   header,
-  centered = false,
   flush = false,
   contentClassName,
   busy = false,
@@ -55,7 +57,6 @@ export function PageShell({
   const contentClass = [
     "pshell-content",
     `pshell-content--${variant}`,
-    centered && "pshell-content--centered",
     flush && "pshell-content--flush",
     contentClassName,
   ]
@@ -63,7 +64,7 @@ export function PageShell({
     .join(" ");
 
   return (
-    <main className="pshell" aria-busy={busy || undefined}>
+    <main className={`pshell pshell--${variant}`} aria-busy={busy || undefined}>
       {header}
       <div className={contentClass}>{children}</div>
     </main>

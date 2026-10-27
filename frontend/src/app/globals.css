@@ -370,9 +370,21 @@ input[type="checkbox"] {
 }
 
 /* PageShell (components/ui/PageShell.tsx): one <main>, full-width header
-   bands, a content slot whose left edge is the page gutter. The header bands
-   (app header, PageHeader, project hub band) take the same token for their own
-   side padding. */
+   bands and a centred content slot. --page-column is the width of the page
+   column (set per variant on <main>); the content slot's first child and the
+   inner content of every band start at
+   max(var(--page-gutter), (100% - var(--page-column)) / 2), the band
+   padding formula below. The app header keeps the plain gutter. */
+.pshell--default {
+  --page-column: 1200px;
+}
+
+/* Wide pages (boards, tables) use the whole width: the column is the full
+   width, so the formula collapses to the gutter. */
+.pshell--wide {
+  --page-column: 100%;
+}
+
 .pshell {
   width: 100%;
   /* The sticky app header sits above <main>: filling 100vh would scroll a
@@ -382,6 +394,7 @@ input[type="checkbox"] {
 
 .pshell-content {
   width: 100%;
+  margin-inline: auto;
   padding: var(--space-5) var(--page-gutter);
 }
 
@@ -389,17 +402,8 @@ input[type="checkbox"] {
   max-width: calc(1200px + 2 * var(--page-gutter));
 }
 
-.pshell-content--narrow {
-  max-width: calc(760px + 2 * var(--page-gutter));
-}
-
 .pshell-content--wide {
   max-width: none;
-}
-
-.pshell-content--centered {
-  margin-left: auto;
-  margin-right: auto;
 }
 
 /* The children own their side padding (board, tasks list, task detail). */
@@ -2639,7 +2643,8 @@ input[type="checkbox"] {
   justify-content: space-between;
   gap: var(--space-4);
   min-height: 52px;
-  padding: var(--space-2) var(--page-gutter);
+  /* Full-width band, inner content on the page column (see .pshell). */
+  padding: var(--space-2) max(var(--page-gutter), calc((100% - var(--page-column, 100%)) / 2));
   background: color-mix(in srgb, var(--bg) 85%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
@@ -4335,7 +4340,7 @@ html[data-theme="light"] {
   justify-content: space-between;
   gap: var(--space-4);
   min-height: 52px;
-  padding: var(--space-3) var(--page-gutter);
+  padding: var(--space-3) max(var(--page-gutter), calc((100% - var(--page-column, 100%)) / 2));
   background: color-mix(in srgb, var(--bg) 85%, transparent);
   border-bottom: 1px solid var(--border);
 }
@@ -4367,24 +4372,20 @@ html[data-theme="light"] {
 /* ── Task detail v2 ────────────────────────────────────────────── */
 
 /* Error/loading wrappers in the task detail page shell. They use the same
-   frame as .td-page below (left-aligned, 1200px column, page gutter) so the
-   content does not jump sideways when the task loads. */
+   frame as .td-page below (page gutter, no bottom padding) inside the shell's
+   flush, centred default column, so the content does not jump sideways when
+   the task loads. */
 .td-error-wrap {
-  max-width: calc(1200px + 2 * var(--page-gutter));
-  margin: 0;
   padding: var(--space-5) var(--page-gutter) 0;
 }
 
 .td-loading-wrap {
-  max-width: calc(1200px + 2 * var(--page-gutter));
-  margin: 0;
   padding: var(--space-5) var(--page-gutter) 0;
 }
 
-/* Page context frame */
+/* Page context frame. The shell's content slot (flush, default column)
+   centres and caps it; the layout below owns the bottom spacing. */
 .td-page {
-  max-width: calc(1200px + 2 * var(--page-gutter));
-  margin: 0;
   padding: var(--space-5) var(--page-gutter) 0;
 }
 
@@ -6167,7 +6168,7 @@ html[data-theme="light"] {
 
 /* Compact identity header rendered by the /projects/[id] layout */
 .proj-hub-header {
-  padding: var(--space-4) var(--page-gutter) 0;
+  padding: var(--space-4) max(var(--page-gutter), calc((100% - var(--page-column, 100%)) / 2)) 0;
 }
 
 /* Crumb `Projects / <project picker>`; mirrors .page-header-breadcrumb. The
@@ -6290,9 +6291,9 @@ a.proj-chip:hover {
   display: flex;
   align-items: flex-end;
   gap: 0;
-  /* The first tab's own side padding is taken out of the gutter so its text
-     (not its hit area) sits on the page's left edge. */
-  padding: 0 calc(var(--page-gutter) - var(--space-3));
+  /* The first tab's own side padding is taken out of the column edge so its
+     text (not its hit area) sits on the page's left edge. */
+  padding: 0 max(calc(var(--page-gutter) - var(--space-3)), calc((100% - var(--page-column, 100%)) / 2 - var(--space-3)));
   margin: var(--space-3) 0 0;
   border-bottom: 1px solid var(--border);
 }
@@ -7469,6 +7470,13 @@ a.proj-chip:hover {
   justify-content: space-between;
   align-items: center;
   gap: var(--space-2);
+}
+
+/* SSO sits on the default page column like the other settings pages; its
+   form cards and text keep a 760px reading width, left-aligned on the column
+   edge. */
+.sso-content > * {
+  max-width: 760px;
 }
 
 /* ── CopyableCode ──────────────────────────────────────────────── */

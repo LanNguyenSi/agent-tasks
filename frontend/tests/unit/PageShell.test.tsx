@@ -2,8 +2,9 @@
 /**
  * PageShell (components/ui/PageShell.tsx): one <main>, a header slot rendered
  * straight into it, and a content slot whose class carries the width variant.
- * The variant -> class mapping is what globals.css keys the max widths on
- * (default 1200, narrow 760, wide none), so each variant is pinned here.
+ * The variant -> class mapping is what globals.css keys the page column
+ * (--page-column on <main>) and the slot max width on (default 1200, wide
+ * none), so each variant is pinned on both elements here.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -25,28 +26,43 @@ describe("PageShell", () => {
   });
 
   it.each([
-    ["default", "pshell-content--default", ["pshell-content--narrow", "pshell-content--wide"]],
-    ["narrow", "pshell-content--narrow", ["pshell-content--default", "pshell-content--wide"]],
-    ["wide", "pshell-content--wide", ["pshell-content--default", "pshell-content--narrow"]],
-  ] as const)("maps the %s variant to its own class only", (variant, cls, others) => {
-    render(<PageShell variant={variant}>body</PageShell>);
-    expect(slot()).toHaveClass(cls);
-    for (const other of others) expect(slot()).not.toHaveClass(other);
-  });
+    ["default", "pshell-content--default", "pshell--default", "pshell-content--wide", "pshell--wide"],
+    ["wide", "pshell-content--wide", "pshell--wide", "pshell-content--default", "pshell--default"],
+  ] as const)(
+    "maps the %s variant to its own slot class and <main> column class only",
+    (variant, cls, mainCls, otherCls, otherMainCls) => {
+      render(<PageShell variant={variant}>body</PageShell>);
+      expect(slot()).toHaveClass(cls);
+      expect(slot()).not.toHaveClass(otherCls);
+      expect(screen.getByRole("main")).toHaveClass("pshell", mainCls);
+      expect(screen.getByRole("main")).not.toHaveClass(otherMainCls);
+    },
+  );
 
-  it("defaults to the default variant, left-aligned, with a gutter", () => {
+  it("defaults to the default variant (centred 1200px column) with a gutter", () => {
     render(<PageShell>body</PageShell>);
     expect(slot()).toHaveClass("pshell-content--default");
-    expect(slot()).not.toHaveClass("pshell-content--centered", "pshell-content--flush");
+    expect(screen.getByRole("main")).toHaveClass("pshell--default");
+    expect(slot()).not.toHaveClass("pshell-content--flush");
   });
 
-  it("adds the centered and flush modifiers only when asked", () => {
+  it("has no narrow variant and no centered modifier any more", () => {
+    // @ts-expect-error narrow was removed with the centred column
+    render(<PageShell variant="narrow">body</PageShell>);
+    expect(slot()).not.toHaveClass("pshell-content--default", "pshell-content--wide");
+    cleanup();
+    // @ts-expect-error centered was removed: every column is centred
+    render(<PageShell centered>body</PageShell>);
+    expect(slot()).not.toHaveClass("pshell-content--centered");
+  });
+
+  it("adds the flush modifier and the extra class only when asked", () => {
     render(
-      <PageShell centered flush contentClassName="extra">
+      <PageShell flush contentClassName="extra">
         body
       </PageShell>,
     );
-    expect(slot()).toHaveClass("pshell-content--centered", "pshell-content--flush", "extra");
+    expect(slot()).toHaveClass("pshell-content--flush", "extra");
   });
 
   it("renders the header slot inside <main>, before the content, without a wrapper", () => {

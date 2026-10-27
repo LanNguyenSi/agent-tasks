@@ -1,8 +1,10 @@
 // 52px sticky toolbar: breadcrumb, H1 title, summary, and right-aligned actions.
 // One per page. In use on /tasks and /settings (+ team, sso); the project
 // board toolbar reuses its .page-header geometry. Pages render it in the
-// `header` slot of PageShell, which keeps it full width; the band's own
-// --page-gutter side padding puts its H1 on the same left edge as the content.
+// `header` slot of PageShell, which keeps it full width (background and bottom
+// border span the viewport); the band pads its inner content to the page
+// column, max(--page-gutter, (100% - --page-column) / 2), so its breadcrumb
+// and H1 sit on the same left edge as the centred content.
 // Geometry in .page-header-* classes in globals.css.
 //
 // Usage:
