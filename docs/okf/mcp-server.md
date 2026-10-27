@@ -3,7 +3,7 @@ type: module
 title: "mcp-server: stdio MCP wrapper over the REST API"
 description: "Publishes the v2 verb surface as MCP tools over a fixed bearer token; teaching errors for backlog-routed creates and backlog-guarded claims; SERVER_VERSION is a hand-maintained constant, not derived from package.json."
 tags: [mcp, stdio, npm-package, backlog, teaching]
-timestamp: 2026-10-24T11:30:53Z
+timestamp: 2026-10-27T21:27:09Z
 sources:
   - mcp-server/src/index.ts
   - mcp-server/src/server.ts
