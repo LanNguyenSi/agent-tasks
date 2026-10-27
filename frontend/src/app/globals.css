@@ -3766,63 +3766,89 @@ html[data-theme="light"] {
 /* ── Home v2 ─────────────────────────────────────────────────── */
 /*
  * Component-scoped classes for the home surface (Stage D2).
- * Prefix: home- (header, stat strip, task row, widget internals).
+ * Prefix: home- (header, scope strip, task row, widget internals).
  * All geometry lives here; no inline style blocks in home/page.tsx.
  */
 
-/* Stat strip: 6-column row of large-number tiles (one row per D2). Below
-   1100px, six columns crowd the number+label pair, so it drops to 3
-   columns (3x2); below 560px (phone) it drops further to 2 (2x3). */
-.home-stat-strip {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: var(--space-3);
+/* Scope strip: one navigation row, no tiles. Two groups, the filters
+   (Mine, Priority) and the stage flow (Backlog to Done), set apart by a
+   vertical hairline. Number first, label secondary; the chevrons between
+   the stages are decorative. Below 560px the groups stack as two lines and
+   the stage line spreads over the full width (and wraps rather than overflowing on narrower phones). */
+.home-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
   margin-bottom: var(--space-5);
 }
 
-@media (max-width: 1099px) {
-  .home-stat-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 560px) {
-  .home-stat-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-/* Clickable stat tile linking to the corresponding /tasks scope */
-.home-stat-tile {
+.home-scopes-group {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.home-scopes-group--filters {
+  gap: var(--space-4);
+}
+
+.home-scopes-group--stages {
+  padding-left: var(--space-5);
+  border-left: 1px solid var(--border-strong);
+}
+
+.home-scope-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: 28px;
+  border-radius: var(--radius-sm);
   text-decoration: none;
-  color: inherit;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-.home-stat-tile:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
-}
-
-/* Large numeric count inside the tile */
-.home-stat-tile-number {
-  font-size: var(--text-2xl);
-  font-weight: 600;
   color: var(--text);
-  line-height: 1;
+  white-space: nowrap;
 }
 
-/* Tile label below the number */
-.home-stat-tile-label {
+.home-scope-num {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.home-scope-label {
   font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+
+.home-scope-link:hover .home-scope-label {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.home-scopes-sep {
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  user-select: none;
+}
+
+@media (max-width: 559px) {
+  .home-scopes {
+    flex-direction: column;
+    align-items: stretch;
+    row-gap: var(--space-2);
+  }
+
+  .home-scopes-group--stages {
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+    justify-content: space-between;
+    padding-left: 0;
+    padding-top: var(--space-2);
+    border-left: 0;
+    border-top: 1px solid var(--border-strong);
+  }
 }
 
 /* Stale-warning slot: always rendered to avoid layout jump on appearance.
@@ -3846,7 +3872,7 @@ html[data-theme="light"] {
 }
 
 /* "Your projects" jump strip (T05): chips of up to 6 project links above
-   the stat strip. flex-wrap (no grid, no scroll container) so the chips
+   the scope strip. flex-wrap (no grid, no scroll container) so the chips
    wrap onto new lines at phone width instead of widening the page. */
 .home-projects-strip {
   margin-bottom: var(--space-5);
