@@ -25,7 +25,7 @@ import { CopyableCode } from "../ui/CopyableCode";
 import EmptyState from "../ui/EmptyState";
 import FormField from "../ui/FormField";
 import Modal from "../ui/Modal";
-import ConnectAgentModal from "../ConnectAgentModal";
+import ConnectAgentModal, { type UnseenSecret } from "../ConnectAgentModal";
 import { formatRelativeTime } from "./formatRelativeTime";
 import { TokenRevealBanner, type TokenReveals } from "./TokenReveal";
 
@@ -186,6 +186,24 @@ export default function ApiTokensSection({
     } finally {
       if (mountedRef.current) setCreating(false);
     }
+  }
+
+  // The Connect an agent dialog could not show a created token's secret (it
+  // was closed or unmounted with this section before the response arrived, or
+  // it is unmounted while still showing it). The team comes from the request,
+  // never from what the page shows now. The secret goes to the page's reveals,
+  // like the custom-token flow above.
+  function handleConnectSecretUnseen({ teamId, token, rawToken, masked }: UnseenSecret) {
+    // A secret the dialog had masked stays masked (Reveal is available).
+    reveals.show(teamId, teamNameOf(teamId), token.name, rawToken, masked === true);
+    // The dialog may have announced the token already (it was unmounted while
+    // showing the secret): adding it by id is idempotent.
+    if (mountedRef.current) setTokens((prev) => mergeById(prev, [token]));
+    else onCreatedAway(teamId, token);
+  }
+
+  function teamNameOf(id: string): string {
+    return teams.find((t) => t.id === id)?.name ?? id;
   }
 
   async function handleConfirmRevoke() {
@@ -565,6 +583,10 @@ export default function ApiTokensSection({
           onTokenCreated={(token) => {
             setTokens((prev) => [...prev, token]);
           }}
+          onSecretUnseen={handleConnectSecretUnseen}
+          onCreateFailedUnseen={(teamId, message) =>
+            onCreateFailed(teamId, teamNameOf(teamId), message)
+          }
         />
       )}
     </>

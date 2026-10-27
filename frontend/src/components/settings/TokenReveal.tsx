@@ -35,8 +35,18 @@ export interface TokenReveal {
 export interface TokenReveals {
   /** Newest reveal first (by the time its response arrived). */
   reveals: TokenReveal[];
-  /** Show a created token's secret as its own reveal; nothing is replaced. */
-  show: (teamId: string, teamName: string, tokenName: string, rawToken: string) => void;
+  /**
+   * Show a created token's secret as its own reveal; nothing is replaced.
+   * `masked` starts the reveal masked (Reveal available) for a secret that an
+   * earlier view already masked; default is shown in clear.
+   */
+  show: (
+    teamId: string,
+    teamName: string,
+    tokenName: string,
+    rawToken: string,
+    masked?: boolean,
+  ) => void;
   dismiss: (id: string) => void;
   /** Show the masked secret again (and drop any mask timer, as before). */
   unmask: (id: string) => void;
@@ -71,14 +81,15 @@ export function useTokenReveals(): TokenReveals {
   );
 
   const show = useCallback(
-    (teamId: string, teamName: string, tokenName: string, rawToken: string) => {
+    (teamId: string, teamName: string, tokenName: string, rawToken: string, masked = false) => {
       // A create that resolves after the page is gone must not keep a secret
       // (or a timer) alive.
       if (!alive.current) return;
       seq.current += 1;
       const id = `reveal-${seq.current}`;
-      setReveals((prev) => [{ id, teamId, teamName, tokenName, rawToken, masked: false }, ...prev]);
-      startMask(id);
+      setReveals((prev) => [{ id, teamId, teamName, tokenName, rawToken, masked }, ...prev]);
+      // An already masked secret needs no timer; Reveal shows it again.
+      if (!masked) startMask(id);
     },
     [startMask],
   );

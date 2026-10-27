@@ -13,7 +13,8 @@
  * error handling.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { StrictMode } from "react";
+import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../src/lib/api", () => ({
@@ -373,5 +374,361 @@ describe("ConnectAgentModal", () => {
       "data-token-masked",
       "false",
     );
+  });
+});
+
+/**
+ * The secret of a created token exists only in the create response. When the
+ * dialog cannot show it (closed, or gone with its section, before the
+ * response arrives; or unmounted while it still shows it) it is handed to the
+ * parent instead of being kept in dead state or dropped.
+ */
+describe("ConnectAgentModal: a result the dialog cannot show", () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+  type CreateResult = ReturnType<typeof makeTokenResult>;
+  const SECRET = "at_live_SECRET_0123456789";
+
+  function dialog(
+    props: {
+      open?: boolean;
+      teamId?: string;
+      onTokenCreated?: (t: unknown) => void;
+      onSecretUnseen?: (s: unknown) => void;
+      onCreateFailedUnseen?: (teamId: string, message: string) => void;
+    } = {},
+  ) {
+    return (
+      <ConnectAgentModal
+        open={props.open ?? true}
+        onClose={() => {}}
+        teamId={props.teamId ?? "team-1"}
+        scopeLabel="Pandora Team"
+        onTokenCreated={props.onTokenCreated}
+        onSecretUnseen={props.onSecretUnseen}
+        onCreateFailedUnseen={props.onCreateFailedUnseen}
+      />
+    );
+  }
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("shown in the dialog: the token is announced to the list and nothing is handed over", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const created = vi.fn();
+    const unseen = vi.fn();
+    render(dialog({ onTokenCreated: created, onSecretUnseen: unseen }));
+
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    expect(screen.getByTestId("connect-snippet").textContent).toContain(SECRET);
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(unseen).not.toHaveBeenCalled();
+  });
+
+  it("closed while the request is pending: the secret is handed over, not shown or kept", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    const created = vi.fn();
+    const unseen = vi.fn();
+    const { rerender } = render(dialog({ onTokenCreated: created, onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+
+    rerender(dialog({ open: false, onTokenCreated: created, onSecretUnseen: unseen }));
+    await act(async () => {
+      pending.resolve(makeTokenResult(SECRET));
+    });
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: "team-1", rawToken: SECRET}),
+    );
+    // The list is not told by the dialog: the parent adds the token itself.
+    expect(created).not.toHaveBeenCalled();
+    // Reopening starts clean: no stale secret from the closed session.
+    rerender(dialog({ open: true, onTokenCreated: created, onSecretUnseen: unseen }));
+    expect(screen.getByTestId("connect-generate-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(SECRET);
+  });
+
+  it("closed and reopened while pending: the old response does not write into the new session", async () => {
+    const first = deferred<CreateResult>();
+    mockCreate.mockReturnValueOnce(first.promise);
+    const created = vi.fn();
+    const unseen = vi.fn();
+    const { rerender } = render(dialog({ onTokenCreated: created, onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    rerender(dialog({ open: false, onTokenCreated: created, onSecretUnseen: unseen }));
+    rerender(dialog({ open: true, onTokenCreated: created, onSecretUnseen: unseen }));
+
+    await act(async () => {
+      first.resolve(makeTokenResult(SECRET));
+    });
+
+    expect(unseen).toHaveBeenCalledWith(expect.objectContaining({ rawToken: SECRET}));
+    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+    // The new session is not left loading or filled by the old request.
+    expect(screen.getByTestId("connect-generate-btn")).not.toBeDisabled();
+    expect(document.body.textContent).not.toContain(SECRET);
+  });
+
+  it("closed and reopened, then a second request is pending: the first response does not end its loading state", async () => {
+    const first = deferred<CreateResult>();
+    const second = deferred<CreateResult>();
+    mockCreate.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const unseen = vi.fn();
+    const { rerender } = render(dialog({ onSecretUnseen: unseen }));
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    rerender(dialog({ open: false, onSecretUnseen: unseen }));
+    rerender(dialog({ open: true, onSecretUnseen: unseen }));
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    expect(screen.getByTestId("connect-generate-btn")).toBeDisabled();
+
+    await act(async () => {
+      first.resolve(makeTokenResult("at_live_FIRST_0123456789"));
+    });
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("connect-generate-btn")).toBeDisabled();
+    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+
+    // The second request still belongs to this session and is shown.
+    await act(async () => {
+      second.resolve(makeTokenResult(SECRET));
+    });
+    expect((await screen.findByTestId("connect-snippet")).textContent).toContain(SECRET);
+    expect(unseen).toHaveBeenCalledTimes(1);
+  });
+
+  it("unmounted while the request is pending: the secret is handed over with the team it was requested for", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    const unseen = vi.fn();
+    const view = render(dialog({ teamId: "team-1", onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    // The page now shows another team; the request was for team-1.
+    view.rerender(dialog({ teamId: "team-2", onSecretUnseen: unseen }));
+
+    view.unmount();
+    await act(async () => {
+      pending.resolve(makeTokenResult(SECRET));
+    });
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: "team-1", rawToken: SECRET}),
+    );
+    expect(document.body.textContent).not.toContain(SECRET);
+  });
+
+  it("the hand-over goes to the parent's latest callback", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    const oldCb = vi.fn();
+    const newCb = vi.fn();
+    const view = render(dialog({ onSecretUnseen: oldCb }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    view.rerender(dialog({ open: false, onSecretUnseen: newCb }));
+
+    await act(async () => {
+      pending.resolve(makeTokenResult(SECRET));
+    });
+
+    expect(newCb).toHaveBeenCalledTimes(1);
+    expect(oldCb).not.toHaveBeenCalled();
+  });
+
+  it("unmounted while it shows the secret: the secret is handed over once", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const created = vi.fn();
+    const unseen = vi.fn();
+    const view = render(dialog({ onTokenCreated: created, onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+    expect(unseen).not.toHaveBeenCalled();
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: "team-1", rawToken: SECRET}),
+    );
+    expect(created).toHaveBeenCalledTimes(1);
+  });
+
+  it("copied and masked, then unmounted: the secret is handed over marked masked", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+    await user.click(screen.getByRole("button", { name: /copy snippet/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "true"),
+    );
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(
+      expect.objectContaining({ rawToken: SECRET, masked: true }),
+    );
+  });
+
+  it("never copied, then unmounted: the secret is handed over not masked", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen.mock.calls[0][0]).not.toHaveProperty("masked", true);
+  });
+
+  it("copied, masked and revealed again, then unmounted: the secret is handed over not masked", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+    await user.click(screen.getByRole("button", { name: /copy snippet/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "true"),
+    );
+    await user.click(screen.getByTestId("connect-reveal"));
+    expect(screen.getByTestId("connect-snippet")).toHaveAttribute("data-token-masked", "false");
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen.mock.calls[0][0]).not.toHaveProperty("masked", true);
+  });
+
+  // React StrictMode runs every effect twice (mount, cleanup, mount). The
+  // dialog must come out of that still alive: it shows its own secret and
+  // hands it over exactly once when it is unmounted for real.
+  it("under StrictMode the dialog still shows its own secret and hands nothing over", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    render(<StrictMode>{dialog({ onSecretUnseen: unseen })}</StrictMode>);
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+
+    expect((await screen.findByTestId("connect-snippet")).textContent).toContain(SECRET);
+    expect(unseen).not.toHaveBeenCalled();
+  });
+
+  it("under StrictMode an unmount while it shows the secret hands it over exactly once", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(<StrictMode>{dialog({ onSecretUnseen: unseen })}</StrictMode>);
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    view.unmount();
+
+    expect(unseen).toHaveBeenCalledTimes(1);
+    expect(unseen).toHaveBeenCalledWith(expect.objectContaining({ rawToken: SECRET }));
+  });
+
+  it("closed by the user while it shows the secret: nothing is handed over, the secret is gone", async () => {
+    mockCreate.mockResolvedValue(makeTokenResult(SECRET));
+    const unseen = vi.fn();
+    const view = render(dialog({ onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    view.rerender(dialog({ open: false, onSecretUnseen: unseen }));
+    view.unmount();
+
+    expect(unseen).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(SECRET);
+  });
+
+  it("unmounted before it ever shows a secret: nothing is handed over", () => {
+    const unseen = vi.fn();
+    render(dialog({ onSecretUnseen: unseen })).unmount();
+    expect(unseen).not.toHaveBeenCalled();
+  });
+
+  it("a failure while the dialog is open is shown in it, not reported to the parent", async () => {
+    mockCreate.mockRejectedValue(new Error("Token service unavailable"));
+    const failed = vi.fn();
+    render(dialog({ onCreateFailedUnseen: failed }));
+
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+
+    expect(await screen.findByText("Token service unavailable")).toBeInTheDocument();
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it("a failure after the dialog was closed is reported with its team and not shown on reopen", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    const failed = vi.fn();
+    const unseen = vi.fn();
+    const { rerender } = render(dialog({ onCreateFailedUnseen: failed, onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    rerender(dialog({ open: false, onCreateFailedUnseen: failed, onSecretUnseen: unseen }));
+
+    await act(async () => {
+      pending.reject(new Error("Token service unavailable"));
+    });
+
+    expect(failed).toHaveBeenCalledWith("team-1", "Token service unavailable");
+    expect(unseen).not.toHaveBeenCalled();
+    rerender(dialog({ open: true, onCreateFailedUnseen: failed, onSecretUnseen: unseen }));
+    expect(screen.queryByText("Token service unavailable")).not.toBeInTheDocument();
+  });
+
+  it("a failure after unmount is reported with the team it was requested for", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    const failed = vi.fn();
+    const unseen = vi.fn();
+    const view = render(dialog({ teamId: "team-1", onCreateFailedUnseen: failed, onSecretUnseen: unseen }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    view.unmount();
+
+    await act(async () => {
+      pending.reject(new Error("Token service unavailable"));
+    });
+
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed).toHaveBeenCalledWith("team-1", "Token service unavailable");
+    expect(unseen).not.toHaveBeenCalled();
+  });
+
+  it("without handlers a result the dialog cannot show is dropped without throwing", async () => {
+    const ok = deferred<CreateResult>();
+    mockCreate.mockReturnValueOnce(ok.promise);
+    const view = render(dialog());
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    view.unmount();
+
+    await act(async () => {
+      ok.resolve(makeTokenResult(SECRET));
+    });
+
+    expect(document.body.textContent).not.toContain(SECRET);
   });
 });
