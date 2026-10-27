@@ -58,10 +58,10 @@
 // status write refused while a pull request merge holds the task) -- see
 // mergeInProgressError below. Plus recipe branches for the grounding write
 // verbs' (pull_requests_create, pull_requests_merge, task_merge,
-// task_finish) 403 `forbidden`: re-mint guidance for a message naming a
-// missing `github:*` scope, a precondition list when the backend sent no
-// message, both under the backend's own `forbidden` code -- see
-// groundingForbiddenError below. Every other backend error degrades to the
+// task_finish, task_abandon, task_grounding_attempt_create) 403 `forbidden`:
+// re-mint guidance for a message naming a missing `github:*` scope, that
+// verb's own precondition list when the backend sent no message, both under
+// the backend's own `forbidden` code -- see groundingForbiddenError below. Every other backend error degrades to the
 // generic shape (status-derived code, message passthrough, recipe ->
 // workflow_primer, and now also a clamped passthrough of any structured
 // body.details — see genericDegrade) rather than being forwarded as raw
@@ -832,41 +832,55 @@ function mergeInProgressError(message: string): TeachingError {
   });
 }
 
-// 7e. Grounding write precondition 403s. pull_requests_create,
-// pull_requests_merge, task_merge and task_finish answer 403 `forbidden`
+// 7e. Grounding write precondition 403s. The Grounding routes behind
+// pull_requests_create, pull_requests_merge, task_merge, task_finish,
+// task_abandon and task_grounding_attempt_create answer 403 `forbidden`
 // when one of their preconditions is unmet (backend/src/routes/
-// grounding-github.ts, backend/src/routes/grounding-task-completion.ts):
-// the token lacks a required scope, the caller has no write access to the
-// project, it holds neither the work claim nor the review claim (finish),
-// or a merge gate (team delegation of agent PR merges, the self-merge
-// gate, review lock/approval, the transition's project role, a foreign
-// deliverable repository) refuses. A current backend names the failed
-// precondition in the message of those merge-gate refusals and of the
-// scope, write-access and no-claim refusals on these routes; the ordinary
-// message passthrough (generic degrade) carries any message unchanged, and
-// this entry adds only the two teachings passthrough alone cannot give:
+// grounding-github.ts, grounding-task-completion.ts, grounding.ts and the
+// services behind them). A current backend names the failed precondition in
+// the body's `message` on every reachable refusal except the documented
+// no-access answers; the ordinary message passthrough (generic degrade)
+// carries that message unchanged, and this entry adds only what passthrough
+// alone cannot give:
 //  - A message naming a missing `github:*` scope (the backend's own
 //    "Token missing scope: ..." wording) has no self-service corrective:
 //    an existing token never gains a new scope, so only a team admin can
 //    re-mint one carrying it -- an admin wall, so `allowedNext` is empty
-//    by the same convention as force_admin_only above.
-//  - A body with NO message (a backend predating the precondition
-//    messages) gets the precondition list as the recipe. The work-or-
-//    review-claim item is named only for `task_finish`, the only verb
-//    threaded through wrap() that gates on a claim; a standalone merge
-//    (task_merge, pull_requests_merge) is claim-independent. Precedence:
-//    a present non-empty message wins (the list never applies to it);
-//    an empty message counts as absent; among verbs, a named `task_finish`
-//    wins over an absent verbContext, and an absent verbContext is one of
-//    the two merge verbs (the only verbs calling wrap() without one), so
-//    it takes the claim-free list. A bare `{error:"forbidden"}` body with
-//    no message is emitted only by those Grounding routes (every legacy
-//    403 carries a message).
-// A message without a `github:*` scope returns undefined: it falls
-// through to the generic degrade path unchanged, which is the required
-// "backend message is passed through" behavior (same code `forbidden`,
-// message verbatim, recipe -> workflow_primer).
+//    by the same convention as force_admin_only above. This applies to
+//    every verb.
+//  - A body with NO message (a backend predating the precondition messages,
+//    or a deliberately bare no-access answer) gets that verb's own list of
+//    possible preconditions as the recipe, from GROUNDING_FORBIDDEN_
+//    PRECONDITIONS. The table is keyed by the verbContext the tool passes
+//    to wrap() (tools.ts passes it at task_merge, pull_requests_merge,
+//    task_finish, task_abandon, pull_requests_create and
+//    task_grounding_attempt_create, the six verbs whose Grounding routes
+//    answer this 403, and at the other Grounding-routed verbs for
+//    explicitness); each list names only the preconditions that verb's
+//    route can refuse on. A verbContext outside the table, or none, makes
+//    no causal claim: the result falls through to the generic degrade.
+// Precedence: a present non-empty message wins (the list never applies to
+// it); an empty message counts as absent. A message without a `github:*`
+// scope returns undefined: it falls through to the generic degrade path
+// unchanged, which is the required "backend message is passed through"
+// behavior (same code `forbidden`, message verbatim, recipe ->
+// workflow_primer).
 const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
+
+const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
+  task_merge:
+    "a missing github:pr_merge scope or write access, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent",
+  pull_requests_merge:
+    "a missing tasks:transition or github:pr_merge scope, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent",
+  task_finish:
+    "a missing tasks:transition scope, write access, a work or review claim, review approval, the transition role (autoMerge: github:pr_merge, self-merge gate, allowAgentPrMerge)",
+  task_abandon:
+    "a missing tasks:claim scope, project write access, or holding neither the work claim nor the review claim",
+  pull_requests_create:
+    "a missing tasks:update or github:pr_create scope, project access, or no allowAgentPrCreate consent from a team member with a connected GitHub account",
+  task_grounding_attempt_create:
+    "a missing tasks:transition scope, project write access, neither work nor review claim held, or (intent merge) the merge gates",
+};
 
 function groundingForbiddenError(body: BackendErrorBody, message: string, verbContext?: string): TeachingError | undefined {
   if (typeof body.message === "string" && body.message.length > 0) {
@@ -880,12 +894,16 @@ function groundingForbiddenError(body: BackendErrorBody, message: string, verbCo
         })
       : undefined;
   }
-  const claimItem = verbContext === "task_finish" ? ", and the work or review claim on the task" : "";
+  const preconditions = verbContext === undefined
+    ? undefined
+    : Object.prototype.hasOwnProperty.call(GROUNDING_FORBIDDEN_PRECONDITIONS, verbContext)
+      ? GROUNDING_FORBIDDEN_PRECONDITIONS[verbContext]
+      : undefined;
+  if (preconditions === undefined) return undefined;
   return buildTeachingError({
     code: "forbidden",
     message,
-    recipe:
-      `the backend sent no detail: check this verb's token scopes (see workflow_primer), write access to the project, agent PR merge consent (allowAgentPrMerge), the self-merge gate and review approval${claimItem}`,
+    recipe: `no detail sent; this verb is refused for: ${preconditions} (see workflow_primer)`,
     allowedNext: ["workflow_primer"],
   });
 }

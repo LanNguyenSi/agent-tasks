@@ -788,6 +788,36 @@ describe("buildTools", () => {
     expect(parsed.error.allowedNext).toEqual(["pull_requests_create"]);
   });
 
+  // The Grounding write verbs thread their own name into wrap(), so a bare 403
+  // from the backend gets THAT verb's precondition list rather than another verb's.
+  const BARE_403_ARGS: Array<[string, Record<string, unknown>, string]> = [
+    ["task_merge", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "a missing github:pr_merge scope or write access"],
+    ["pull_requests_merge", { taskId: "55555555-5555-5555-5555-555555555555", owner: "acme", repo: "r", prNumber: 4, idempotencyKey: "k1" }, "a missing tasks:transition or github:pr_merge scope"],
+    ["task_finish", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "a work or review claim"],
+    ["task_abandon", { taskId: "55555555-5555-5555-5555-555555555555", operationKey: "k1" }, "holding neither the work claim nor the review claim"],
+    ["pull_requests_create", { taskId: "55555555-5555-5555-5555-555555555555", owner: "acme", repo: "r", head: "feat/x", title: "t", idempotencyKey: "k1" }, "allowAgentPrCreate consent"],
+    ["task_grounding_attempt_create", { taskId: "55555555-5555-5555-5555-555555555555", intent: "finish" }, "neither work nor review claim held"],
+  ];
+  it.each(BARE_403_ARGS)("%s threads its own verbContext: a bare 403 gets that verb's precondition list", async (name, args, expectedFragment) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { "content-type": "application/json" } }));
+    let captured = "";
+    try { await tool(name).handler(args as never); throw new Error("expected a throw"); }
+    catch (e) { captured = e instanceof Error ? e.message : String(e); }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("forbidden");
+    expect(parsed.error.recipe).toContain("no detail sent; this verb is refused for:");
+    expect(parsed.error.recipe).toContain(expectedFragment);
+  });
+  it("a Grounding-routed verb outside the list table (task_grounding_receipt_upload) gets the generic recipe for a bare 403", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { "content-type": "application/json" } }));
+    let captured = "";
+    try {
+      await tool("task_grounding_receipt_upload").handler({ taskId: "55555555-5555-5555-5555-555555555555", attemptId: "66666666-6666-6666-6666-666666666666", session: { id: "s", revision: 1 }, receipt: "{}" } as never);
+      throw new Error("expected a throw");
+    } catch (e) { captured = e instanceof Error ? e.message : String(e); }
+    expect(JSON.parse(captured).error.recipe).toBe("call workflow_primer for the full lifecycle reference and today's known traps");
+  });
+
   it("wrap translates an uncataloged AgentTasksApiError into the generic teaching-error shape (status-derived code)", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ message: "forbidden" }), {

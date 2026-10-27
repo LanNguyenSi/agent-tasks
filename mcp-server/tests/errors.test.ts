@@ -652,7 +652,6 @@ describe("mapBackendError catalog", () => {
 
   // ── 7e. grounding write precondition 403s ─────────────────────────────────
   const GENERIC_PRIMER_RECIPE = "call workflow_primer for the full lifecycle reference and today's known traps";
-  const GROUNDING_FALLBACK_RECIPE = "the backend sent no detail: check this verb's token scopes (see workflow_primer), write access to the project, agent PR merge consent (allowAgentPrMerge), the self-merge gate and review approval";
   it("grounding 403: a backend precondition message is passed through verbatim (no-scope message keeps the generic degrade)", () => {
     for (const [verb, message] of [
       ["pull_requests_create", "No write access to this project"],
@@ -687,30 +686,56 @@ describe("mapBackendError catalog", () => {
     expect(err.error.recipe).not.toContain("re-mint");
     expect(err.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
   });
-  it("grounding 403: a body with no message lists every merge-path precondition including delegation, self-merge and review approval", () => {
-    const err = mapBackendError(403, { error: "forbidden" }, "pull_requests_merge");
+  // Per-verb recipe for a 403 whose body carries no message, pinned verbatim.
+  const NO_DETAIL: Record<string, string> = {
+    task_merge: "no detail sent; this verb is refused for: a missing github:pr_merge scope or write access, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent (see workflow_primer)",
+    pull_requests_merge: "no detail sent; this verb is refused for: a missing tasks:transition or github:pr_merge scope, the self-merge gate, review approval, the transition role, or no allowAgentPrMerge consent (see workflow_primer)",
+    task_finish: "no detail sent; this verb is refused for: a missing tasks:transition scope, write access, a work or review claim, review approval, the transition role (autoMerge: github:pr_merge, self-merge gate, allowAgentPrMerge) (see workflow_primer)",
+    task_abandon: "no detail sent; this verb is refused for: a missing tasks:claim scope, project write access, or holding neither the work claim nor the review claim (see workflow_primer)",
+    pull_requests_create: "no detail sent; this verb is refused for: a missing tasks:update or github:pr_create scope, project access, or no allowAgentPrCreate consent from a team member with a connected GitHub account (see workflow_primer)",
+    task_grounding_attempt_create: "no detail sent; this verb is refused for: a missing tasks:transition scope, project write access, neither work nor review claim held, or (intent merge) the merge gates (see workflow_primer)",
+  };
+  it.each(Object.entries(NO_DETAIL))("grounding 403: a body with no message gets %s's own precondition list, exactly", (verb, recipe) => {
+    const err = mapBackendError(403, { error: "forbidden" }, verb);
     expect(err.error.code).toBe("forbidden");
     expect(err.error.message).toBe("request failed with status 403");
-    expect(err.error.recipe).toBe(GROUNDING_FALLBACK_RECIPE);
+    expect(err.error.recipe).toBe(recipe);
+    expect(recipe.length).toBeLessThanOrEqual(240);
     expect(err.error.allowedNext).toEqual(["workflow_primer"]);
     assertAllowedNextRegistered(err, registered);
   });
-  it("grounding 403: the no-message list names the claim only for task_finish, never for the claim-independent merges or an absent verb", () => {
-    expect(mapBackendError(403, { error: "forbidden" }, "task_finish").error.recipe)
-      .toBe(`${GROUNDING_FALLBACK_RECIPE}, and the work or review claim on the task`);
-    for (const verb of ["task_merge", "pull_requests_merge", undefined] as const) {
-      const recipe = mapBackendError(403, { error: "forbidden" }, verb).error.recipe;
-      expect(recipe).toBe(GROUNDING_FALLBACK_RECIPE);
-      expect(recipe).not.toContain("claim");
+  it("grounding 403: each verb's list names only the preconditions that verb's route can refuse on", () => {
+    // Claim items belong to the claim-gated verbs only; merge consent to the merge verbs and autoMerge finish only.
+    for (const verb of ["task_merge", "pull_requests_merge", "pull_requests_create"]) expect(NO_DETAIL[verb]).not.toContain("claim");
+    expect(NO_DETAIL.task_abandon).not.toContain("allowAgentPr");
+    expect(NO_DETAIL.task_abandon).not.toContain("merge");
+    expect(NO_DETAIL.pull_requests_create).toContain("allowAgentPrCreate");
+    expect(NO_DETAIL.pull_requests_create).not.toContain("allowAgentPrMerge");
+    for (const verb of ["task_merge", "pull_requests_merge", "task_finish"]) expect(NO_DETAIL[verb]).toContain("allowAgentPrMerge");
+  });
+  it("grounding 403: an unknown or absent verbContext, or one outside the table, makes no causal claim (generic recipe, no list)", () => {
+    for (const verb of [undefined, "task_grounding_receipt_upload", "tasks_claim", "toString", "constructor"] as const) {
+      const err = mapBackendError(403, { error: "forbidden" }, verb);
+      expect(err.error.code).toBe("forbidden");
+      expect(err.error.message).toBe("request failed with status 403");
+      expect(err.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
     }
   });
-  it("grounding 403: an empty message string counts as no message (same precondition list); a body without the forbidden code keeps the generic recipe", () => {
+  it("grounding 403: an empty message string counts as no message (the verb's list); a present message wins over the list; a body without the forbidden code keeps the generic recipe", () => {
     const empty = mapBackendError(403, { error: "forbidden", message: "" }, "task_merge");
     expect(empty.error.message).toBe("request failed with status 403");
-    expect(empty.error.recipe).toBe(GROUNDING_FALLBACK_RECIPE);
+    expect(empty.error.recipe).toBe(NO_DETAIL.task_merge);
+    const present = mapBackendError(403, { error: "forbidden", message: "No write access to this project" }, "task_merge");
+    expect(present.error.message).toBe("No write access to this project");
+    expect(present.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
     const noCode = mapBackendError(403, {});
     expect(noCode.error.code).toBe("http_403");
     expect(noCode.error.recipe).toBe(GENERIC_PRIMER_RECIPE);
+  });
+  it("grounding 403: the github scope re-mint teaching applies to every verb, listed or not", () => {
+    for (const verb of [undefined, "task_merge", "task_grounding_receipt_upload"] as const) {
+      expect(mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_merge" }, verb).error.recipe).toContain("re-mint");
+    }
   });
 
   // ── 7c. backlog_not_promoted ───────────────────────────────────────────────
