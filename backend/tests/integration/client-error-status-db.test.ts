@@ -96,7 +96,6 @@ describe("a NUL byte in a path id answers 400, not 500", () => {
       message: "Request contains a character that cannot be stored (NUL byte)",
     });
   });
-
 });
 
 describe("unexpected errors", () => {
