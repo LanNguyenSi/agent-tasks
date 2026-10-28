@@ -70,6 +70,58 @@ describe("<DocumentTitle>", () => {
   });
 });
 
+describe("the <title> element on a route that renders none server-side (the project hub: `title: null` segment metadata)", () => {
+  it("removes the element it created when the hook unmounts, leaving head without any <title>", async () => {
+    // Without this the assignment below makes the browser create an
+    // unmanaged <title> that survives a client navigation, next to the
+    // route's React/Next-managed one: two title elements in head.
+    document.head.querySelectorAll("title").forEach((t) => t.remove());
+    const { unmount } = render(<DocumentTitle title="Alpha" />);
+    await expectDocumentTitle("Alpha - agent-tasks");
+    expect(document.head.querySelectorAll("title")).toHaveLength(1);
+    unmount();
+    expect(document.head.querySelectorAll("title")).toHaveLength(0);
+  });
+
+  it("ignores an SVG <title> in the body when deciding whether it created the head title", async () => {
+    document.head.querySelectorAll("title").forEach((t) => t.remove());
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "title"));
+    document.body.appendChild(svg);
+    try {
+      const { unmount } = render(<DocumentTitle title="Alpha" />);
+      await expectDocumentTitle("Alpha - agent-tasks");
+      unmount();
+      expect(document.head.querySelectorAll("title")).toHaveLength(0);
+    } finally {
+      svg.remove();
+    }
+  });
+
+  it("never removes a title element that was already there", async () => {
+    document.title = "server";
+    const el = document.head.querySelector("title");
+    expect(el).not.toBeNull();
+    const { unmount } = render(<DocumentTitle title="Board" />);
+    await expectDocumentTitle("Board - agent-tasks");
+    unmount();
+    expect(document.head.querySelector("title")).toBe(el);
+    expect(el!.textContent).toBe("Board - agent-tasks");
+  });
+
+  it("keeps the one element it created across a title change while mounted", async () => {
+    document.head.querySelectorAll("title").forEach((t) => t.remove());
+    const { rerender } = render(<DocumentTitle title="Alpha" />);
+    await expectDocumentTitle("Alpha - agent-tasks");
+    const el = document.head.querySelector("title");
+    expect(el).not.toBeNull();
+    rerender(<DocumentTitle title="Beta" />);
+    await expectDocumentTitle("Beta - agent-tasks");
+    expect(document.head.querySelector("title")).toBe(el);
+    expect(document.head.querySelectorAll("title")).toHaveLength(1);
+  });
+});
+
 describe("segment layout titles", () => {
   it.each([
     [HomeLayout, "/home", "Home - agent-tasks"],
