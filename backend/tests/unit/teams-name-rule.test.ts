@@ -256,8 +256,16 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
     await expectStored(name, name);
   });
 
-  it("accepts code points next to the refused ranges (U+E000 neighbours, U+FFFD, U+FDCF)", async () => {
-    await expectStored("a\ufffdb\ufdcfc\ufdf0d", "a\ufffdb\ufdcfc\ufdf0d");
+  it("accepts code points next to the refused ranges (U+F900 after private use, U+FFFD, U+FDCF, U+FDF0)", async () => {
+    await expectStored("a\uf900b\ufffdc\ufdcfd\ufdf0e", "a\uf900b\ufffdc\ufdcfd\ufdf0e");
+  });
+
+  it.each([
+    ["Thai with vowel and tone marks", "\u0e17\u0e35\u0e21\u0e44\u0e17\u0e22"],
+    ["Arabic with harakat", "\u0641\u064e\u0631\u0650\u064a\u0642"],
+    ["a keycap emoji", "Team 1\ufe0f\u20e3"],
+  ])("accepts %s", async (_label, name) => {
+    await expectStored(name, name);
   });
 
   it("accepts inner spaces and a name with Hangul syllables", async () => {
