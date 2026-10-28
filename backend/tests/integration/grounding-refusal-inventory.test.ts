@@ -60,7 +60,9 @@
  *                                                       for intent finish; RT is the bare 403 without project access
  *      A human has no scope: with a claim, admitted by the claim path; without one, admitted when merge eligibility admits (RW),
  *      else the claim refusal (RO), except the same 409 bad_state (RV).
- *      An unavailable workflow definition keeps its own answer (RX: grounding_verification_unavailable).
+ *      For a merge-capable caller that neither path admits, an unavailable workflow definition keeps its own answer
+ *      (RX: grounding_verification_unavailable); a caller admitted by the claim path, or one without github:pr_merge,
+ *      is unaffected at admission.
  *      RU: an unexpected error of the merge-actor check on the merge-only path propagates as the service's
  *      grounding_verification_unavailable error; it is not a scope refusal.
  *
