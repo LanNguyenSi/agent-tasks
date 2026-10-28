@@ -242,6 +242,21 @@ export default function BoardView({
 }: BoardViewProps) {
   const [showAllDone, setShowAllDone] = useState(false);
 
+  // Jump-chip activation: scroll the column into view and move focus to its
+  // heading (tabIndex -1), so the next Tab continues from the column instead
+  // of the page top. The default anchor navigation is prevented, which keeps
+  // the #db-col-* hash out of the URL entirely: nothing is left behind when
+  // the view toggles to List (a hash written here survived that toggle
+  // before). The href stays for click-free activation semantics (copy link,
+  // middle click).
+  const jumpToColumn = (status: string) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const column = document.getElementById(columnDomId(status));
+    if (!column) return;
+    column.scrollIntoView({ block: "start" });
+    (column.querySelector(".db-col-title") as HTMLElement | null)?.focus();
+  };
+
   const columnCounts = STATUSES.map((status) => ({
     status,
     label: STATUS_LABELS[normalizeStatus(status)] ?? normalizeStatus(status),
@@ -250,14 +265,17 @@ export default function BoardView({
 
   return (
     <>
-    {/* Column jump bar: only shown while the columns are stacked (CSS hides
-        it from 640px up). Links to the column sections by id. */}
+    {/* Column jump bar: only shown while the columns are stacked (the CSS
+        hides it from the 761px width where they stop stacking). Activating
+        a chip scrolls that column into view and focuses its heading; the
+        href's hash is never written to the URL (see jumpToColumn). */}
     <nav className="db-jump" aria-label="Jump to column">
       {columnCounts.map(({ status, label, count }) => (
         <a
           key={status}
           className="db-jump-chip"
           href={`#${columnDomId(status)}`}
+          onClick={jumpToColumn(status)}
           aria-label={`Jump to ${label}, ${count} task${count !== 1 ? "s" : ""}`}
         >
           {label}
@@ -284,7 +302,10 @@ export default function BoardView({
           >
             <header className="db-col-head">
               <span className="db-col-dot" aria-hidden="true" />
-              <h2 className="db-col-title">{columnLabel}</h2>
+              {/* tabIndex -1: the jump bar moves focus here on activation. */}
+              <h2 className="db-col-title" tabIndex={-1}>
+                {columnLabel}
+              </h2>
               <Badge tone={badgeTone}>{columnTasks.length}</Badge>
               {/* Column-gated create affordance (operator decision
                   2026-08-20): the + only appears where the pipeline can

@@ -28,3 +28,29 @@ describe("PageHeader truncateSummary", () => {
     expect(container.querySelector(".page-header")).toHaveClass("page-header--summary-truncates", "extra");
   });
 });
+
+/**
+ * An ellipsised summary is unreadable past the ellipsis, so the truncated
+ * element carries the full text as `title` (hover/touch-hold tooltip). The
+ * title appears ONLY on the truncating case: a non-string summary has no
+ * text to title, and without truncateSummary the full text is always shown.
+ */
+describe("PageHeader truncated summary title", () => {
+  it("truncating a string summary: title carries the full text", () => {
+    const long = "Example Team With A Rather Long Name That Needs Truncating x 5 projects";
+    const { container } = render(<PageHeader title="Projects" summary={long} truncateSummary />);
+    expect(container.querySelector(".page-header-summary")).toHaveAttribute("title", long);
+  });
+
+  it("truncating a non-string summary: no title (nothing to title)", () => {
+    const { container } = render(
+      <PageHeader title="P" summary={<em>marked up</em>} truncateSummary />,
+    );
+    expect(container.querySelector(".page-header-summary")).not.toHaveAttribute("title");
+  });
+
+  it("a string summary without truncateSummary: no title (never truncated)", () => {
+    const { container } = render(<PageHeader title="Tasks" summary="12 open" />);
+    expect(container.querySelector(".page-header-summary")).not.toHaveAttribute("title");
+  });
+});

@@ -62,8 +62,8 @@ describe("sticky column heads", () => {
     expect(head).toMatch(/top:\s*calc\(var\(--app-header-height\) \+ var\(--board-toolbar-height\)\)/);
   });
 
-  it("stick below the sticky jump bar under 640px", () => {
-    const head = inMedia(media("(max-width: 639px)"), ".db-col-head");
+  it("stick below the sticky jump bar at the stacked widths (to 760px)", () => {
+    const head = inMedia(media("(max-width: 760px)"), ".db-col-head");
     expect(head).toMatch(/position:\s*sticky/);
     expect(head).toMatch(/top:\s*calc\(var\(--app-header-height\) \+ var\(--board-jump-height\)\)/);
   });

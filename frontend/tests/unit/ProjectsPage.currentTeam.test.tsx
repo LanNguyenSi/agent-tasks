@@ -373,7 +373,7 @@ describe("/projects page: current team follows the URL", () => {
       expect(screen.getByRole("tab", { name: "Cards" })).toHaveAttribute("aria-selected", "true"),
     );
     fireEvent.click(screen.getAllByRole("button", { name: `Actions for ${name}` })[0]!);
-    fireEvent.click(await screen.findByRole("button", { name: "Delete project" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete project" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete project?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" }));
   }
