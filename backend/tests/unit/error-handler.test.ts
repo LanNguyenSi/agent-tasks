@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { zValidate } from "../../src/lib/z-validate.js";
 import { appErrorHandler } from "../../src/lib/error-handler.js";
+import { logger } from "../../src/lib/logger.js";
 import {
   AppError,
   ConflictError,
@@ -205,6 +206,18 @@ describe("appErrorHandler", () => {
         error: "validation_error",
         message: "Request contains a character that cannot be stored (NUL byte)",
       });
+    }
+  });
+
+  it("logs a refused NUL byte with method and path but not the value", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined as never);
+    try {
+      await invoke("/prisma-nul");
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [fields] = warn.mock.calls[0] as unknown as [Record<string, unknown>];
+      expect(fields).toEqual({ method: "GET", path: "/prisma-nul" });
+    } finally {
+      warn.mockRestore();
     }
   });
 

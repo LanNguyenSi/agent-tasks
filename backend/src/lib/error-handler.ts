@@ -76,6 +76,9 @@ export function appErrorHandler(err: Error, c: Context): Response {
   }
 
   if (isInvalidTextInput(err)) {
+    // Logged without the value: a NUL that came from server-side data rather
+    // than the request stays visible.
+    logger.warn({ method: c.req.method, path: c.req.path }, "refused text with a NUL byte (Postgres 22021)");
     return c.json(
       {
         error: "validation_error",

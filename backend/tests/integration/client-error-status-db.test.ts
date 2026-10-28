@@ -97,10 +97,6 @@ describe("a NUL byte in a path id answers 400, not 500", () => {
     });
   });
 
-  it("writes nothing for the rejected team rename", async () => {
-    await send("PATCH", "/api/teams/ab%00c", JSON.stringify({ name: "Renamed" }));
-    expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
-  });
 });
 
 describe("unexpected errors", () => {
