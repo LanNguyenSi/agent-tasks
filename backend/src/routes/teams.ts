@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidate } from "../lib/z-validate.js";
-import { teamBodyValidate, teamNameSchema } from "../lib/team-name.js";
+import { teamNameSchema } from "../lib/team-name.js";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
@@ -84,7 +84,7 @@ teamRouter.get("/teams", async (c) => {
 
 // ── Create team ───────────────────────────────────────────────────────────────
 
-teamRouter.post("/teams", teamBodyValidate(createTeamSchema), async (c) => {
+teamRouter.post("/teams", zValidate("json", createTeamSchema, { message: true }), async (c) => {
   const actor = c.get("actor");
 
   if (actor.type !== "human") {
@@ -149,7 +149,7 @@ teamRouter.get("/teams/:id", async (c) => {
 
 // ── Rename team ───────────────────────────────────────────────────────────────
 
-teamRouter.patch("/teams/:id", teamBodyValidate(renameTeamSchema), async (c) => {
+teamRouter.patch("/teams/:id", zValidate("json", renameTeamSchema, { message: true }), async (c) => {
   const actor = c.get("actor");
 
   if (actor.type !== "human") {

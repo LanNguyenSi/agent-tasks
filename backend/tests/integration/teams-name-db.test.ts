@@ -3,7 +3,9 @@
  * cannot show that a NUL byte stopped reaching the database: Postgres refuses
  * U+0000 in a text column and the route answered 500 internal_error. Both
  * write routes (POST /teams, PATCH /teams/:id) now answer 400 and nothing is
- * written; a name that is accepted round-trips through the database trimmed.
+ * written; the same holds for an unpaired UTF-16 surrogate (Prisma refuses it
+ * before the query, which also surfaced as a 500). A name that is accepted
+ * round-trips through the database trimmed.
  */
 import { type PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
@@ -78,6 +80,20 @@ describe("team names (real database)", () => {
   it("PATCH /teams/:id answers 400, not 500, for a NUL byte and keeps the name", async () => {
     const res = await patch("Bad\u0000Name");
     expect(res.status).toBe(400);
+    expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
+  });
+
+  it.each([
+    ["a high surrogate inside the name", "A\ud800B"],
+    ["a lone high surrogate", "\ud800"],
+    ["a lone low surrogate before text", "\udc00x"],
+  ])("answers 400, not 500, for %s on both routes and writes nothing", async (_label, name) => {
+    const created = await post(name, "surrogate-team");
+    expect(created.status).toBe(400);
+    expect(await pg.db.team.findUnique({ where: { slug: "surrogate-team" } })).toBeNull();
+
+    const renamed = await patch(name);
+    expect(renamed.status).toBe(400);
     expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
   });
 

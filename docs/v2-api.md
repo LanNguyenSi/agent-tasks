@@ -28,7 +28,7 @@ PATCH /api/teams/:id              # Rename (team admins; body { name }, same nam
 POST /api/teams/:id/members
 POST /api/teams/:id/sync          # GitHub repo sync
 # Team name rule (create and rename): trimmed, at most 100 code points, no control characters
-# (NUL, newline, tab, other C0/C1), and not empty once whitespace and format characters
+# (NUL, newline, tab, other C0/C1), no unpaired UTF-16 surrogate, and not empty once whitespace and format characters
 # (zero-width space) are removed. A refusal is a 400 with the first failed rule in `message`.
 
 # Agent Tokens (team admins)

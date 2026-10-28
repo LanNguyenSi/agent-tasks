@@ -9,7 +9,8 @@
  * refused. A name that is only whitespace, NBSP or format characters (zero
  * width space) is empty; NUL, newline, tab and other C0/C1 control characters
  * inside the name are refused; a normal name keeps its inner spaces and
- * accents and is stored trimmed.
+ * accents and is stored trimmed. An unpaired UTF-16 surrogate (JSON "\ud800")
+ * is refused too: Prisma cannot send it to Postgres, so it used to be a 500.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
@@ -38,6 +39,7 @@ import { teamRouter } from "../../src/routes/teams.js";
 import {
   TEAM_NAME_CONTROL_MESSAGE,
   TEAM_NAME_EMPTY_MESSAGE,
+  TEAM_NAME_ENCODING_MESSAGE,
   TEAM_NAME_LENGTH_MESSAGE,
 } from "../../src/lib/team-name.js";
 
@@ -147,6 +149,19 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
     ["C1 control (last)", "Team\u009fName"],
   ])("400s a %s inside the name", async (_label, name) => {
     await expectRejected(name, TEAM_NAME_CONTROL_MESSAGE);
+  });
+
+  it.each([
+    ["a high surrogate inside the name", "A\ud800B"],
+    ["a name that is only a high surrogate", "\ud800"],
+    ["a low surrogate before text", "\udc00x"],
+    ["a high surrogate at the end", "Team\ud83d"],
+  ])("400s %s (unpaired surrogate, not a 500)", async (_label, name) => {
+    await expectRejected(name, TEAM_NAME_ENCODING_MESSAGE);
+  });
+
+  it("accepts a valid surrogate pair next to text", async () => {
+    await expectStored("Team \u{1F600}", "Team \u{1F600}");
   });
 
   it("400s a control character at the edge that trim does not remove", async () => {
