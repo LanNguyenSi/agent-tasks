@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { renameTeam, type Team } from "../../lib/api";
+import { isBlankTeamName } from "../../lib/teamName";
 import AlertBanner from "../ui/AlertBanner";
 import { Button } from "../ui/Button";
 import Card from "../ui/Card";
@@ -33,11 +34,12 @@ export default function TeamNameSection({ team, onRenamed }: TeamNameSectionProp
   const [saved, setSaved] = useState(false);
 
   const trimmed = value.trim();
+  const blank = isBlankTeamName(trimmed);
   const unchanged = trimmed === team.name;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (saving || !trimmed || unchanged) return;
+    if (saving || blank || unchanged) return;
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -90,7 +92,7 @@ export default function TeamNameSection({ team, onRenamed }: TeamNameSectionProp
               <Button
                 type="submit"
                 size="sm"
-                disabled={saving || !trimmed || unchanged}
+                disabled={saving || blank || unchanged}
                 loading={saving}
               >
                 Save name

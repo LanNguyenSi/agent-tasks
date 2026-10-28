@@ -116,6 +116,46 @@ describe("zValidate wire body (contract)", () => {
   });
 });
 
+describe("zValidate { message: true } variant", () => {
+  function messageApp(): Hono {
+    const app = new Hono();
+    app.post("/j", zValidate("json", jsonSchema, { message: true }), (c) => c.json(c.req.valid("json")));
+    return app;
+  }
+  const post = (app: Hono, body: unknown) =>
+    app.request("http://test/j", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("adds exactly one top-level message (the first issue's) and leaves error unchanged", async () => {
+    const res = await post(messageApp(), { a: 1, k: "z" });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(400);
+    expect(Object.keys(body).sort()).toEqual(["error", "message", "success"]);
+    expect(body.success).toBe(false);
+    const err = body.error as Record<string, unknown>;
+    expect(Object.keys(err).sort()).toEqual(["issues", "name"]);
+    expect(err.name).toBe("ZodError");
+    const issues = err.issues as Issue[];
+    expect(issues.length).toBeGreaterThan(1);
+    expect(body.message).toBe(issues[0].message);
+  });
+
+  it("the default variant still has no message", async () => {
+    const res = await post(buildFixture(), { a: 1, k: "z" });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["error", "success"]);
+  });
+
+  it("success path reaches the handler", async () => {
+    const res = await post(messageApp(), { a: "ok", k: "x" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ a: "ok", k: "x" });
+  });
+});
+
 describe("zValidate is wired into real routers", () => {
   it("agentTokenRouter POST / rejects an invalid body with the contract wire body (no handler/auth reached)", async () => {
     const res = await agentTokenRouter.request("/", {

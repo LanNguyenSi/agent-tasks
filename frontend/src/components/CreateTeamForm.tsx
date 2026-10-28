@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createTeam } from "../lib/api";
 import { rememberTeam } from "../lib/currentTeam";
 import { sectionHref } from "../lib/teamSwitch";
+import { isBlankTeamName } from "../lib/teamName";
 import { useOptionalTeamList } from "../lib/teamList";
 import AlertBanner from "./ui/AlertBanner";
 import { Button } from "./ui/Button";
@@ -53,7 +54,7 @@ export default function CreateTeamForm({ onCancel, onCreated }: CreateTeamFormPr
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!teamName.trim() || !teamSlug.trim()) return;
+    if (isBlankTeamName(teamName) || !teamSlug.trim()) return;
     setCreating(true);
     setError(null);
     try {
@@ -118,7 +119,7 @@ export default function CreateTeamForm({ onCancel, onCreated }: CreateTeamFormPr
           <Button
             type="submit"
             size="sm"
-            disabled={creating || !teamName || !teamSlug}
+            disabled={creating || isBlankTeamName(teamName) || !teamSlug}
             loading={creating}
           >
             Create team
@@ -130,7 +131,7 @@ export default function CreateTeamForm({ onCancel, onCreated }: CreateTeamFormPr
       ) : (
         <Button
           type="submit"
-          disabled={creating || !teamName || !teamSlug}
+          disabled={creating || isBlankTeamName(teamName) || !teamSlug}
           loading={creating}
           className="auth-btn-full"
         >
