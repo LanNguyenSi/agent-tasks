@@ -290,7 +290,7 @@ const rows: Row[] = [
     expected: { status: 403, body: { error: "forbidden" } } },
   // TGA admission precedence (before the intent is read): the claim and scope check wins over a merge-eligibility
   // refusal, and over the merge route's bad_state on a work state outside review; any other merge-eligibility
-  // error keeps its own answer.
+  // error keeps its own answer. A merge-only token (G rows) is the exception and gets merge eligibility's refusal.
   { id: "RA", label: "TGA finish on an in_progress task the agent did not claim, token without github:pr_merge: the claim refusal, not the merge scope",
     run: async () => { await data({ claimedByAgentId: null, claimedByUserId: null }); await scopes(["tasks:transition", "tasks:update", "tasks:claim"]); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null)); },
     expected: refused("You hold neither the work claim nor the review claim on this task") },

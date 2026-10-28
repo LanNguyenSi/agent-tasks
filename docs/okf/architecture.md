@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-10-27T21:27:09Z
+timestamp: 2026-10-28T05:34:03Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -131,7 +131,7 @@ caller's access before any Grounding read or lock: the GitHub create and merge
 routes with the legacy rule (`routes/grounding-github.ts:82`,
 `routes/grounding-github.ts:130`), so a caller without access gets the legacy
 handler's own 403, the attempt and migration routes with a lock-free read
-before the task lock (`grounding-attempts.ts:73`,
+before the task lock (`grounding-attempts.ts:78`,
 `services/grounding-migration.ts:44`), and the creation router before it looks
 at the `creationPolicy` selection (`routes/grounding-creation.ts:36`). The
 principal differences from the unconfigured app are the boundary and in-scope
