@@ -92,6 +92,45 @@ function buildFixture(): Hono {
   app.get("/prisma-known-22021-code", () => {
     throw new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test", meta: { code: "22021" } });
   });
+  app.get("/prisma-json-nul", () => {
+    throw new Prisma.PrismaClientUnknownRequestError(
+      'Invalid `prisma.task.update()` invocation: Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "22P05", message: "unsupported Unicode escape sequence", detail: Some("\\u0000 cannot be converted to text.") }) })',
+      { clientVersion: "test" },
+    );
+  });
+  app.get("/prisma-raw-json-nul", () => {
+    throw new Prisma.PrismaClientKnownRequestError("raw query failed", {
+      code: "P2010",
+      clientVersion: "test",
+      meta: { code: "22P05", message: "unsupported Unicode escape sequence" },
+    });
+  });
+  app.get("/prisma-surrogate-leading", () => {
+    throw new Prisma.PrismaClientKnownRequestError(
+      'Invalid `prisma.task.update()` invocation: unexpected end of hex escape at line 1 column 142',
+      { code: "InvalidArg", clientVersion: "test", meta: { modelName: "Task" } },
+    );
+  });
+  app.get("/prisma-surrogate-lone", () => {
+    throw new Prisma.PrismaClientKnownRequestError("lone leading surrogate in hex escape at line 1 column 140", {
+      code: "InvalidArg",
+      clientVersion: "test",
+      meta: { modelName: "Task" },
+    });
+  });
+  app.get("/prisma-invalid-arg-other", () => {
+    throw new Prisma.PrismaClientKnownRequestError(
+      'Invalid `prisma.task.update()` invocation: Argument `status` of type TaskStatusUpdateInput provided to null. Execution not started.',
+      { code: "InvalidArg", clientVersion: "test", meta: { modelName: "Task" } },
+    );
+  });
+  app.get("/prisma-raw-22p05-other-code", () => {
+    throw new Prisma.PrismaClientKnownRequestError("raw query failed", {
+      code: "P2003",
+      clientVersion: "test",
+      meta: { code: "22P05", message: "unsupported Unicode escape sequence" },
+    });
+  });
   app.onError(appErrorHandler);
   return app;
 }
@@ -209,6 +248,28 @@ describe("appErrorHandler", () => {
     }
   });
 
+  it("maps Postgres 22P05 (NUL byte inside a Json value) to 400 without leaking the database message", async () => {
+    for (const path of ["/prisma-json-nul", "/prisma-raw-json-nul"]) {
+      const { status, body } = await invoke(path);
+      expect(status).toBe(400);
+      expect(body).toEqual({
+        error: "validation_error",
+        message: "Request contains a character that cannot be stored (NUL byte in a JSON value)",
+      });
+    }
+  });
+
+  it("maps a Prisma-refused unpaired surrogate to 400 without leaking the database message", async () => {
+    for (const path of ["/prisma-surrogate-leading", "/prisma-surrogate-lone"]) {
+      const { status, body } = await invoke(path);
+      expect(status).toBe(400);
+      expect(body).toEqual({
+        error: "validation_error",
+        message: "Request contains a character that cannot be stored (unpaired surrogate character)",
+      });
+    }
+  });
+
   it("logs a refused NUL byte with method and path but not the value", async () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined as never);
     try {
@@ -222,7 +283,13 @@ describe("appErrorHandler", () => {
   });
 
   it("leaves other Prisma errors as 500", async () => {
-    for (const path of ["/prisma-unknown-other", "/prisma-raw-other", "/prisma-known-22021-code"]) {
+    for (const path of [
+      "/prisma-unknown-other",
+      "/prisma-raw-other",
+      "/prisma-known-22021-code",
+      "/prisma-invalid-arg-other",
+      "/prisma-raw-22p05-other-code",
+    ]) {
       const { status, body } = await invoke(path);
       expect(status).toBe(500);
       expect(body).toEqual({ error: "internal_error", message: "An unexpected error occurred" });

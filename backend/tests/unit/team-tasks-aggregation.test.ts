@@ -283,7 +283,10 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
       expect(priorityWhere).toEqual({
         projectId: { in: ["p-1", "p-2"] },
         priority: { in: ["HIGH", "CRITICAL"] },
-        status: { in: ["open", "in_progress", "review"] },
+        status: { notIn: ["backlog", "abandoned"] },
+        // "Actionable" excludes the terminal state of each task's own
+        // workflow; with no workflow rows that is the built-in `done`.
+        AND: [{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }],
       });
     });
 

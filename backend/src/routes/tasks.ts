@@ -103,6 +103,14 @@ import {
   loadWorkflowRows,
 } from "../services/workflow-status-filter.js";
 import { clearAllClaims, clearReview } from "../services/task-claim-fields.js";
+import {
+  createStatusVocabulary,
+  projectStatusFilterVocabulary,
+  statusInputError,
+  statusInputErrorBody,
+  statusVocabularyOf,
+  teamStatusFilterVocabulary,
+} from "../services/task-status-input.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge, type BeforeGithubMerge, type MergeResult } from "../services/github-merge.js";
@@ -533,10 +541,19 @@ const deliverableRepoSchema = z
   .max(255)
   .regex(/^[^/\s]+\/[^/\s]+$/, "deliverableRepo must be in 'owner/repo' format");
 
+// A task status name as it arrives on a write. Deliberately unchecked here: the routes judge it against
+// the workflow (statusInputError), and a value of any kind (empty, over-long, not a string) still gets the
+// single invalid_value issue the old fixed list gave; that issue does not echo the value.
+const statusNameSchema = z.custom<string>(() => true);
+
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
-  status: z.enum(["backlog", "open", "in_progress", "review", "done"]).optional(),
+  // A state name of the project's (or the pinned) workflow, or "backlog". The
+  // schema accepts any value: the route judges it against the workflow's
+  // states (statusInputError), since a custom workflow carries its own
+  // vocabulary.
+  status: statusNameSchema.optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
   workflowId: z.guid().optional(),
   dueAt: isoDatetime().optional(),
@@ -574,14 +591,16 @@ export const updateTaskSchema = z.object({
   // "abandoned" is reachable ONLY via the backlog->abandoned "discard"
   // special case in the PATCH handler below (T-002): every other from-state
   // still 400s there because no workflow definition ever declares a
-  // transition INTO "abandoned" (it sits outside the engine's fixed state
+  // transition INTO "abandoned" (it sits outside the workflow's own state
   // vocabulary, same as "backlog" itself — see the creator-abandon route's
   // block comment). "backlog" is reachable ONLY via the open->backlog
   // "demote" special case in the PATCH handler below (task 7c64e80c): it
   // passes this schema so the handler can see it, but every other from-state
   // still 400s there for the same reason as "abandoned" (no workflow
   // definition declares a transition into "backlog").
-  status: z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"]).optional(),
+  // The schema accepts any value; the handler judges it against the task's
+  // effective workflow plus backlog and abandoned (statusInputError).
+  status: statusNameSchema.optional(),
   dueAt: isoDatetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(),
@@ -910,9 +929,11 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
         where: {
           ...countWhere,
           priority: { in: ["HIGH", "CRITICAL"] },
-          // Actionable statuses only (no done, abandoned or backlog draft); keep in
-          // sync with isPriorityTask (home/widgetFilters.ts) and /tasks scope=priority.
-          status: { in: ["open", "in_progress", "review"] },
+          // Actionable statuses only (no terminal state of the task's own
+          // workflow, no abandoned or backlog draft); keep in sync with
+          // isPriorityTask (home/widgetFilters.ts) and /tasks scope=priority.
+          status: { notIn: ["backlog", "abandoned"] },
+          AND: [notTerminalStatus],
         },
       }),
       prisma.task.count({
@@ -972,7 +993,8 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
 // unbounded so the frontend dashboard (which fetches every project task
 // without query params) keeps working; when supplied, limit is clamped to a
 // 500 ceiling.
-const PROJECT_TASK_STATUSES = ["backlog", "open", "in_progress", "review", "done", "abandoned"] as const;
+// The status names the filter accepts are the project's workflow states plus
+// backlog and abandoned (projectStatusFilterVocabulary), read once per request.
 const PROJECT_TASK_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 
 function parseCsv(raw: string | undefined): string[] {
@@ -1023,17 +1045,18 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
   const detail = c.req.query("detail");
 
   const statuses = parseCsv(c.req.query("status"));
-  const invalidStatus = statuses.find(
-    (s) => !PROJECT_TASK_STATUSES.includes(s as (typeof PROJECT_TASK_STATUSES)[number]),
-  );
-  if (invalidStatus) {
-    return c.json(
-      {
-        error: "bad_request",
-        message: `Invalid status '${invalidStatus}'. Expected one of: ${PROJECT_TASK_STATUSES.join(", ")}`,
-      },
-      400,
-    );
+  if (statuses.length > 0) {
+    const allowedStatuses = await projectStatusFilterVocabulary(prisma, projectId);
+    const invalidStatus = statuses.find((s) => !allowedStatuses.includes(s));
+    if (invalidStatus) {
+      return c.json(
+        {
+          error: "bad_request",
+          message: `Invalid status '${invalidStatus}'. Expected one of: ${allowedStatuses.join(", ")}`,
+        },
+        400,
+      );
+    }
   }
 
   const priorities = parseCsv(c.req.query("priority"));
@@ -1156,6 +1179,17 @@ taskRouter.post(
     // create tasks. Agents are scope-gated above (tasks:create).
     if (!(await requireProjectWrite(actor, projectId))) {
       return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+    }
+
+    // An explicit status must be a state of the workflow the task will
+    // follow (the pinned workflow, else the project default) or "backlog";
+    // an unknown name is a 400 in the shape of a failed body validation.
+    if (body.status !== undefined) {
+      const statusError = statusInputError(
+        await createStatusVocabulary(prisma, projectId, body.workflowId),
+        body.status,
+      );
+      if (statusError) return c.json(statusInputErrorBody(statusError), 400);
     }
 
     // v1 backlog routing (hard rule, no config flag): every agent-created
@@ -1429,6 +1463,18 @@ taskRouter.post(
       return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
     }
 
+    // Every explicit status must be a state of the project's workflow (or
+    // "backlog"); the batch carries no workflowId, so the project default
+    // decides. One unknown name refuses the whole batch before any insert.
+    if (body.tasks.some((item) => item.status !== undefined)) {
+      const allowed = await createStatusVocabulary(prisma, projectId, undefined);
+      for (let index = 0; index < body.tasks.length; index++) {
+        const status = body.tasks[index]!.status;
+        const statusError = status === undefined ? null : statusInputError(allowed, status);
+        if (statusError) return c.json(statusInputErrorBody(statusError, ["tasks", index]), 400);
+      }
+    }
+
     // Deduplicate within the batch itself (keep first occurrence)
     const seenRefs = new Set<string>();
     const dedupedItems: typeof body.tasks = [];
@@ -1569,7 +1615,7 @@ taskRouter.post(
 // the search across already-claimed/in-progress/done/backlog tasks -- an
 // explicit `status=backlog` (or a list including it) is search-only and
 // carries no claim eligibility of its own (D18 revision, see
-// CLAIMABLE_VALID_STATUSES below).
+// the status check below).
 //
 // `verbose=false` (the default) returns a SUMMARY projection without the
 // long-form `description`, `comments`, `attachments`, or `artifacts`. The
@@ -1589,7 +1635,9 @@ taskRouter.post(
 // only makes backlog tasks reachable by the CLI's id-prefix search pool
 // (cli/src/api.ts's searchTaskPool), which was previously unable to find
 // them at all short of a full UUID.
-const CLAIMABLE_VALID_STATUSES = ["backlog", "open", "in_progress", "review", "done", "abandoned"] as const;
+// The accepted names are the workflow states of the searched project (or team)
+// plus backlog and abandoned (projectStatusFilterVocabulary /
+// teamStatusFilterVocabulary), read after the scope is resolved.
 const CLAIMABLE_VALID_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 
 const claimableSummarySelect = {
@@ -1666,19 +1714,6 @@ taskRouter.get("/tasks/claimable", async (c) => {
   const cursorRaw = c.req.query("cursor");
 
   const statusList = parseCsvParam(statusRaw);
-  if (statusList) {
-    for (const s of statusList) {
-      if (!(CLAIMABLE_VALID_STATUSES as readonly string[]).includes(s)) {
-        return c.json(
-          {
-            error: "bad_request",
-            message: `invalid status: ${s}; must be one of ${CLAIMABLE_VALID_STATUSES.join(", ")}`,
-          },
-          400,
-        );
-      }
-    }
-  }
 
   const priorityList = parseCsvParam(priorityRaw);
   if (priorityList) {
@@ -1748,10 +1783,30 @@ taskRouter.get("/tasks/claimable", async (c) => {
     where.labels = { hasEvery: labelsList };
   }
 
+  // The status names are checked once the scope is known and the caller is
+  // allowed into it, so a caller without access learns nothing about the
+  // workflow vocabulary of the project or team from the 400.
+  const checkStatusList = async (allowed: () => Promise<string[]>) => {
+    if (!statusList) return null;
+    const names = await allowed();
+    const invalid = statusList.find((s) => !names.includes(s));
+    return invalid === undefined
+      ? null
+      : c.json(
+          {
+            error: "bad_request",
+            message: `invalid status: ${invalid}; must be one of ${names.join(", ")}`,
+          },
+          400,
+        );
+  };
+
   if (projectId) {
     if (!(await hasProjectAccess(actor, projectId))) {
       return forbidden(c, "Access denied to this project");
     }
+    const invalid = await checkStatusList(() => projectStatusFilterVocabulary(prisma, projectId));
+    if (invalid) return invalid;
     where.projectId = projectId;
   } else {
     // No projectId → scope by team. resolveTeamId handles agent (implicit from
@@ -1764,6 +1819,8 @@ taskRouter.get("/tasks/claimable", async (c) => {
         resolved.status,
       );
     }
+    const invalid = await checkStatusList(() => teamStatusFilterVocabulary(prisma, resolved.teamId));
+    if (invalid) return invalid;
     where.project = { teamId: resolved.teamId };
   }
 
@@ -4458,10 +4515,10 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // so this write bypasses the transition graph entirely, the same way the
 // claim-abandon route above resets `status` to `effectiveDef.initialState`
 // without going through a transition. This is not new surface for the
-// `status` column either: PROJECT_TASK_STATUSES and CLAIMABLE_VALID_STATUSES
-// above already list "abandoned" as a valid filter value (docs/okf/claim-
-// model.md documents `status` as a free String, enforced only at these
-// input-schema edges). But this route IS the first thing that makes that
+// `status` column either: the project-browse and claimable status filters
+// above already accept "abandoned" as a valid filter value (docs/okf/claim-
+// model.md documents `status` as a free String, checked only at the input
+// edges against the workflow's states plus backlog and abandoned). But this route IS the first thing that makes that
 // value reachable in production: before it, no verb ever wrote a non-"done"
 // terminal disposition (`task_abandon` resets `status` back to
 // `initialState`, it never writes "abandoned"; see the signal 4 note in
@@ -5254,6 +5311,23 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
   const body = parsed.data;
 
+  // An explicit status that changes the task must be a state of the task's
+  // effective workflow or "backlog" / "abandoned" (the two names that sit
+  // outside every workflow; their own moves are policed by the special cases
+  // further down). An echo of the current status is a no-op and needs no
+  // check. The definition is resolved once here and reused by the status
+  // block below.
+  const statusDefinition =
+    body.status !== undefined && body.status !== task.status
+      ? await resolveEffectiveDefinition(task, prisma)
+      : undefined;
+  if (body.status !== undefined && statusDefinition) {
+    const statusError = statusInputError(statusVocabularyOf(statusDefinition, { withAbandoned: true }), body.status);
+    if (statusError) {
+      return c.json({ error: "bad_request", message: "Validation failed", details: statusError.flatten() }, 400);
+    }
+  }
+
   // deliverableRepo is project-admin-only to set OR clear (ADR-0010 §5c):
   // prevents a contributor from silently retargeting a task's merge-
   // automation ownership.
@@ -5354,7 +5428,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       );
     }
 
-    const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+    const effectiveDef = statusDefinition ?? (await resolveEffectiveDefinition(task, prisma));
 
     // ── Unabandon: the one recovery path out of the `abandoned` sink ──────
     //

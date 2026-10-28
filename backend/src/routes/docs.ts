@@ -694,7 +694,7 @@ export const openApiSpec = {
         properties: {
           title: { type: "string", minLength: 1, maxLength: 255 },
           description: { type: "string" },
-          status: { type: "string", enum: ["backlog", "open", "in_progress", "review", "done"] },
+          status: { type: "string", minLength: 1, maxLength: 100, description: "A state name of the workflow the task follows (the pinned workflowId, else the project default), or backlog. The built-in workflow has open, in_progress, review and done. Any other name is a 400 validation error. Agents may only pass backlog." },
           priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
           workflowId: { type: "string", format: "uuid" },
           dueAt: { type: "string", format: "date-time" },
@@ -1289,7 +1289,7 @@ export const openApiSpec = {
             required: false,
             schema: { type: "string" },
             description:
-              "One value or CSV. Valid: open|in_progress|review|done|abandoned. When set, drops the implicit unclaimed constraint.",
+              "One value or CSV: a state name of the searched project's (or team's) workflow (open|in_progress|review|done in the built-in one), backlog or abandoned; an unknown name is a 400. When set, drops the implicit unclaimed constraint.",
           },
           {
             name: "priority",

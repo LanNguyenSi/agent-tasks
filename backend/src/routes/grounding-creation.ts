@@ -9,6 +9,7 @@ import { hasProjectAccess } from "../services/team-access.js";
 import { forbidden } from "../middleware/error.js";
 import { GroundingAccessError, groundingAuthority, groundingWorkflow, unavailable } from "../services/grounding-context.js";
 import { groundingTransaction, lockGroundingProjects } from "../services/grounding-transaction.js";
+import { createStatusVocabulary, statusInputError } from "../services/task-status-input.js";
 import type { GroundingAttemptsService } from "../services/grounding-attempts.js";
 import { isReviewState, isTerminalState } from "../services/default-workflow.js";
 import { groundingRouteTaskInclude } from "../services/grounding-route-effects.js";
@@ -45,6 +46,20 @@ export function createGroundingCreationRouter(db: PrismaClient, attempts?: Groun
         if ((actor.type === "agent" && !actor.scopes.includes("tasks:create")) || !await groundingAuthority.canWrite(actor, selection.projectId, db)) throw new GroundingAccessError("forbidden", 403);
         const raw: unknown = await c.req.json().catch(() => null);
         const items = batch ? z.object({ tasks: z.array(importTaskSchema).min(1).max(200) }).parse(raw).tasks : [createTaskSchema.parse(raw)];
+        // The status vocabulary is the workflow's, so the body schema cannot judge it: check every item
+        // here, before any transaction, so one unknown name refuses the whole batch with nothing created.
+        // The legacy creator answers the same way (its body-validation 400, in this router's own 400 shape).
+        // A batch carries no workflowId, so one lookup of the project default serves all its items.
+        let batchVocabulary: string[] | undefined;
+        for (let index = 0; index < items.length; index++) {
+          const item = items[index]!;
+          if (item.status === undefined) continue;
+          const allowed = batch
+            ? (batchVocabulary ??= await createStatusVocabulary(db, selection.projectId, undefined))
+            : await createStatusVocabulary(db, selection.projectId, (item as z.infer<typeof createTaskSchema>).workflowId);
+          const statusError = statusInputError(allowed, item.status);
+          if (statusError) throw new z.ZodError(statusError.issues.map(issue => ({ ...issue, path: [...(batch ? ["tasks", index] : []), ...issue.path] })));
+        }
         if (actor.type === "agent" && items.some(item => item.status !== undefined && item.status !== "backlog")) return c.json({ error: "backlog_routing_enforced", message: "Agent-created tasks must enter backlog." }, 400);
         const create = async (body: z.infer<typeof createTaskSchema>) => {
           const committed = await groundingTransaction(db, async tx => {
