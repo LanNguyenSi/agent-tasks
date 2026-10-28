@@ -68,7 +68,7 @@ With `GITHUB_WEBHOOK_SECRET` left empty, a backend whose `NODE_ENV` is not `prod
 
 ## With external grounding enabled
 
-When `GROUNDING_RUNTIME_CONFIG` is set, the same URL and secret are served by the grounding webhook service instead of the handlers described below. A repeated delivery returns its stored result, and a database or audit failure rolls back and lets GitHub retry (`503 grounding_webhook_pending`). Merged-PR and issue-close events for provisioned tasks are recorded as pending observations instead of completing the task. See [grounding-receipt-contract.md, "Configured GitHub webhook observations"](grounding-receipt-contract.md#configured-github-webhook-observations).
+When `GROUNDING_RUNTIME_CONFIG` is set, the same URL and secret are served by the grounding webhook service instead of the handlers described below. A repeated delivery returns its stored result, and a database or audit failure rolls back and lets GitHub retry (`503 grounding_webhook_pending`). Merged-PR and issue-close events for provisioned tasks are recorded as pending observations instead of completing the task. The states the service writes come from the task's own workflow, as in the legacy handlers: the terminal state, the post-merge review state and the target of a changes-requested review (a review state with no non-terminal edge out keeps its status). A write into a terminal state clears the work and the review claim in the same transaction. See [grounding-receipt-contract.md, "Configured GitHub webhook observations"](grounding-receipt-contract.md#configured-github-webhook-observations).
 
 ## Event → side-effect matrix
 

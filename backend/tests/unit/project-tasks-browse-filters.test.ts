@@ -13,6 +13,7 @@ import { openApiSpec } from "../../src/routes/docs.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
+  workflowFindMany: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -20,6 +21,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     task: {
       findMany: prismaMocks.taskFindMany,
     },
+    workflow: { findMany: prismaMocks.workflowFindMany },
   },
 }));
 
@@ -88,6 +90,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   accessMocks.hasProjectAccess.mockResolvedValue(true);
   prismaMocks.taskFindMany.mockResolvedValue([]);
+  // No workflow rows: every project resolves to the built-in workflow.
+  prismaMocks.workflowFindMany.mockResolvedValue([]);
 });
 
 function lastFindManyArgs() {

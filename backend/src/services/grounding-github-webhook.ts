@@ -7,7 +7,8 @@ import { requireGroundingCohort } from "./grounding-cohort.js";
 import { GroundingAccessError, groundingWorkflow, unavailable, type GroundingTask } from "./grounding-context.js";
 import type { GroundingAttemptsService } from "./grounding-attempts.js";
 import type { GroundingCreationPolicy } from "../routes/grounding-creation.js";
-import { isReviewState, isTerminalState } from "./default-workflow.js";
+import { BACKLOG_STATE, isReviewState, isTerminalState, requestChangesTarget, resolveEffectiveDefinition, terminalTargetFrom } from "./default-workflow.js";
+import { logger } from "../lib/logger.js";
 import { GroundingReceiptVerificationError } from "./grounding-receipt.js";
 import { GroundingDecisionError, groundingTransaction, lockGroundingProjects, lockGroundingTaskUnderProject } from "./grounding-transaction.js";
 import { applyGithubObservedContext, type GithubObservedContextChange } from "./grounding-github-observation-context.js";
@@ -202,8 +203,12 @@ export class GroundingGithubWebhookService {
         observations.push({ match, pending: true, reason: "grounding_task_held", operationId: null });
         continue;
       }
+      // Every state this handler writes or compares comes from the task's own
+      // effective workflow (pinned workflow, else the project default, else the
+      // built-in one), as the legacy webhook does.
+      const def = await resolveEffectiveDefinition(task, tx);
       const enrollment = await this.enrollment(tx, task);
-      if (!enrollment.provisioned && ["done", "backlog"].includes(task.status)) continue;
+      if (!enrollment.provisioned && (isTerminalState(def, task.status) || task.status === BACKLOG_STATE)) continue;
       const positive = event.kind === "pr_merged" || event.kind === "issue_closed";
       if (positive && (enrollment.provisioned || (event.kind === "pr_merged" && match.strength !== "EXACT"))) {
         observations.push({ match, pending: true, reason: !enrollment.valid ? "invalid_enrollment" : match.strength !== "EXACT" ? "weak_binding" : "authenticated_completion_required", operationId: enrollment.operationId });
@@ -225,14 +230,20 @@ export class GroundingGithubWebhookService {
         if (task.prUrl === null) patch.prUrl = event.url;
         if (!task.branchName && event.branch) patch.branchName = event.branch;
         changes.push({ task, patch });
-      } else if (event.kind === "review_changes_requested" && match.strength === "EXACT" && task.status === "review") {
-        changes.push({ task, patch: { status: "in_progress" } });
+      } else if (event.kind === "review_changes_requested" && match.strength === "EXACT" && isReviewState(def, task.status)) {
+        // The workflow's request-changes edge out of the review state; a
+        // workflow without one leaves the status alone (the observation is
+        // still recorded below).
+        const target = requestChangesTarget(def, task.status);
+        if (target) changes.push({ task, patch: { status: target } });
+        else logger.warn({ component: "grounding-github-webhook", taskId: task.id, status: task.status, deliveryId: event.deliveryId }, "review changes requested but the task's workflow has no non-terminal edge out of its review state; status left as is");
       } else if (event.kind === "pr_reopened" && match.strength === "EXACT" && await this.changedHead(tx, task, event)) {
         changes.push({ task, patch: {}, headChanged: true });
       } else if (positive) {
-        const target = event.kind === "issue_closed" ? "done" : pickMergeTargetStatus({ project: task.project, currentStatus: task.status });
-        if (target && target !== task.status) changes.push({ task, patch: { status: target } });
-        if (target === "done") acknowledge.push(task.id);
+        const target = event.kind === "issue_closed" ? terminalTargetFrom(def, task.status) : pickMergeTargetStatus({ project: task.project, currentStatus: task.status, definition: def });
+        const terminal = target !== null && isTerminalState(def, target);
+        if (target && target !== task.status) changes.push({ task, patch: { status: target }, terminalStatus: terminal });
+        if (terminal) acknowledge.push(task.id);
       }
       observations.push({ match, pending: false, reason: "external_observation", operationId: enrollment.operationId });
     }
