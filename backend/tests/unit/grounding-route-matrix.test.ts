@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
+import { beforeAll, afterAll, beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 const harness = vi.hoisted(() => ({ db: null as PrismaClient | null, wrapper: { start: vi.fn(), getLedgerSummary: vi.fn() } }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
@@ -196,6 +196,45 @@ it.each(["missing", "wrong", "valid"])("N-12 selected positive create/import rej
   const response = await app(selected()).fetch(createRequest(body)); expect(response.status).toBe(409); expect(await store.db.task.count()).toBe(count);
   const imported = await app(selected()).fetch(createRequest({ tasks: [{ title: "Initial" }, body] }, true)); expect(imported.status).toBe(201);
   const result = await imported.json() as { created: number; errors: unknown[] }; expect(result.created).toBe(1); expect(result.errors).toHaveLength(1); expect(await store.db.task.count()).toBe(count + 1);
+});
+const customStates = [{ name: "queued", label: "Queued", terminal: false }, { name: "working", label: "Working", terminal: false }, { name: "checking", label: "Checking", terminal: false }, { name: "shipped", label: "Shipped", terminal: true }];
+const customDefinition = { initialState: "queued", states: customStates, transitions: [{ from: "queued", to: "working" }, { from: "working", to: "checking" }, { from: "checking", to: "shipped" }] };
+const unknownStatus = (path: (string | number)[], names: string) => ({ error: "validation_error", details: [expect.objectContaining({ code: "invalid_value", path, message: `Invalid option: expected one of ${names}` })] });
+const BUILTIN_NAMES = '"backlog"|"open"|"in_progress"|"review"|"done"'; const CUSTOM_NAMES = '"backlog"|"queued"|"working"|"checking"|"shipped"';
+async function createdRows() { return store.db.task.count({ where: { projectId: f.projectId } }); }
+describe.each([["built-in workflow", false, BUILTIN_NAMES, "open"], ["custom workflow", true, CUSTOM_NAMES, "queued"]] as const)("selected creation judges the status on the %s", (_label, custom, names, initial) => {
+  beforeEach(async () => { if (custom) await store.db.workflow.create({ data: { projectId: f.projectId, name: "Custom", isDefault: true, definition: customDefinition } }); });
+  it("single create refuses an unknown status with the 400 validation answer and creates nothing", async () => {
+    const count = await createdRows();
+    for (const status of ["bogus", "abandoned", custom ? "open" : "queued"]) {
+      const response = await app(selected()).fetch(createRequest({ title: "Unknown", status })); expect(response.status, status).toBe(400);
+      expect(await response.json()).toEqual(unknownStatus(["status"], names));
+    }
+    expect(await createdRows()).toBe(count);
+  });
+  it("batch import refuses the whole batch when one item has an unknown status and creates nothing", async () => {
+    const count = await createdRows();
+    const response = await app(selected()).fetch(createRequest({ tasks: [{ title: "Fine", status: initial }, { title: "Unknown", status: "bogus" }] }, true)); expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(unknownStatus(["tasks", 1, "status"], names));
+    expect(await createdRows()).toBe(count);
+  });
+  it("an agent with an unknown status gets the validation answer, not the backlog routing one", async () => {
+    const count = await createdRows();
+    const response = await app(selected()).fetch(createRequest({ title: "Unknown", status: "bogus" }, false, token)); expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(unknownStatus(["status"], names)); expect(await createdRows()).toBe(count);
+  });
+  it("a state of the workflow passes the check and creates the task there", async () => {
+    const response = await app(selected()).fetch(createRequest({ title: "Known", status: initial })); expect(response.status).toBe(201);
+    expect((await response.json() as { task: { status: string } }).task.status).toBe(initial);
+    const imported = await app(selected()).fetch(createRequest({ tasks: [{ title: "A", status: initial }, { title: "B", status: "backlog" }] }, true)); expect(imported.status).toBe(201);
+    expect(await imported.json()).toMatchObject({ created: 2, failed: 0 });
+  });
+});
+it("selected creation with an empty or over-long status gets the old invalid_value issue", async () => {
+  for (const status of ["", "x".repeat(101)]) {
+    const response = await app(selected()).fetch(createRequest({ title: "Odd", status })); expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(unknownStatus(["status"], BUILTIN_NAMES));
+  }
 });
 it("N-07 selected agent false creation is atomically protected with unchanged backlog routing", async () => {
   const response = await app(selected()).fetch(createRequest({ title: "No bug label", debugFlavor: false, labels: [] }, false, token)); expect(response.status).toBe(201);

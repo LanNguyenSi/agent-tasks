@@ -7069,8 +7069,8 @@ describe("POST /tasks/:id/creator-abandon", () => {
   // project, then creator-abandons the old one. End state: the old task
   // carries status=abandoned, which drops it out of every default open-task
   // listing (the browse route above filters `where.status = "open"` when
-  // `isExplicitSearch` is false, and PROJECT_TASK_STATUSES /
-  // CLAIMABLE_VALID_STATUSES already treat "abandoned" as a first-class
+  // `isExplicitSearch` is false, and the project-browse and
+  // claimable status filters already treat "abandoned" as a first-class
   // filter value) — no open duplicate remains — and an audit row records why.
   it("integration: re-home scenario ends with the old task at status=abandoned (no open duplicate) and an audit trail", async () => {
     const wrongProjectTask = {

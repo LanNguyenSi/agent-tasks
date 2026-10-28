@@ -15,6 +15,7 @@ import type { Actor, AgentActor, HumanActor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
+  workflowFindMany: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -22,6 +23,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     task: {
       findMany: prismaMocks.taskFindMany,
     },
+    workflow: { findMany: prismaMocks.workflowFindMany },
   },
 }));
 
@@ -98,6 +100,8 @@ beforeEach(() => {
   accessMocks.hasProjectAccess.mockResolvedValue(true);
   accessMocks.resolveTeamId.mockResolvedValue({ ok: true, teamId: "team-1" });
   prismaMocks.taskFindMany.mockResolvedValue([]);
+  // No workflow rows: every project resolves to the built-in workflow.
+  prismaMocks.workflowFindMany.mockResolvedValue([]);
 });
 
 function lastFindManyArgs() {
@@ -208,8 +212,8 @@ describe("GET /tasks/claimable — status filter", () => {
   });
 
   it("D18: accepts an explicit status=backlog search without weakening claim eligibility", async () => {
-    // Explicit-search-only value (see CLAIMABLE_VALID_STATUSES in
-    // backend/src/routes/tasks.ts): a backlog task is now reachable by the
+    // Explicit-search-only value (see the status check of
+    // /tasks/claimable in backend/src/routes/tasks.ts): a backlog task is now reachable by the
     // CLI's id-prefix search pool, but this is search, not a claim grant --
     // the implicit no-params "what can I claim right now?" default (tested
     // above/below) never includes backlog, and `/tasks/:id/start` still
