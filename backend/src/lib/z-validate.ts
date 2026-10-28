@@ -20,6 +20,13 @@ import type { ZodType } from "zod";
  * `undefined` so the validator proceeds to the handler (the `c.req.valid(...)`
  * path is unchanged).
  *
+ * One opt-in addition lives here too, so the body is still built in this one
+ * file: `zValidate(target, schema, { message: true })` adds a top-level
+ * `message` (the first issue's message, or "Invalid request body") next to
+ * `success` and `error`. The web client reads that field to show a rejection;
+ * `error.issues` and `error.name` are unchanged, and routes that do not pass
+ * the option keep exactly the two top-level keys.
+ *
  * The hook uses the Hono context (`c.json(...)`) rather than a raw `new
  * Response(...)`: a raw Response discards headers the request pipeline already
  * set with `c.header()` (for example a request-id middleware), whereas building
@@ -28,10 +35,16 @@ import type { ZodType } from "zod";
 export function zValidate<T extends ZodType, Target extends "json" | "query" | "param" | "header" | "form" | "cookie">(
   target: Target,
   schema: T,
+  options: { message?: boolean } = {},
 ) {
   return zValidator(target, schema, (result, c) => {
     if (!result.success) {
-      return c.json({ success: false, error: { issues: result.error.issues, name: "ZodError" } }, 400);
+      const issues = result.error.issues;
+      const error = { issues, name: "ZodError" };
+      if (options.message) {
+        return c.json({ success: false, error, message: issues[0]?.message ?? "Invalid request body" }, 400);
+      }
+      return c.json({ success: false, error }, 400);
     }
     // Success: return undefined so the validator calls the next handler.
     return undefined;

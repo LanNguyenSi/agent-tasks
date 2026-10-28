@@ -248,6 +248,9 @@ describe("team name card: validation", () => {
   it.each([
     ["empty", ""],
     ["whitespace-only", "    "],
+    ["zero-width-space-only", "\u200b"],
+    ["NBSP-only", "\u00a0\u00a0"],
+    ["format-characters-and-whitespace-only", " \u200b \ufeff "],
   ])("cannot save an %s name, not even by submitting the form", async (_label, text) => {
     const user = userEvent.setup();
     await renderPage("ADMIN");
