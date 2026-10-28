@@ -73,14 +73,26 @@ export default function ProjectHubLayout({ children }: { children: ReactNode }) 
   // offers the current project alone (see `pickerProjects`).
   const [siblings, setSiblings] = useState<ProjectOption[]>([]);
 
+  // A reload under way while the error branch is still rendered: only the
+  // retry of a failed load has both (the first load has no error yet), so
+  // this is the Retry button's busy state.
+  const retrying = loading && loadError !== null;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setLoadError(null);
+    // loadError is deliberately NOT cleared here: a retry keeps the error
+    // branch (banner and Retry button) mounted until the reload proves the
+    // project loads. Clearing it at the start of every run unmounted the
+    // banner, mounted the child tab and unmounted it again when the reload
+    // failed, so a second failure flickered and stole focus from Retry.
     void (async () => {
       try {
         const proj = await getProject(projectId);
-        if (!cancelled) setProject(proj);
+        if (!cancelled) {
+          setProject(proj);
+          setLoadError(null);
+        }
       } catch (err) {
         if (cancelled) return;
         // Expired or invalid session (401): sign in, with the current
@@ -254,13 +266,21 @@ export default function ProjectHubLayout({ children }: { children: ReactNode }) 
           <AlertBanner tone="danger" title="Could not load project">
             {loadError}
           </AlertBanner>
+          {/* While the retry is in flight the button is unavailable through
+              aria-disabled (not the native `disabled`, which would blur it
+              and drop the focus the click just placed there; the same
+              pattern as the Select trigger) with a busy label, and its
+              handler ignores clicks until the reload settles. */}
           <Button
             variant="ghost"
             size="sm"
             className="db-retry-btn"
-            onClick={() => setReloadKey((k) => k + 1)}
+            aria-disabled={retrying || undefined}
+            onClick={() => {
+              if (!retrying) setReloadKey((k) => k + 1);
+            }}
           >
-            Retry
+            {retrying ? "Retrying" : "Retry"}
           </Button>
         </>
       ) : (
