@@ -5,6 +5,7 @@ import type { AppVariables } from "../types/hono.js";
 import { GroundingAttemptsService, groundingSessionSchema } from "../services/grounding-attempts.js";
 import { GroundingAccessError, groundingIntentSchema } from "../services/grounding-context.js";
 import { GroundingReceiptVerificationError } from "../services/grounding-receipt.js";
+import { unstorableTextResponse } from "../lib/error-handler.js";
 
 const issueSchema = z.object({ intent: groundingIntentSchema }).strict();
 const ingestSchema = z.object({ session: groundingSessionSchema, receipt: z.string() }).strict();
@@ -41,6 +42,11 @@ export function createGroundingRouter(service?: GroundingAttemptsService) {
     await next();
   });
   router.onError((error, c) => {
+    // Unstorable client text (a NUL byte, an unpaired surrogate) is the caller's
+    // error and answers 400 in the shared shape; the catch-all below would
+    // report it as a grounding failure.
+    const unstorable = unstorableTextResponse(error, c);
+    if (unstorable) return unstorable;
     if (error instanceof GroundingAccessError) return c.json({ error: error.code, ...(error.detail ? { message: error.detail } : {}) }, error.status);
     if (error instanceof GroundingReceiptVerificationError) {
       const status = error.code === "grounding_verification_unavailable" ? 503
