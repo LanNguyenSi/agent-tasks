@@ -28,10 +28,10 @@ import { z } from "zod";
  *     `\p{Cf}`, but the rest of `\p{Cf}` stays allowed inside a visible name:
  *     the zero-width joiner U+200D in an emoji sequence and the variation
  *     selector U+FE0F are valid;
- *   - hold no more than 8 combining marks in one grapheme cluster, counted
- *     after removing invisible format characters (so zero-width joiners, zero-width
- *     spaces, word joiners, soft hyphens or a BOM cannot split a stack)
- *     (Zalgo text): the mark-cap check runs on a copy of the name with every
+ *   - hold no Zalgo text: no more than 8 combining marks in one grapheme
+ *     cluster, counted after removing invisible format characters (so
+ *     zero-width joiners, zero-width spaces, word joiners, soft hyphens or a
+ *     BOM cannot split a stack). The mark-cap check runs on a copy of the name with every
  *     `\p{Cf}` code point and U+00AD removed (`withoutInvisibleSeparators`),
  *     splits that copy into grapheme clusters with `Intl.Segmenter` and counts
  *     the `\p{M}` code points per cluster; the stored name is never changed

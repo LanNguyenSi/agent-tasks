@@ -5,10 +5,11 @@
  * write routes (POST /teams, PATCH /teams/:id) now answer 400 and nothing is
  * written; the same holds for an unpaired UTF-16 surrogate (Prisma refuses it
  * before the query, which also surfaced as a 500). A name that is accepted
-  * round-trips through the database trimmed. The England subdivision flag
-  * (U+1F3F4, tag letters, U+E007F) is accepted and stored unchanged; a mark
-  * stack split by invisible separators (zero-width joiners or zero-width
-  * spaces) is still refused.
+ * round-trips through the database trimmed. The England subdivision flag
+ * (U+1F3F4, tag letters, U+E007F) is accepted and stored unchanged; a mark
+ * stack split by invisible separators (zero-width joiners or zero-width
+ * spaces) is still refused, and the separators of an accepted name are
+ * stored as sent.
  */
 import { type PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -187,6 +188,18 @@ describe("team names (real database)", () => {
     const renamed = await patch(flag);
     expect(renamed.status).toBe(200);
     expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe(flag);
+  });
+
+  it("stores the invisible separators of an accepted name unchanged on both routes", async () => {
+    // The mark cap strips them only from its own check copy.
+    const name = "a\u0301\u0302\u0303\u0304\u200b\u0305\u0306\u0307\u0308 Te\u2060am\u00adNa\ufeffme";
+    const created = await post(name, "separators-kept-team");
+    expect(created.status).toBe(201);
+    expect((await pg.db.team.findUniqueOrThrow({ where: { slug: "separators-kept-team" } })).name).toBe(name);
+
+    const renamed = await patch(name);
+    expect(renamed.status).toBe(200);
+    expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe(name);
   });
 
   it("stores an accepted name trimmed, with accents and inner spaces intact", async () => {
