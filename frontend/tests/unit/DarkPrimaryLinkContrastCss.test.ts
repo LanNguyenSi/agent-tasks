@@ -201,3 +201,15 @@ describe("accent-hue text rules (nine rules on --primary-fg)", () => {
     ).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+describe("prose links stay distinguishable from text in dark (link-in-text-block)", () => {
+  it("dark-only rule underlines .prose-markdown links", () => {
+    const body = /(?:^|\n)html:not\(\[data-theme="light"\]\) \.prose-markdown a\s*\{([^}]*)\}/.exec(css)?.[1];
+    expect(body, "globals.css must underline prose links outside the light theme").not.toBeUndefined();
+    expect(body!).toMatch(/text-decoration:\s*underline/);
+  });
+
+  it("the base prose link rule keeps light colour-only (no underline)", () => {
+    expect(ruleBody(".prose-markdown a")).toMatch(/text-decoration:\s*none/);
+  });
+});

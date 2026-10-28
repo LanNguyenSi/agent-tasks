@@ -1784,6 +1784,12 @@ input[type="checkbox"] {
 .prose-markdown a:hover {
   text-decoration: underline;
 }
+/* Dark: the text-safe link colour sits close to the prose text colour, so a
+   colour-only link is not distinguishable from the text (axe link-in-text-block).
+   Underline it there; light keeps its colour-only link. */
+html:not([data-theme="light"]) .prose-markdown a {
+  text-decoration: underline;
+}
 
 .prose-markdown ul,
 .prose-markdown ol {
