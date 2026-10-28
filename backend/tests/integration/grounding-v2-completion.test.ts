@@ -624,10 +624,18 @@ it.each(Object.keys(standaloneRefusals))("R1-H1 standalone retains %s denial bef
   if (["open", "in_progress", "done"].includes(denial)) await store.db.task.update({ where: { id: f.taskId }, data: { status: denial } });
   const a = app(); const before = await snapshot();
   const refusal = standaloneRefusals[denial]!;
-  // On in_progress (a work state outside review) the attempt route answers the claim path's own refusal: this
-  // merge-only token lacks tasks:transition. On open and done the merge route's bad_state stays.
-  const attemptStatus = denial === "in_progress" ? 403 : refusal.status;
-  expect((await a.fetch(request({ intent: "merge" }, "grounding-attempts", null))).status).toBe(attemptStatus);
+  // The merge-only token never passes the claim path, so the attempt route answers what the merge route answers
+  // (same status and body) for every denial it can see, with these exceptions: the scope-less token is not
+  // merge-capable (the tasks:transition scope), a caller without project access gets the one bare 403, and the
+  // self-merge caller holds the work claim (so the scope it lacks is what refuses).
+  const attemptRefusals: Record<string, { status: 403 | 409; body: unknown }> = {
+    ...standaloneRefusals,
+    scope: { status: 403, body: { error: "forbidden", message: "Token missing scope: tasks:transition" } },
+    project: { status: 403, body: { error: "forbidden" } },
+    "self-merge": { status: 403, body: { error: "forbidden", message: "Token missing scope: tasks:transition" } },
+  };
+  const attempt = await a.fetch(request({ intent: "merge" }, "grounding-attempts", null));
+  expect({ status: attempt.status, body: await attempt.json() }).toEqual(attemptRefusals[denial]);
   const response = await a.fetch(request({}, "merge"));
   expect({ status: response.status, body: await response.json() }).toEqual({ status: refusal.status, body: refusal.body });
   expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
