@@ -12,7 +12,7 @@ import { verifyGroundingReceipt, GroundingReceiptVerificationError, type Groundi
 import {
   GROUNDING_POLICY, GroundingAccessError, NO_CLAIM_REFUSAL, tokenScopeMessage, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
   mismatch, projectGroundingContext, resolveGroundingTarget, unavailable,
-  resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState, isInClaimPathState,
+  resolveTaskMergeTarget, requireTaskMergeActor, fetchTaskMergeHead, isInReviewState, isInClaimPathState,
   type GroundingAuthority, type GroundingHeadProvider, type GroundingIntent, type GroundingTarget, type GroundingTask,
 } from "./grounding-context.js";
 
@@ -37,6 +37,11 @@ export interface GroundingAttemptsDependencies {
 function stale(): never { throw new GroundingReceiptVerificationError("grounding_receipt_stale"); }
 function invalid(): never { throw new GroundingReceiptVerificationError("grounding_receipt_invalid"); }
 function actorId(actor: Actor): string { return actor.type === "agent" ? actor.tokenId : actor.userId; }
+function holdsAnyClaim(task: GroundingTask, actor: Actor): boolean {
+  return actor.type === "agent"
+    ? task.claimedByAgentId === actor.tokenId || task.reviewClaimedByAgentId === actor.tokenId
+    : task.claimedByUserId === actor.userId || task.reviewClaimedByUserId === actor.userId;
+}
 
 
 export class GroundingAttemptsService {
@@ -79,10 +84,7 @@ export class GroundingAttemptsService {
   private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, authority = this.authority): Promise<void> {
     if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) throw new GroundingAccessError("forbidden", 403, tokenScopeMessage(actor, ["tasks:transition"]));
     if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
-    const ownsClaim = actor.type === "agent"
-      ? task.claimedByAgentId === actor.tokenId || task.reviewClaimedByAgentId === actor.tokenId
-      : task.claimedByUserId === actor.userId || task.reviewClaimedByUserId === actor.userId;
-    if (!ownsClaim) throw new GroundingAccessError("forbidden", 403, NO_CLAIM_REFUSAL);
+    if (!holdsAnyClaim(task, actor)) throw new GroundingAccessError("forbidden", 403, NO_CLAIM_REFUSAL);
   }
 
   /** HTTP preauthorization before parsing receipt data; transaction paths repeat these checks. */
@@ -101,6 +103,19 @@ export class GroundingAttemptsService {
   }
 
   /**
+   * Whether the claim path can never admit this caller while the merge route
+   * can: an agent token without tasks:transition that holds no claim on the
+   * task and passes the merge route's own actor check (github:pr_merge scope
+   * and project write access). Neither re-minting with tasks:transition nor a
+   * claim it cannot take would clear the claim path's refusal for it.
+   */
+  private async isMergeOnlyCaller(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor): Promise<boolean> {
+    if (actor.type !== "agent" || actor.scopes.includes("tasks:transition") || holdsAnyClaim(task, actor)) return false;
+    try { await requireTaskMergeActor(db, task, actor, this.authority); return true; }
+    catch (refusal) { if (refusal instanceof GroundingAccessError && refusal.code === "forbidden") return false; throw refusal; }
+  }
+
+  /**
    * Pre-parse admission grants only one of the installed route capabilities:
    * the claim and scope check, or else merge eligibility. When merge
    * eligibility refuses too, the caller gets the claim and scope refusal: the
@@ -111,6 +126,13 @@ export class GroundingAttemptsService {
    * scope is what refuses). Any other merge-eligibility error keeps its own
    * answer: bad_state on the initial or a terminal state (no claim or scope
    * would help there), an ambiguous review workflow, an unavailable definition.
+   * One caller is the exception: a merge-only token (github:pr_merge and
+   * project write, no tasks:transition scope, no claim on the task) can never
+   * pass the claim path, so it gets whatever merge eligibility refused with
+   * (the consent, review lock, transition role or self-merge message, or
+   * bad_state on a task in a work state), as task_merge answers the same
+   * caller. A token that also lacks github:pr_merge is not merge-capable and
+   * keeps the tasks:transition refusal.
    */
   async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {
@@ -121,6 +143,7 @@ export class GroundingAttemptsService {
         if (!(error instanceof GroundingAccessError) || error.code !== "forbidden") throw error;
         try { await resolveTaskMergeTarget(db, task, actor, this.authority); }
         catch (fallback) {
+          if (await this.isMergeOnlyCaller(db, task, actor)) throw fallback;
           if (fallback instanceof GroundingAccessError && fallback.code === "forbidden") throw error;
           if (fallback instanceof GroundingAccessError && fallback.code === "bad_state" && await isInClaimPathState(db, task)) throw error;
           throw fallback;
