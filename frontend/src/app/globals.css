@@ -51,6 +51,8 @@ html[data-theme="light"] {
 
   /* Link color, derived from --primary-text so it tracks the active theme. */
   --link: var(--primary-text);
+  /* Text painted in the accent hue on surfaces: text-safe in dark (--primary-text), unchanged in light (--primary). */
+  --primary-fg: var(--primary-text);
 
   /* Status */
   --status-backlog: #4fa8b3;
@@ -198,7 +200,7 @@ html {
 /* ── Links ────────────────────────────────────────────────────── */
 
 a {
-  color: var(--primary);
+  color: var(--primary-fg);
   text-decoration: none;
   transition: color var(--transition-fast);
 }
@@ -505,7 +507,7 @@ input[type="checkbox"] {
 .auth-tab-active {
   background: var(--primary-muted);
   border-color: var(--primary);
-  color: var(--primary);
+  color: var(--primary-fg);
 }
 
 .landing-shell {
@@ -1776,7 +1778,7 @@ input[type="checkbox"] {
 }
 
 .prose-markdown a {
-  color: var(--primary);
+  color: var(--primary-fg);
   text-decoration: none;
 }
 .prose-markdown a:hover {
@@ -3141,6 +3143,8 @@ html[data-theme="light"] {
 
   /* Accent text: darkened for AA contrast on light fills */
   --primary-text: #4450a8;
+  /* Accent-hue text stays exactly --primary in light; only dark mode gets the text-safe step. */
+  --primary-fg: var(--primary);
   --status-backlog-text: #2d6b73;
   --status-open-text: #535760;
   --status-in-progress-text: #4450a8;
@@ -3704,7 +3708,7 @@ html[data-theme="light"] {
   padding: var(--space-2);
   background: transparent;
   border: none;
-  color: var(--primary);
+  color: var(--primary-fg);
   font-size: var(--text-xs);
   font-weight: 600;
   text-align: center;
@@ -5412,7 +5416,7 @@ html[data-theme="light"] {
   background: none;
   border: none;
   padding: var(--space-1) 0;
-  color: var(--primary);
+  color: var(--primary-fg);
   cursor: pointer;
   font-size: var(--text-xs);
   font-weight: 600;
@@ -5929,7 +5933,7 @@ html[data-theme="light"] {
 
 .ta-artifact-link {
   font-size: var(--text-xs);
-  color: var(--primary);
+  color: var(--primary-fg);
   text-decoration: none;
 }
 
@@ -6109,7 +6113,7 @@ html[data-theme="light"] {
 
 .tas-doc-download {
   font-size: var(--text-xs);
-  color: var(--primary);
+  color: var(--primary-fg);
   text-decoration: none;
 }
 
@@ -6937,7 +6941,7 @@ a.proj-chip:hover {
 }
 
 .wf-link-btn:hover {
-  color: var(--primary);
+  color: var(--primary-fg);
 }
 
 /* Danger-tinted link button for remove actions */
@@ -8231,7 +8235,7 @@ a.proj-chip:hover {
 
 .idlg-preview-td--ref {
   font-family: var(--font-mono);
-  color: var(--primary);
+  color: var(--primary-fg);
 }
 
 .idlg-preview-td--title {

@@ -20,6 +20,16 @@ const css = readFileSync(join(dir, "../../src/app/globals.css"), "utf8");
 /** Body of the first `:root { ... }` block (the dark theme). */
 const rootBlock = /(?:^|\n):root\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
 
+/**
+ * Body of the `html[data-theme="light"] { ... }` theme block (the light
+ * theme). The same selector also has a one-line color-scheme stub at the top
+ * of the file, so the block that declares the surfaces is the theme block.
+ */
+const lightBlock =
+  [...css.matchAll(/(?:^|\n)html\[data-theme="light"\]\s*\{([^}]*)\}/g)]
+    .map((m) => m[1]!)
+    .find((b) => b.includes("--bg:")) ?? "";
+
 /** Declaration body of the non-pseudo rule for `selector`. */
 function ruleBody(selector: string): string {
   const body = new RegExp(`(?:^|\\n)\\${selector}\\s*(?!:)\\{([^}]*)\\}`).exec(css)?.[1];
@@ -31,6 +41,26 @@ function token(name: string): string {
   const m = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})\\s*;`).exec(rootBlock);
   expect(m, `dark token --${name} must be a 6-digit hex in :root`).not.toBeNull();
   return m![1]!;
+}
+
+/** Raw value (hex or `var(...)`) of a custom property declared in `block`. */
+function defineIn(block: string, name: string): string | undefined {
+  return new RegExp(`--${name}:\\s*([^;]+);`).exec(block)?.[1]?.trim();
+}
+
+/**
+ * Resolve a custom property to its 6-digit hex the way the cascade does: the
+ * declaration is looked up in `startBlock` first, then in the dark `:root`,
+ * following `var(--x)` indirections from the same start point each time.
+ */
+function resolveHex(startBlock: string, name: string, depth = 0): string {
+  expect(depth, `--${name} must not form a var() cycle`).toBeLessThan(6);
+  const value = defineIn(startBlock, name) ?? defineIn(rootBlock, name);
+  expect(value, `--${name} must be defined`).toBeDefined();
+  const ref = /^var\(--([a-z0-9-]+)\)$/.exec(value!);
+  if (ref) return resolveHex(startBlock, ref[1]!, depth + 1);
+  expect(value!, `--${name} must resolve to a 6-digit hex`).toMatch(/^#[0-9a-fA-F]{6}$/);
+  return value!;
 }
 
 function luminance(hex: string): number {
@@ -102,5 +132,72 @@ describe("home .home-widget-footer-link text colour", () => {
 describe("settings .settings-inline-link", () => {
   it("is underlined in its base rule (both themes; axe link-in-text-block)", () => {
     expect(ruleBody(".settings-inline-link")).toMatch(/text-decoration:\s*underline\s*;/);
+  });
+});
+
+/**
+ * Nine text rules painted in the accent hue use `--primary-fg`: in dark it
+ * resolves to the text-safe `--primary-text` (raw `--primary` is 4.05:1 on
+ * `--surface` and fails AA), in light it resolves to `--primary`, so light
+ * mode keeps exactly the colour it had before the token existed.
+ */
+const TEXT_RULES = [
+  "a",
+  ".auth-tab-active",
+  ".prose-markdown a",
+  ".db-col-expander",
+  ".td-result-toggle",
+  ".ta-artifact-link",
+  ".tas-doc-download",
+  ".wf-link-btn:hover",
+  ".idlg-preview-td--ref",
+];
+
+/** The `color` declaration of `selector` (base rule, or the pseudo rule as-is). */
+function ruleColor(selector: string): string {
+  const body = selector.includes(":")
+    ? new RegExp(`(?:^|\\n)\\${selector}\\s*\\{([^}]*)\\}`).exec(css)?.[1]
+    : ruleBody(selector);
+  expect(body, `globals.css must define the "${selector}" rule`).not.toBeUndefined();
+  const color = /(?:^|;)\s*color:\s*([^;]+);/.exec(body!)?.[1]?.trim();
+  expect(color, `"${selector}" must declare a colour`).toBeDefined();
+  return color!;
+}
+
+function lightToken(name: string): string {
+  const m = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})\\s*;`).exec(lightBlock);
+  expect(m, `light token --${name} must be a 6-digit hex in the light block`).not.toBeNull();
+  return m![1]!;
+}
+
+describe("accent-hue text rules (nine rules on --primary-fg)", () => {
+  const darkFg = resolveHex(rootBlock, "primary-fg");
+  const lightFg = resolveHex(lightBlock, "primary-fg");
+
+  it.each(TEXT_RULES)('the "%s" rule paints text with var(--primary-fg)', (selector) => {
+    expect(ruleColor(selector), `${selector} colour`).toBe("var(--primary-fg)");
+  });
+
+  it("the token is defined as var(--primary-text) in dark and var(--primary) in light", () => {
+    expect(defineIn(rootBlock, "primary-fg"), "dark --primary-fg").toBe("var(--primary-text)");
+    expect(defineIn(lightBlock, "primary-fg"), "light --primary-fg").toBe("var(--primary)");
+  });
+
+  it.each(SURFACES)("dark --primary-fg resolves to >= 4.5:1 on --%s", (surface) => {
+    expect(contrast(darkFg, token(surface)), `--primary-fg on --${surface}`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("light --primary-fg resolves to exactly the pre-token colour #5e6ad2", () => {
+    // The light block must not override --primary, and --primary-fg must point
+    // at it, so the nine rules keep the colour they had before the token.
+    expect(lightBlock.match(/--primary:/), "light block must not override --primary").toBeNull();
+    expect(lightFg).toBe("#5e6ad2");
+  });
+
+  it.each(SURFACES)("light --primary-text stays >= 4.5:1 on light --%s", (surface) => {
+    expect(
+      contrast(lightToken("primary-text"), lightToken(surface)),
+      `--primary-text on light --${surface}`,
+    ).toBeGreaterThanOrEqual(4.5);
   });
 });
