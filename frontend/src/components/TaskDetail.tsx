@@ -1096,7 +1096,7 @@ export default function TaskDetail({
                     value: t.id,
                     label: t.title,
                     detail: `${t.id.slice(0, 8)} · ${t.status}`,
-                    searchText: t.id,
+                    idPrefix: t.id,
                   })),
               ]}
               searchable

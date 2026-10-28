@@ -11,9 +11,9 @@ import Select from "../../src/components/ui/Select";
 
 const OPTIONS = [
   { value: "", label: "Add blocker..." },
-  { value: "aaaa1111-0000", label: "Fix login", detail: "aaaa1111 · open", searchText: "aaaa1111-0000" },
-  { value: "bbbb2222-0000", label: "Fix login", detail: "bbbb2222 · done", searchText: "bbbb2222-0000" },
-  { value: "cccc3333-0000", label: "Write Docs", detail: "cccc3333 · open", searchText: "cccc3333-0000" },
+  { value: "aaaa1111-0000", label: "Fix login", detail: "aaaa1111 · open", idPrefix: "aaaa1111-0000" },
+  { value: "bbbb2222-0000", label: "Fix login", detail: "bbbb2222 · done", idPrefix: "bbbb2222-0000" },
+  { value: "cccc3333-0000", label: "Write Docs", detail: "cccc3333 · open", idPrefix: "cccc3333-0000" },
 ];
 
 beforeEach(() => {
@@ -103,14 +103,17 @@ describe("Select searchable", () => {
     await userEvent.keyboard("{Enter}");
     expect(onChange).toHaveBeenCalledWith("bbbb2222-0000");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-    expect(input).toHaveValue("Fix login (bbbb2222 · done)");
+    // The input value is always the query; the chosen option is the placeholder.
+    expect(input).toHaveValue("");
+    expect(input).toHaveAttribute("placeholder", "Fix login (bbbb2222 · done)");
   });
 
   it("typing after a pick starts a fresh query instead of appending to the chosen text", async () => {
     render(<Harness />);
     const input = screen.getByRole("combobox");
     await userEvent.type(input, "docs{Enter}");
-    expect(input).toHaveValue("Write Docs (cccc3333 · open)");
+    expect(input).toHaveValue("");
+    expect(input).toHaveAttribute("placeholder", "Write Docs (cccc3333 · open)");
     // focus + keyboard: userEvent.type would click first, which opens the list itself
     input.focus();
     await userEvent.keyboard("aaaa");
@@ -125,6 +128,91 @@ describe("Select searchable", () => {
     input.focus();
     await userEvent.keyboard("cccc");
     expect(optionNames()).toEqual(["Write Docscccc3333 · open"]);
+  });
+
+  it("Backspace after a pick edits nothing: the input stays empty and the list closed", async () => {
+    render(<Harness />);
+    const input = screen.getByRole("combobox");
+    await userEvent.type(input, "docs{Enter}");
+    input.focus();
+    await userEvent.keyboard("{Backspace}");
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("placeholder", "Write Docs (cccc3333 · open)");
+  });
+
+  it("pasting after a pick is a fresh query, not appended to the chosen text", async () => {
+    render(<Harness />);
+    const input = screen.getByRole("combobox");
+    await userEvent.type(input, "docs{Enter}");
+    input.focus();
+    await userEvent.paste("aaaa");
+    expect(input).toHaveValue("aaaa");
+    expect(optionNames()).toEqual(["Fix loginaaaa1111 · open"]);
+  });
+
+  it("clicking inside the input while the list is open keeps it open and keeps the query", async () => {
+    render(<Harness />);
+    const input = screen.getByRole("combobox");
+    await userEvent.type(input, "fix");
+    await userEvent.click(input);
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveValue("fix");
+    expect(optionNames()).toHaveLength(2);
+  });
+
+  it("the chevron closes an open list and opens a closed one", async () => {
+    const { container } = render(<Harness />);
+    const input = screen.getByRole("combobox");
+    const chevron = container.querySelector("svg.select-search-chevron") as SVGElement;
+    await userEvent.click(chevron);
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveFocus();
+    await userEvent.click(chevron);
+    expect(input).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("mousedown on the listbox container (padding, scrollbar) keeps the list open and focus in the input", async () => {
+    render(<Harness />);
+    const input = screen.getByRole("combobox");
+    await userEvent.type(input, "fix");
+    await userEvent.pointer({ keys: "[MouseLeft>]", target: screen.getByRole("listbox") });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("fix");
+  });
+
+  it("shows the chosen option as a read-only label with title and suffix while closed", async () => {
+    const { container } = render(<Harness />);
+    expect(container.querySelector(".select-search-chosen")).toBeNull();
+    await userEvent.type(screen.getByRole("combobox"), "docs{Enter}");
+    expect(container.querySelector(".select-search-chosen-label")?.textContent).toBe("Write Docs");
+    expect(container.querySelector(".select-search-chosen-detail")?.textContent).toBe("(cccc3333 · open)");
+  });
+
+  it("matches ids by prefix only, never inside the id", async () => {
+    render(
+      <Select
+        options={[
+          { value: "", label: "Add blocker..." },
+          { value: "3f2a91c0-7b1e-4d2a-9add-0c5e8f1b2a33", label: "Fix login", idPrefix: "3f2a91c0-7b1e-4d2a-9add-0c5e8f1b2a33" },
+        ]}
+        value=""
+        onChange={vi.fn()}
+        ariaLabel="x"
+        searchable
+        emptyText="No matching tasks"
+      />,
+    );
+    const input = screen.getByRole("combobox");
+    await userEvent.type(input, "add");
+    expect(optionNames()).toEqual(["No matching tasks"]);
+    await userEvent.clear(input);
+    await userEvent.type(input, "3F2A91C0");
+    expect(optionNames()).toEqual(["Fix login"]);
+    await userEvent.clear(input);
+    await userEvent.type(input, "2a91");
+    expect(optionNames()).toEqual(["No matching tasks"]);
   });
 
   it("Enter with no match picks nothing", async () => {

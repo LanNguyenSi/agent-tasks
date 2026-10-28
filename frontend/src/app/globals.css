@@ -2130,12 +2130,47 @@ html:not([data-theme="light"]) .prose-markdown a {
   color: var(--muted);
 }
 
+/* Chosen option: the placeholder text stays for assistive tech but is not
+   painted; .select-search-chosen draws it with a non-truncating suffix. */
+.select-search-input--chosen::placeholder {
+  color: transparent;
+}
+
+.select-search-chosen {
+  position: absolute;
+  left: 1px;
+  right: calc(var(--space-2) + 22px);
+  top: 1px;
+  bottom: 1px;
+  padding-left: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.select-search-chosen-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-search-chosen-detail {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
 .select-search-chevron {
   position: absolute;
   right: var(--space-2);
   top: 50%;
   margin-top: -7px;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .select-option-detail {
