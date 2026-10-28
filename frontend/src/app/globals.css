@@ -2115,6 +2115,37 @@ html:not([data-theme="light"]) .prose-markdown a {
   color: var(--muted);
 }
 
+/* Searchable Select: text input replaces the button trigger. */
+.select-search {
+  position: relative;
+}
+
+.select-search-input {
+  cursor: text;
+  padding-right: calc(var(--space-2) + 22px);
+  text-overflow: ellipsis;
+}
+
+.select-search-input::placeholder {
+  color: var(--muted);
+}
+
+.select-search-chevron {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  margin-top: -7px;
+  pointer-events: none;
+}
+
+.select-option-detail {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* ── CollapsibleSection ───────────────────────────────────────── */
 
 .collapsible-section {

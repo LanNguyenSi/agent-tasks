@@ -1092,8 +1092,16 @@ export default function TaskDetail({
                       t.projectId === task.projectId &&
                       !task.blockedBy?.some((d) => d.id === t.id),
                   )
-                  .map((t) => ({ value: t.id, label: t.title })),
+                  .map((t) => ({
+                    value: t.id,
+                    label: t.title,
+                    detail: `${t.id.slice(0, 8)} · ${t.status}`,
+                    searchText: t.id,
+                  })),
               ]}
+              searchable
+              ariaLabel="Add blocker"
+              emptyText="No matching tasks"
               className="td-dep-picker-select"
             />
             <Button
