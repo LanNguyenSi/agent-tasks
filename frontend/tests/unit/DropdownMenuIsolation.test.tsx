@@ -98,8 +98,11 @@ beforeEach(async () => {
       <TasksPage />
     </>,
   );
-  // Wait for the loaded state: page shortcuts only act once teamDataReady.
-  await screen.findByRole("button", { name: /New task/ });
+  // Wait for the loaded state: page shortcuts only act once teamDataReady,
+  // and the New task button renders disabled until then, so wait for it to
+  // be enabled, not merely present.
+  const newTask = await screen.findByRole("button", { name: /New task/ });
+  await waitFor(() => expect(newTask).toBeEnabled());
   seen = [];
   window.addEventListener("keydown", recordKey);
 });
