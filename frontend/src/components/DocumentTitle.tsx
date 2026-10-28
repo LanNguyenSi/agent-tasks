@@ -48,10 +48,11 @@ export function useDocumentTitle(title: string | null | undefined, enabled = tru
   }, []);
   useEffect(() => {
     if (!enabled) return;
-    const hadTitle = document.querySelector("title") !== null;
+    // Head only: an inline SVG <title> in the body is not the document title.
+    const hadTitle = document.head.querySelector("title") !== null;
     document.title = formatDocumentTitle(title);
     if (!hadTitle && ownedRef.current === null) {
-      ownedRef.current = document.querySelector("title");
+      ownedRef.current = document.head.querySelector("title");
     }
   }, [title, enabled]);
 }

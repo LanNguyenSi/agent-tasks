@@ -83,6 +83,21 @@ describe("the <title> element on a route that renders none server-side (the proj
     expect(document.head.querySelectorAll("title")).toHaveLength(0);
   });
 
+  it("ignores an SVG <title> in the body when deciding whether it created the head title", async () => {
+    document.head.querySelectorAll("title").forEach((t) => t.remove());
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "title"));
+    document.body.appendChild(svg);
+    try {
+      const { unmount } = render(<DocumentTitle title="Alpha" />);
+      await expectDocumentTitle("Alpha - agent-tasks");
+      unmount();
+      expect(document.head.querySelectorAll("title")).toHaveLength(0);
+    } finally {
+      svg.remove();
+    }
+  });
+
   it("never removes a title element that was already there", async () => {
     document.title = "server";
     const el = document.head.querySelector("title");
