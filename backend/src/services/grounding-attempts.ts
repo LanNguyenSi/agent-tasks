@@ -117,22 +117,27 @@ export class GroundingAttemptsService {
 
   /**
    * Pre-parse admission grants only one of the installed route capabilities:
-   * the claim and scope check, or else merge eligibility. When merge
-   * eligibility refuses too, the caller gets the claim and scope refusal: the
-   * request's intent is not read yet, and naming a merge precondition would
-   * send an ordinary caller after a merge scope or gate it does not need. That
-   * holds for a forbidden, and for the merge route's bad_state on a task in a
-   * work state outside review (the claim path's own state, where the claim or
-   * scope is what refuses). Any other merge-eligibility error keeps its own
-   * answer: bad_state on the initial or a terminal state (no claim or scope
-   * would help there), an ambiguous review workflow, an unavailable definition.
-   * One caller is the exception: a merge-only token (github:pr_merge and
-   * project write, no tasks:transition scope, no claim on the task) can never
-   * pass the claim path, so it gets whatever merge eligibility refused with
-   * (the consent, review lock, transition role or self-merge message, or
-   * bad_state on a task in a work state), as task_merge answers the same
-   * caller. A token that also lacks github:pr_merge is not merge-capable and
-   * keeps the tasks:transition refusal.
+   * the claim and scope check, or else merge eligibility (the task_merge
+   * checks). The request's intent is not read yet, so it never changes the
+   * answer. When neither admits the caller, the answer is the claim or scope
+   * refusal (the tasks:transition scope for an agent token without it, else
+   * the claim refusal), also for intent merge: naming a merge precondition
+   * would send an ordinary caller after a merge scope or gate it does not
+   * need. Two exceptions. (1) A caller that passes merge eligibility's actor
+   * check (a human, or an agent token with github:pr_merge) and meets its
+   * bad_state on the initial or a terminal state, or on a review state with
+   * no single terminal edge (an ambiguous workflow), gets that 409 bad_state
+   * whether or not it holds a claim and whether or not it has
+   * tasks:transition (no claim or scope would help there); an unavailable
+   * workflow definition keeps its own answer likewise. The bad_state of a
+   * work state outside review is not an exception: the claim or scope refusal
+   * stays. (2) A merge-only token (github:pr_merge and project write, no
+   * tasks:transition scope, no claim on the task) can never pass the claim
+   * path, so it gets whatever merge eligibility refused with, as task_merge
+   * answers the same caller: the allowAgentPrMerge consent, the review lock or
+   * approval gate, the transition role, or bad_state in any state, a work
+   * state included. A token without github:pr_merge is not merge-capable and
+   * always gets the claim or scope refusal.
    */
   async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {

@@ -35,32 +35,57 @@
  * I21  services/grounding-github-create.ts:46               PRC                   message: allowAgentPrCreate consent
  * I22  services/grounding-github-create.ts:50               PRC replay            message: allowAgentPrCreate consent
  * I23  services/grounding-github-create.ts:38               PRC replay            message: Idempotency-Key used by another caller
- * I24  services/grounding-attempts.ts:80                    TGA                   message: absent scope
- * I25  services/grounding-attempts.ts:85                    TGA                   message: neither claim held
+ * I24  services/grounding-attempts.ts:85                    TGA                   message: absent scope
+ * I25  services/grounding-attempts.ts:87                    TGA                   message: neither claim held
  * I26  services/grounding-context.ts:106 via TGA            TGA                   message: merge consent (routes/grounding.ts error handler carries it)
- * I27  services/grounding-attempts.ts:76                    TGA                   deliberately bare: no access, one 403 whatever the task's state
+ * I27  services/grounding-attempts.ts:81                    TGA                   deliberately bare: no access, one 403 whatever the task's state
  * RE   services/grounding-context.ts:139                    TGA intent merge      message: self-merge blocked (work claimant, work state)
  * RF   services/grounding-completion.ts:122, LEGACY_LOCAL   TM                    message: self-merge blocked on an admin-migrated task
- * RA-RD, RG, RH, G1-G4, G7, G10, G11  TGA admission precedence (grounding-attempts.ts authorizeRouteIssue). Per combination of
- *      {holds a claim, has tasks:transition, has github:pr_merge} the route sees, for an agent token:
- *        claim, tasks:transition, any pr_merge  -> admitted by the claim path (the later policy decides)
- *        claim, no tasks:transition, no pr_merge -> the tasks:transition scope (RB)
- *        claim, no tasks:transition, pr_merge    -> the tasks:transition scope (RD, G10): a held claim keeps the scope refusal
- *        no claim, tasks:transition, no pr_merge -> the claim refusal (RA, RC)
- *        no claim, tasks:transition, pr_merge    -> admitted by merge eligibility, else the claim refusal (RG); only
- *                                                   bad_state on open, done or an ambiguous workflow keeps its own answer (RH)
- *        no claim, no tasks:transition, no pr_merge -> the tasks:transition scope (G3: not merge-capable)
- *        no claim, no tasks:transition, pr_merge -> the merge-only caller: admitted by merge eligibility, else the
- *                                                   gate that refused (G1 consent, G2 review lock, G4 bad_state 409 on
- *                                                   in_progress, G7 transition role; I24 shows the admitted case)
- *      A human has no scope: no claim gets the claim refusal even when merge eligibility refuses too (G11).
+ * RA-RD, RG, RH, RI-RU  TGA admission precedence (grounding-attempts.ts authorizeRouteIssue). The rule, as written in
+ *      docs/agent-workflow.md and CHANGELOG.md:
+ *      The grounding-attempt issue route admits a caller through the claim and scope check (an agent token with
+ *      `tasks:transition`, project write access and the work or review claim on the task) or else through merge
+ *      eligibility (the `task_merge` checks), both before it reads the request's `intent`, so the intent never
+ *      changes the answer. When neither admits the caller, the answer is the claim or scope refusal (`Token
+ *      missing scope: tasks:transition` for an agent token without that scope, otherwise `You hold neither the
+ *      work claim nor the review claim on this task`), also for `intent: "merge"`, with two exceptions. First,
+ *      a caller that passes merge eligibility's actor check (a human, or an agent token with `github:pr_merge`)
+ *      and meets its `409 bad_state` on a task in its initial or a terminal state, or in a review state with no
+ *      single terminal edge (an ambiguous workflow), gets that `409 bad_state`, whether or not it holds a claim
+ *      and whether or not it has `tasks:transition`; an unavailable workflow definition keeps its own answer
+ *      likewise. The `bad_state` of a work state outside review, such as `in_progress`, is not an exception:
+ *      the claim or scope refusal stays. Second, a merge-only token (an agent token with `github:pr_merge` and
+ *      project write access, without `tasks:transition`, holding no claim on the task) can never pass the claim
+ *      path, so it gets whatever merge eligibility refused with, the same answer `task_merge` gives that
+ *      caller: the missing `allowAgentPrMerge` consent, the review lock or the review approval gate, the
+ *      transition role, or `409 bad_state` in any state, a work state included. A token without
+ *      `github:pr_merge` is not merge-capable and always gets the claim or scope refusal. A caller without
+ *      project access gets one bare 403 before any of this.
+ *      Per combination of {holds a claim, has tasks:transition, has github:pr_merge} the route sees, for an agent token:
+ *        claim, tasks:transition, any pr_merge       -> admitted by the claim path (the later policy decides)
+ *        claim, no tasks:transition, no pr_merge     -> the tasks:transition scope (RB)
+ *        claim, no tasks:transition, pr_merge        -> admitted when merge eligibility admits, else the tasks:transition scope
+ *                                                       (RD, RN), except 409 bad_state on the initial or a terminal state or
+ *                                                       an ambiguous review workflow (RP, RQ)
+ *        no claim, tasks:transition, no pr_merge     -> the claim refusal (RA, RC)
+ *        no claim, tasks:transition, pr_merge        -> admitted when merge eligibility admits, else the claim refusal (RG),
+ *                                                       except the same 409 bad_state (RH)
+ *        no claim, no tasks:transition, no pr_merge  -> the tasks:transition scope (RK: not merge-capable)
+ *        no claim, no tasks:transition, pr_merge     -> the merge-only token: admitted by merge eligibility when it admits (I24: then the
+ *                                                       later policy of intent finish refuses with the scope), else its own
+ *                                                       refusal whatever the intent: RI consent, RJ review lock,
+ *                                                       RL / RR 409 bad_state on in_progress, RM transition role, RS consent
+ *                                                       for intent finish; RT is the bare 403 without project access
+ *      A human has no scope: no claim gets the claim refusal even when merge eligibility refuses too (RO).
+ *      RU: an unexpected error of the merge-actor check on the merge-only path propagates (the service's unavailable answer, 503
+ *      on the route); it is not a scope refusal.
  *
  * Deliberately bare or unreachable, not rows of this table:
  *  - PRC / PRM callers without access, and a missing task: the legacy handler's own answer via next()
  *    (grounding-github.ts:81-82 and :129-130); pinned by grounding-github-routes.test.ts.
  *  - Reachable only when access, the token or a claim changes between the route's own check and the locked
  *    decision (TOCTOU): grounding-github.ts:158, grounding-github-create.ts:42, grounding-operations.ts:49,
- *    grounding-attempts.ts:81, grounding-route-effects.ts:85, grounding-direct-authority.ts:15,
+ *    grounding-attempts.ts:86, grounding-route-effects.ts:85, grounding-direct-authority.ts:15,
  *    grounding-context.ts:73, :74 and :136 (the last pinned by the unit test in grounding-context.test.ts).
  *  - Unreachable from these routes because an earlier identical predicate refuses first or no route builds the
  *    request: grounding-context.ts:99, :120, :122, grounding-completion.ts:91 (route scope check first),
@@ -70,7 +95,7 @@
  *  - A linked task of another project in a multi-task merge that the caller cannot write: bare from
  *    grounding-operations.ts:49, so the group's membership of a project the caller cannot see stays unobservable.
  *  - Other verbs, not behind these routes: grounding-direct-*.ts, grounding-creation.ts, grounding-migration.*,
- *    the receipt upload (grounding-attempts.ts:138 and :268) and direct attempt issue (:206).
+ *    the receipt upload (grounding-attempts.ts:166 and :296) and direct attempt issue (:234).
  */
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
@@ -80,6 +105,7 @@ vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_targe
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
 vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: vi.fn(), recordTerminalSnapshot: vi.fn(), recordClarification: vi.fn(), recordAbandonDisposition: vi.fn(), clearDisposition: vi.fn() }));
 import { createApp } from "../../src/app.js";
+import { GroundingAttemptsService } from "../../src/services/grounding-attempts.js";
 import { GroundingGithubMergeService } from "../../src/services/grounding-github-merge.js";
 import { GroundingGithubCreateService } from "../../src/services/grounding-github-create.js";
 import { githubCreateCorrelationMarker, type GroundingGithubCreateProvider } from "../../src/services/grounding-github-create-provider.js";
@@ -137,6 +163,13 @@ async function otherAgent() {
 async function mergerOfReview(mode: Parameters<typeof governance>[0] = "AUTONOMOUS") {
   await governance(mode);
   await data({ status: "review", claimedByAgentId: null, claimedByUserId: ids.user });
+}
+/** An ambiguous review workflow: two terminal edges leave review, so the merge route cannot pick a target. */
+async function twoTerminalEdges() {
+  const definition = defaultWorkflowDefinition();
+  definition.states.push({ name: "cancelled", label: "Cancelled", terminal: true, agentInstructions: "" });
+  definition.transitions.push({ from: "review", to: "cancelled", label: "Cancel", requiredRole: "any" });
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Two terminal edges", isDefault: true, definition: definition as object } });
 }
 async function gatedWorkflow(match: (edge: { from: string; to: string }) => boolean) {
   const definition = defaultWorkflowDefinition();
@@ -290,7 +323,7 @@ const rows: Row[] = [
     expected: { status: 403, body: { error: "forbidden" } } },
   // TGA admission precedence (before the intent is read): the claim and scope check wins over a merge-eligibility
   // refusal, and over the merge route's bad_state on a work state outside review; any other merge-eligibility
-  // error keeps its own answer. A merge-only token (G rows) is the exception and gets merge eligibility's refusal.
+  // error keeps its own answer. A merge-only token (RI-RM, RR, RS) is the exception and gets merge eligibility's refusal.
   { id: "RA", label: "TGA finish on an in_progress task the agent did not claim, token without github:pr_merge: the claim refusal, not the merge scope",
     run: async () => { await data({ claimedByAgentId: null, claimedByUserId: null }); await scopes(["tasks:transition", "tasks:update", "tasks:claim"]); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null)); },
     expected: refused("You hold neither the work claim nor the review claim on this task") },
@@ -307,33 +340,47 @@ const rows: Row[] = [
     run: async () => { await mergerOfReview(); await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } }); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("You hold neither the work claim nor the review claim on this task") },
   { id: "RH", label: "TGA by a non-claimant on a review task with two terminal edges: the merge route's bad_state stays",
-    run: async () => {
-      const definition = defaultWorkflowDefinition();
-      definition.states.push({ name: "cancelled", label: "Cancelled", terminal: true, agentInstructions: "" });
-      definition.transitions.push({ from: "review", to: "cancelled", label: "Cancel", requiredRole: "any" });
-      await store.db.workflow.create({ data: { projectId: f.projectId, name: "Two terminal edges", isDefault: true, definition: definition as object } });
-      await mergerOfReview(); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null));
-    },
+    run: async () => { await twoTerminalEdges(); await mergerOfReview(); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null)); },
     expected: { status: 409, body: { error: "bad_state" } } },
-  // Merge-only token (github:pr_merge, no tasks:transition, no claim): the gate merge eligibility refused with.
-  { id: "G1", label: "TGA by a merge-only non-claimant without merge consent: the consent, not the tasks:transition scope",
+  // Merge-only token (github:pr_merge, no tasks:transition, no claim): the gate merge eligibility refused with, whatever the intent.
+  { id: "RI", label: "TGA by a merge-only non-claimant without merge consent: the consent, not the tasks:transition scope",
     run: async () => { await mergerOfReview(); await scopes(["github:pr_merge"]); await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } }); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("No team member allows agent PR merges (allowAgentPrMerge)") },
-  { id: "G2", label: "TGA by a merge-only non-claimant under REQUIRES_DISTINCT_REVIEWER without a review lock: the review lock, not the tasks:transition scope",
+  { id: "RJ", label: "TGA by a merge-only non-claimant under REQUIRES_DISTINCT_REVIEWER without a review lock: the review lock, not the tasks:transition scope",
     run: async () => { await mergerOfReview("REQUIRES_DISTINCT_REVIEWER"); await scopes(["github:pr_merge"]); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("Review approval is blocked: no review lock is held on this task") },
-  { id: "G3", label: "TGA by a token with no scopes at all (not merge-capable): the tasks:transition scope, no merge gate",
+  { id: "RK", label: "TGA by a token with no scopes at all (not merge-capable): the tasks:transition scope, no merge gate",
     run: async () => { await mergerOfReview(); await scopes([]); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("Token missing scope: tasks:transition") },
-  { id: "G4", label: "TGA by a merge-only non-claimant on an in_progress task: the merge route's bad_state 409, as task_merge answers",
+  { id: "RL", label: "TGA by a merge-only non-claimant on an in_progress task: the merge route's bad_state 409, as task_merge answers",
     run: async () => { await data({ claimedByAgentId: null, claimedByUserId: null }); await scopes(["github:pr_merge"]); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: { status: 409, body: { error: "bad_state" } } },
-  { id: "G7", label: "TGA by a merge-only non-claimant on a role-gated terminal edge: the transition role, not the tasks:transition scope",
+  { id: "RM", label: "TGA by a merge-only non-claimant on a role-gated terminal edge: the transition role, not the tasks:transition scope",
     run: async () => { await mergerOfReview(); await scopes(["github:pr_merge"]); await gatedWorkflow(edge => edge.to === "done"); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("The transition to done requires the HUMAN_MEMBER project role") },
-  { id: "G10", label: "TGA by a merge-only non-claimant that holds the review claim: the tasks:transition scope (a held claim keeps the scope refusal)",
+  { id: "RN", label: "TGA by a merge-only non-claimant that holds the review claim: the tasks:transition scope (a held claim keeps the scope refusal)",
     run: async () => { await mergerOfReview(); await data({ reviewClaimedByAgentId: ids.agent }); await scopes(["github:pr_merge"]); await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } }); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("Token missing scope: tasks:transition") },
+  { id: "RP", label: "TGA by a review-claim holder with only github:pr_merge on a review task with two terminal edges: the merge route's bad_state, not the tasks:transition scope",
+    run: async () => { await twoTerminalEdges(); await mergerOfReview(); await data({ reviewClaimedByAgentId: ids.agent }); await scopes(["github:pr_merge"]); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
+    expected: { status: 409, body: { error: "bad_state" } } },
+  { id: "RQ", label: "TGA by the work claimant with only github:pr_merge on a done task: the merge route's bad_state, not the tasks:transition scope",
+    run: async () => { await data({ status: "done" }); await scopes(["github:pr_merge"]); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
+    expected: { status: 409, body: { error: "bad_state" } } },
+  { id: "RR", label: "TGA intent finish by a merge-only non-claimant on an in_progress task: the same bad_state 409 as intent merge, the intent does not matter",
+    run: async () => { await data({ claimedByAgentId: null, claimedByUserId: null }); await scopes(["github:pr_merge"]); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null)); },
+    expected: { status: 409, body: { error: "bad_state" } } },
+  { id: "RS", label: "TGA intent finish by a merge-only non-claimant on a review task without merge consent: the consent, the intent does not matter",
+    run: async () => { await mergerOfReview(); await scopes(["github:pr_merge"]); await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } }); return app().fetch(request({ intent: "finish" }, task("grounding-attempts"), null)); },
+    expected: refused("No team member allows agent PR merges (allowAgentPrMerge)") },
+  { id: "RT", label: "TGA by a merge-only token of another team: one bare 403 without a message, whatever the task's state",
+    run: async () => {
+      await mergerOfReview();
+      const id = randomUUID(); const secret = `foreign-merge-only-${id}`;
+      await store.db.agentToken.create({ data: { id, teamId: foreign.team, createdById: foreign.user, name: "Foreign merge-only", tokenHash: createHash("sha256").update(secret).digest("hex"), scopes: ["github:pr_merge"] } });
+      return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null, secret));
+    },
+    expected: { status: 403, body: { error: "forbidden" } } },
   { id: "RE", label: "TGA intent merge on an in_progress task by its work claimant under REQUIRES_DISTINCT_REVIEWER",
     run: async () => { await governance("REQUIRES_DISTINCT_REVIEWER"); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("Self-merge is blocked: a distinct reviewer must merge") },
@@ -346,10 +393,27 @@ it.each(rows.map(row => [`${row.id} ${row.label}`, row] as const))("%s", async (
   expect(f.merge).toHaveBeenCalledTimes(row.id === "I19" ? 1 : 0); expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
-it("G11 TGA by a human non-claimant that merge eligibility refuses too: the claim refusal, not the merge gate", async () => {
+it("RO TGA by a human non-claimant that merge eligibility refuses too: the claim refusal, not the merge gate", async () => {
   await mergerOfReview(); await data({ claimedByUserId: null });
   await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } });
   await expect(f.attempts.authorizeRouteIssue(f.taskId, { type: "human", userId: ids.user })).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "You hold neither the work claim nor the review claim on this task" });
+});
+
+it("RU an unexpected error of the merge-actor check on the merge-only path propagates as the service's unavailable answer (503 on the route); it is not the tasks:transition scope refusal", async () => {
+  await data({ claimedByAgentId: null, claimedByUserId: null });
+  const mergeOnly = { ...completionActor, scopes: ["github:pr_merge"] };
+  // Write checks in order: the route admission (1), the merge eligibility fallback (2), the merge-only classification (3).
+  const service = (failOn: number) => {
+    let calls = 0;
+    const canWrite = vi.fn(async () => { if (++calls === failOn) throw new Error("authority unavailable"); return true; });
+    return { canWrite, attempts: new GroundingAttemptsService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, authority: { canWrite, hasRole: async () => true } }) };
+  };
+  const control = service(0);
+  await expect(control.attempts.authorizeRouteIssue(f.taskId, mergeOnly)).rejects.toMatchObject({ code: "bad_state", status: 409 });
+  expect(control.canWrite).toHaveBeenCalledTimes(3);
+  const failing = service(3);
+  await expect(failing.attempts.authorizeRouteIssue(f.taskId, mergeOnly)).rejects.toMatchObject({ name: "GroundingReceiptVerificationError", code: "grounding_verification_unavailable" });
+  expect(failing.canWrite).toHaveBeenCalledTimes(3);
 });
 
 it("RF an admin-migrated LEGACY_LOCAL task takes the Grounding path: task_merge's self-merge answer is forbidden with the message, not self_merge_blocked", async () => {
