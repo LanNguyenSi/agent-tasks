@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- The root `overrides` floor for `ip-address` is now `^10.7.4` (was `^10.7.2`), so a fresh resolve cannot pick 10.7.2 or 10.7.3 (GHSA-rxp7-6hxx-x8q5). The lockfile already resolves 10.7.4 and is unchanged.
+
 ### Added
 
 - **A team admin can rename the team after creating it.** `PATCH /api/teams/:id` takes `{ name }` (trimmed, then 1 to 100 characters, the same rule as team creation; a whitespace-only name is a 400) and returns `{ team }`. Only the display name is written: the slug never changes. Agent tokens get 403, an unknown team 404, a non-member 403 ("Not a member of this team"), a team member who is not `ADMIN` 403 ("Only team admins can rename the team"). A rename writes a `project.updated` audit event with `{ teamId, from, to }`, the same way team creation writes `project.created` with a team payload. `/settings/team` has a new "Team name" card: team admins get an input and a Save button (disabled for an empty, whitespace-only or unchanged name; a server error is shown and the old name stays), everyone else sees the name only. A saved rename reloads the shell's one team list (`refreshTeams`), so the header, the team switcher and the API Tokens section show the new name without a page reload; a rename that finishes after the user switched teams still reloads it. `renameTeam` is the client call in `frontend/src/lib/api.ts`. The OpenAPI document does not describe the team routes, so it is unchanged.
