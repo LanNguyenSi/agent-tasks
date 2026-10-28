@@ -26,6 +26,11 @@ vi.mock("../../src/lib/prisma.js", () => ({
   ),
 }));
 import { teamRouter } from "../../src/routes/teams.js";
+import {
+  TEAM_NAME_EMPTY_MESSAGE,
+  TEAM_NAME_INVISIBLE_MESSAGE,
+  TEAM_NAME_MARKS_MESSAGE,
+} from "../../src/lib/team-name.js";
 
 let pg: Awaited<ReturnType<typeof groundingPostgres>>;
 let userId: string;
@@ -115,6 +120,33 @@ describe("team names (real database)", () => {
     expect(renamed.status).toBe(400);
     expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
   });
+
+  it.each([
+    ["tag character U+E0020 inside a name", "Team\u{e0020}Name", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["tag characters carrying an ASCII payload", "Team\u{e0021}\u{e0034}\u{e002d}Name", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["a name that is only a tag character", "\u{e0020}", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["the left-to-right mark U+200E", "Team\u200eName", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["the right-to-left mark U+200F", "Team\u200fName", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["the Arabic letter mark U+061C", "Team\u061cName", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["interlinear annotation U+FFF9-U+FFFB", "Team\u{fff9}a\u{fffb}Name", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["invisible operator U+2061", "Team\u2061Name", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["unassigned code point U+0378", "Team\u0378Name", TEAM_NAME_INVISIBLE_MESSAGE],
+    ["5 combining marks on one letter", `Team Nguy${"e\u0301\u0302\u0303\u0304\u0305"}n`, TEAM_NAME_MARKS_MESSAGE],
+    ["U+FFFC alone", "\ufffc", TEAM_NAME_EMPTY_MESSAGE],
+  ] as const)(
+    "answers 400 with the rule message for %s on both routes and writes nothing",
+    async (_label, name, message) => {
+      const created = await post(name, "invisible-2-team");
+      expect(created.status).toBe(400);
+      expect((await created.json() as { message: string }).message).toBe(message);
+      expect(await pg.db.team.findUnique({ where: { slug: "invisible-2-team" } })).toBeNull();
+
+      const renamed = await patch(name);
+      expect(renamed.status).toBe(400);
+      expect((await renamed.json() as { message: string }).message).toBe(message);
+      expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
+    },
+  );
 
   it("stores an accepted name trimmed, with accents and inner spaces intact", async () => {
     const created = await post("  Café  Team  ", "cafe-team");

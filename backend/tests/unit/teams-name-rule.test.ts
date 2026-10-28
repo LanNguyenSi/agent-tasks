@@ -11,6 +11,11 @@
  * inside the name are refused; a normal name keeps its inner spaces and
  * accents and is stored trimmed. An unpaired UTF-16 surrogate (JSON "\ud800")
  * is refused too: Prisma cannot send it to Postgres, so it used to be a 500.
+ * Invisible smuggling characters (tag characters, the implicit direction marks,
+ * interlinear annotation, invisible operators, unassigned code points) and
+ * stacks of more than 4 combining marks are refused as well, and U+FFFC counts
+ * as blank. The refinements are checked in order, so a name that breaks several
+ * rules reports the first one only (`message` is the first failed rule).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
@@ -41,7 +46,9 @@ import {
   TEAM_NAME_DIRECTION_MESSAGE,
   TEAM_NAME_EMPTY_MESSAGE,
   TEAM_NAME_ENCODING_MESSAGE,
+  TEAM_NAME_INVISIBLE_MESSAGE,
   TEAM_NAME_LENGTH_MESSAGE,
+  TEAM_NAME_MARKS_MESSAGE,
   TEAM_NAME_UNASSIGNED_MESSAGE,
 } from "../../src/lib/team-name.js";
 
@@ -243,6 +250,72 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
     await expectRejected(name, TEAM_NAME_UNASSIGNED_MESSAGE);
   });
 
+  it.each([
+    ["tag character U+E0020 (first of the range)", "a\u{e0020}b"],
+    ["tag character U+E007F (last of the range)", "a\u{e007f}b"],
+    ["tag characters spelling an invisible payload", "a\u{e0068}\u{e0069}b"],
+    ["a tag character alone", "\u{e0020}"],
+    ["a tag character trim does not remove", "\u{e0020}Team"],
+    ["left-to-right mark U+200E", "a\u200eb"],
+    ["right-to-left mark U+200F", "a\u200fb"],
+    ["Arabic letter mark U+061C", "a\u061cb"],
+    ["interlinear annotation anchor U+FFF9 (first of the range)", "a\u{fff9}b"],
+    ["interlinear annotation separator U+FFFA", "a\u{fffa}b"],
+    ["interlinear annotation terminator U+FFFB (last of the range)", "a\u{fffb}b"],
+    ["invisible operator U+2061 (first of the range)", "a\u2061b"],
+    ["invisible operator U+2064 (last of the range)", "a\u2064b"],
+    ["unassigned code point U+0378", "a\u0378b"],
+    ["unassigned code point U+2065", "a\u2065b"],
+    ["an unassigned code point alone", "\u0378"],
+  ])("400s %s", async (_label, name) => {
+    await expectRejected(name, TEAM_NAME_INVISIBLE_MESSAGE);
+  });
+
+  it.each([
+    ["5 combining marks on one letter", `a${"\u0301".repeat(5)}`],
+    ["5 combining marks inside a name", `a${"\u0302".repeat(5)}b`],
+    ["5 combining marks at the end of a name", `Team${"\u0300".repeat(5)}`],
+    ["a Zalgo stack of 99 combining marks", `a${"\u0301".repeat(99)}`],
+    ["5 marks twice in one name", `a${"\u0301".repeat(5)}b${"\u0300".repeat(6)}`],
+  ])("400s %s", async (_label, name) => {
+    await expectRejected(name, TEAM_NAME_MARKS_MESSAGE);
+  });
+
+  it("accepts exactly 4 combining marks on one letter", async () => {
+    await expectStored(`a${"\u0301\u0302\u0303\u0304"}`, `a${"\u0301\u0302\u0303\u0304"}`);
+  });
+
+  it("accepts 4 marks on each of two letters (two runs of 4 stay under the cap)", async () => {
+    const name = `a${"\u0301\u0302\u0303\u0304"}b${"\u0300\u0301\u0302\u0303"}`;
+    await expectStored(name, name);
+  });
+
+  it("400s a name that is only the object replacement character U+FFFC", async () => {
+    await expectRejected("\ufffc", TEAM_NAME_EMPTY_MESSAGE);
+  });
+
+  it("400s a name of U+FFFC mixed with whitespace and other blanks", async () => {
+    await expectRejected(" \ufffc \u200b \u3164 ", TEAM_NAME_EMPTY_MESSAGE);
+  });
+
+  it("accepts U+FFFC inside a visible name", async () => {
+    await expectStored("Team \ufffc A", "Team \ufffc A");
+  });
+
+  it("reports the first failed rule when a name breaks several rules", async () => {
+    // A tag character is `\p{Cf}`, so it is blank too, but the invisible
+    // refinement comes first: a tag-only name is never called empty.
+    await expectRejected("\u{e0020}", TEAM_NAME_INVISIBLE_MESSAGE);
+    // A tag character and a bidi override: direction is checked before invisible.
+    await expectRejected("a\u202e\u{e0020}b", TEAM_NAME_DIRECTION_MESSAGE);
+    // A private-use character and 5 marks: unassigned is checked before the cap.
+    await expectRejected(`a\ue000${"\u0301".repeat(5)}`, TEAM_NAME_UNASSIGNED_MESSAGE);
+    // A tag character and 5 marks: invisible is checked before the cap.
+    await expectRejected(`a\u{e0020}${"\u0301".repeat(5)}`, TEAM_NAME_INVISIBLE_MESSAGE);
+    // A NUL byte and an unassigned code point: control is checked first.
+    await expectRejected(`a\u0000\u0378`, TEAM_NAME_CONTROL_MESSAGE);
+  });
+
   it("accepts a base letter followed by combining marks (decomposed accent)", async () => {
     await expectStored("Cafe\u0301 Team", "Cafe\u0301 Team");
   });
@@ -263,7 +336,13 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
   it.each([
     ["Thai with vowel and tone marks", "\u0e17\u0e35\u0e21\u0e44\u0e17\u0e22"],
     ["Arabic with harakat", "\u0641\u064e\u0631\u0650\u064a\u0642"],
+    ["Devanagari", "टीम"],
+    ["Vietnamese", "Nguyễn Văn"],
+    ["Vietnamese in decomposed NFD form", "Nguyễn Văn".normalize("NFD")],
     ["a keycap emoji", "Team 1\ufe0f\u20e3"],
+    ["an emoji ZWJ family", "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}"],
+    ["a flag", "\u{1f1e9}\u{1f1ea}"],
+    ["the zero-width joiner and U+FE0F alone next to text", `a\u200db\u{fe0f}c`],
   ])("accepts %s", async (_label, name) => {
     await expectStored(name, name);
   });

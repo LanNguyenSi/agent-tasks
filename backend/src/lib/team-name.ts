@@ -19,11 +19,22 @@ import { z } from "zod";
  *   - hold no private-use character (`\p{Co}`) and no noncharacter (U+FDD0-U+FDEF
  *     and the last two code points of every plane), which render as nothing
  *     or as a box;
+ *   - hold no tag character (U+E0020-U+E007F, which can carry an invisible
+ *     ASCII payload), no implicit direction mark (U+200E, U+200F, U+061C), no
+ *     interlinear annotation mark (U+FFF9-U+FFFB), no invisible operator
+ *     (U+2061-U+2064) and no unassigned code point (`\p{Cn}`, for example
+ *     U+0378, U+2065). Most of these are `\p{Cf}`, but the rest of `\p{Cf}`
+ *     stays allowed inside a visible name: the zero-width joiner U+200D in an
+ *     emoji sequence and the variation selector U+FE0F are valid;
+ *   - hold no stack of more than 4 combining marks on one character (Zalgo
+ *     text): `\p{M}{5,}` in u-mode counts code points, and exactly 4 is fine;
  *   - not be empty once the characters that render as nothing are removed:
  *     format characters (`\p{Cf}`, for example the zero-width space),
  *     whitespace, combining marks and variation selectors (`\p{M}`, so a
  *     base letter plus marks stays valid but marks alone do not), the Hangul
- *     fillers (U+115F, U+1160, U+3164, U+FFA0) and the braille blank U+2800;
+ *     fillers (U+115F, U+1160, U+3164, U+FFA0), the braille blank U+2800 and
+ *     the object replacement character U+FFFC (a name of only U+FFFC is empty,
+ *     U+FFFC inside a visible name stays allowed);
  *   - be at most 100 code points (zod counts code points, not UTF-16 units).
  */
 export const TEAM_NAME_MAX_LENGTH = 100;
@@ -34,7 +45,23 @@ export const TEAM_NAME_EMPTY_MESSAGE = "Team name must not be empty";
 export const TEAM_NAME_DIRECTION_MESSAGE =
   "Team name must not contain line or paragraph separators or text direction controls";
 export const TEAM_NAME_UNASSIGNED_MESSAGE = "Team name must not contain private-use or noncharacter code points";
+export const TEAM_NAME_INVISIBLE_MESSAGE = "Team name must not contain invisible or unassigned characters";
+export const TEAM_NAME_MARKS_MESSAGE = "Team name must not stack more than 4 combining marks on one character";
 export const TEAM_NAME_LENGTH_MESSAGE = `Team name must be at most ${TEAM_NAME_MAX_LENGTH} characters`;
+
+/**
+ * The invisible or smuggling code points refused anywhere in the name: the tag
+ * characters U+E0020-U+E007F (they can carry an invisible ASCII payload), the
+ * implicit direction marks U+200E, U+200F and U+061C, the interlinear annotation
+ * marks U+FFF9-U+FFFB, the invisible operators U+2061-U+2064 and every
+ * unassigned code point (`\p{Cn}`, e.g. U+0378). Most of them are `\p{Cf}`, but
+ * the rest of `\p{Cf}` must stay valid inside a visible name (the zero-width
+ * joiner U+200D, the variation selector U+FE0F), so `\p{Cf}` is not used here.
+ */
+const INVISIBLE_CODE_POINTS = /[\u061c\u200e\u200f\u2061-\u2064\u{fff9}-\u{fffb}\u{e0020}-\u{e007f}]|\p{Cn}/u;
+
+/** 5 or more combining marks in a row (`u`-mode counts code points, not units). */
+const MARK_STACK = /\p{M}{5,}/u;
 
 /** True for a noncharacter: U+FDD0-U+FDEF or a code point ending in FFFE/FFFF. */
 function hasNoncharacter(value: string): boolean {
@@ -52,8 +79,10 @@ export const teamNameSchema = z
   .refine((value) => !/\p{Cs}/u.test(value), TEAM_NAME_ENCODING_MESSAGE)
   .refine((value) => !/[\p{Zl}\p{Zp}\u202a-\u202e\u2066-\u2069]/u.test(value), TEAM_NAME_DIRECTION_MESSAGE)
   .refine((value) => !/\p{Co}/u.test(value) && !hasNoncharacter(value), TEAM_NAME_UNASSIGNED_MESSAGE)
+  .refine((value) => !INVISIBLE_CODE_POINTS.test(value), TEAM_NAME_INVISIBLE_MESSAGE)
+  .refine((value) => !MARK_STACK.test(value), TEAM_NAME_MARKS_MESSAGE)
   .refine(
-    (value) => value.replace(/[\p{Cf}\p{M}\s\u115f\u1160\u3164\uffa0\u2800]/gu, "").length > 0,
+    (value) => value.replace(/[\p{Cf}\p{M}\s\u115f\u1160\u3164\uffa0\u2800\ufffc]/gu, "").length > 0,
     TEAM_NAME_EMPTY_MESSAGE,
   )
   .max(TEAM_NAME_MAX_LENGTH, TEAM_NAME_LENGTH_MESSAGE);
