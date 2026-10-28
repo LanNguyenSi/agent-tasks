@@ -28,8 +28,10 @@ PATCH /api/teams/:id              # Rename (team admins; body { name }, same nam
 POST /api/teams/:id/members
 POST /api/teams/:id/sync          # GitHub repo sync
 # Team name rule (create and rename): trimmed, at most 100 code points, no control characters
-# (NUL, newline, tab, other C0/C1), no unpaired UTF-16 surrogate, and not empty once whitespace and format characters
-# (zero-width space) are removed. A refusal is a 400 with the first failed rule in `message`.
+# (NUL, newline, tab, other C0/C1), no unpaired UTF-16 surrogate, no line or paragraph separator (U+2028, U+2029)
+# or bidi control (U+202A-U+202E, U+2066-U+2069), no private-use or noncharacter code point, and not empty once
+# whitespace, format characters (zero-width space), combining marks and variation selectors, the Hangul fillers
+# (U+115F, U+1160, U+3164, U+FFA0) and U+2800 are removed. A refusal is a 400 with the first failed rule in `message`.
 
 # Agent Tokens (team admins)
 GET   /api/agent-tokens/scopes     # Scope catalog (no team required)

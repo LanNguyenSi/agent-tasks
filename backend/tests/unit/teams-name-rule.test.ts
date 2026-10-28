@@ -38,9 +38,11 @@ vi.mock("../../src/services/audit.js", () => ({ logAuditEvent: vi.fn().mockResol
 import { teamRouter } from "../../src/routes/teams.js";
 import {
   TEAM_NAME_CONTROL_MESSAGE,
+  TEAM_NAME_DIRECTION_MESSAGE,
   TEAM_NAME_EMPTY_MESSAGE,
   TEAM_NAME_ENCODING_MESSAGE,
   TEAM_NAME_LENGTH_MESSAGE,
+  TEAM_NAME_UNASSIGNED_MESSAGE,
 } from "../../src/lib/team-name.js";
 
 const TEAM_ID = "team-1";
@@ -190,6 +192,84 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
 
   it("400s a name of format characters and whitespace only", async () => {
     await expectRejected(" ​ ‍﻿­ ", TEAM_NAME_EMPTY_MESSAGE);
+  });
+
+  it.each([
+    ["Hangul filler U+3164", "\u3164"],
+    ["Hangul choseong filler U+115F", "\u115f"],
+    ["Hangul jungseong filler U+1160", "\u1160"],
+    ["halfwidth Hangul filler U+FFA0", "\uffa0"],
+    ["braille blank U+2800", "\u2800"],
+    ["combining acute accent only", "\u0301"],
+    ["several combining marks only", "\u0301\u0302\u0303"],
+    ["variation selector-16 only", "\ufe0f"],
+    ["combining grapheme joiner only", "\u034f"],
+    ["supplementary variation selector only", "\u{e0100}"],
+    ["fillers mixed with spaces and marks", " \u3164 \u2800\u0301 "],
+  ])("400s a name made only of %s", async (_label, name) => {
+    await expectRejected(name, TEAM_NAME_EMPTY_MESSAGE);
+  });
+
+  it.each([
+    ["bidi LRE U+202A", "abc\u202adef"],
+    ["bidi RLE U+202B", "abc\u202bdef"],
+    ["bidi PDF U+202C", "abc\u202cdef"],
+    ["bidi LRO U+202D", "abc\u202ddef"],
+    ["bidi RLO U+202E", "abc\u202edef"],
+    ["bidi LRI U+2066", "abc\u2066def"],
+    ["bidi RLI U+2067", "abc\u2067def"],
+    ["bidi FSI U+2068", "abc\u2068def"],
+    ["bidi PDI U+2069", "abc\u2069def"],
+    ["bidi override at the start of a visible name", "\u202eabc"],
+    ["bidi override at the end of a visible name", "abc\u202e"],
+    ["line separator U+2028", "a\u2028b"],
+    ["paragraph separator U+2029", "a\u2029b"],
+  ])("400s %s inside a visible name", async (_label, name) => {
+    await expectRejected(name, TEAM_NAME_DIRECTION_MESSAGE);
+  });
+
+  it.each([
+    ["private use U+E000", "\ue000"],
+    ["private use inside a visible name", "ab\ue000cd"],
+    ["private use last of the BMP block U+F8FF", "x\uf8ff"],
+    ["supplementary private use U+F0000", "x\u{f0000}"],
+    ["noncharacter U+FFFE", "\ufffe"],
+    ["noncharacter U+FFFF inside a visible name", "a\uffffb"],
+    ["noncharacter U+FDD0", "a\ufdd0b"],
+    ["noncharacter U+FDEF", "a\ufdefb"],
+    ["noncharacter U+1FFFE", "a\u{1fffe}b"],
+    ["noncharacter U+10FFFF", "a\u{10ffff}b"],
+  ])("400s %s", async (_label, name) => {
+    await expectRejected(name, TEAM_NAME_UNASSIGNED_MESSAGE);
+  });
+
+  it("accepts a base letter followed by combining marks (decomposed accent)", async () => {
+    await expectStored("Cafe\u0301 Team", "Cafe\u0301 Team");
+  });
+
+  it("accepts a combining mark after a non-Latin base (Devanagari)", async () => {
+    await expectStored("\u0915\u093f", "\u0915\u093f");
+  });
+
+  it("accepts emoji: variation selector, ZWJ sequence and a flag", async () => {
+    const name = "\u2764\ufe0f \u{1f468}\u200d\u{1f469}\u200d\u{1f467} \u{1f1e9}\u{1f1ea} Team";
+    await expectStored(name, name);
+  });
+
+  it("accepts code points next to the refused ranges (U+F900 after private use, U+FFFD, U+FDCF, U+FDF0)", async () => {
+    await expectStored("a\uf900b\ufffdc\ufdcfd\ufdf0e", "a\uf900b\ufffdc\ufdcfd\ufdf0e");
+  });
+
+  it.each([
+    ["Thai with vowel and tone marks", "\u0e17\u0e35\u0e21\u0e44\u0e17\u0e22"],
+    ["Arabic with harakat", "\u0641\u064e\u0631\u0650\u064a\u0642"],
+    ["a keycap emoji", "Team 1\ufe0f\u20e3"],
+  ])("accepts %s", async (_label, name) => {
+    await expectStored(name, name);
+  });
+
+  it("accepts inner spaces and a name with Hangul syllables", async () => {
+    await expectStored("Team  \ud300 A", "Team  \ud300 A");
   });
 
   it("accepts a name that only contains a format character next to visible text", async () => {
