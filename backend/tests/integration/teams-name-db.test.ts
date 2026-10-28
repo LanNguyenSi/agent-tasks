@@ -97,6 +97,25 @@ describe("team names (real database)", () => {
     expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
   });
 
+  it.each([
+    ["Hangul filler U+3164", "\u3164"],
+    ["braille blank U+2800", "\u2800"],
+    ["combining mark only", "\u0301"],
+    ["variation selector only", "\ufe0f"],
+    ["private use U+E000", "\ue000"],
+    ["noncharacter U+FFFE", "\ufffe"],
+    ["bidi override inside a name", "abc\u202edef"],
+    ["line separator inside a name", "a\u2028b"],
+  ])("answers 400 for %s on both routes and writes nothing", async (_label, name) => {
+    const created = await post(name, "invisible-team");
+    expect(created.status).toBe(400);
+    expect(await pg.db.team.findUnique({ where: { slug: "invisible-team" } })).toBeNull();
+
+    const renamed = await patch(name);
+    expect(renamed.status).toBe(400);
+    expect((await pg.db.team.findUniqueOrThrow({ where: { id: teamId } })).name).toBe("Original");
+  });
+
   it("stores an accepted name trimmed, with accents and inner spaces intact", async () => {
     const created = await post("  Café  Team  ", "cafe-team");
     expect(created.status).toBe(201);

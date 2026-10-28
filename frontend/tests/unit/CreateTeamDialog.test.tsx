@@ -130,6 +130,14 @@ describe("New team dialog", () => {
     ["zero-width-space-only", "\u200b\u200b"],
     ["NBSP-only", "\u00a0"],
     ["format characters and whitespace", " \u200b \ufeff"],
+    ["Hangul filler U+3164", "\u3164"],
+    ["Hangul filler U+115F", "\u115f"],
+    ["Hangul filler U+1160", "\u1160"],
+    ["halfwidth Hangul filler U+FFA0", "\uffa0"],
+    ["braille blank U+2800", "\u2800"],
+    ["combining marks only", "\u0301\u0302"],
+    ["variation selector only", "\ufe0f"],
+    ["combining grapheme joiner only", "\u034f"],
   ])("a %s name cannot be created, not even by submitting the form", (_label, name) => {
     render(<AppHeader user={USER} teams={[T1]} />);
     openFromAccount();
@@ -139,6 +147,14 @@ describe("New team dialog", () => {
     expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
     fireEvent.submit(screen.getByLabelText("Team name").closest("form")!);
     expect(createTeam).not.toHaveBeenCalled();
+  });
+
+  it("a base letter with a combining mark is not blank and can be created", () => {
+    render(<AppHeader user={USER} teams={[T1]} />);
+    openFromAccount();
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "e\u0301" } });
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "second" } });
+    expect(screen.getByRole("button", { name: "Create team" })).toBeEnabled();
   });
 
   it("sends the trimmed name", async () => {

@@ -251,6 +251,14 @@ describe("team name card: validation", () => {
     ["zero-width-space-only", "\u200b"],
     ["NBSP-only", "\u00a0\u00a0"],
     ["format-characters-and-whitespace-only", " \u200b \ufeff "],
+    ["Hangul-filler-only", "\u3164"],
+    ["Hangul-choseong-filler-only", "\u115f"],
+    ["Hangul-jungseong-filler-only", "\u1160"],
+    ["halfwidth-Hangul-filler-only", "\uffa0"],
+    ["braille-blank-only", "\u2800"],
+    ["combining-marks-only", "\u0301\u0302"],
+    ["variation-selector-only", "\ufe0f"],
+    ["combining-grapheme-joiner-only", "\u034f"],
   ])("cannot save an %s name, not even by submitting the form", async (_label, text) => {
     const user = userEvent.setup();
     await renderPage("ADMIN");
@@ -271,9 +279,17 @@ describe("team name card: validation", () => {
     expect(mockRenameTeam).not.toHaveBeenCalled();
   });
 
-  it("limits the input to the server's 100 characters", async () => {
+  it("sets no maxlength: it counts UTF-16 units and would refuse emoji names the server accepts", async () => {
     await renderPage("ADMIN");
-    expect(nameInput()).toHaveAttribute("maxlength", "100");
+    expect(nameInput()).not.toHaveAttribute("maxlength");
+  });
+
+  it("can save a base letter with a combining mark (not blank)", async () => {
+    const user = userEvent.setup();
+    await renderPage("ADMIN");
+    await user.clear(nameInput());
+    await user.type(nameInput(), "Cafe\u0301");
+    expect(saveButton()).toBeEnabled();
   });
 });
 
