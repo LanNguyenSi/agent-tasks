@@ -22,11 +22,14 @@ GET  /api/auth/github/callback
 
 # Teams (humans)
 GET  /api/teams
-POST /api/teams
+POST /api/teams                   # Create (body { name, slug }; name rule below)
 GET  /api/teams/:id
-PATCH /api/teams/:id              # Rename (team admins; body { name }, trimmed, 1-100 chars; the slug never changes)
+PATCH /api/teams/:id              # Rename (team admins; body { name }, same name rule; the slug never changes)
 POST /api/teams/:id/members
 POST /api/teams/:id/sync          # GitHub repo sync
+# Team name rule (create and rename): trimmed, at most 100 code points, no control characters
+# (NUL, newline, tab, other C0/C1), and not empty once whitespace and format characters
+# (zero-width space) are removed. A refusal is a 400 with the first failed rule in `message`.
 
 # Agent Tokens (team admins)
 GET   /api/agent-tokens/scopes     # Scope catalog (no team required)
