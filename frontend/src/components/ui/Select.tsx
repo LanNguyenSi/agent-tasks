@@ -208,7 +208,12 @@ export default function Select({
             aria-controls={open ? `${id}-list` : undefined}
             aria-activedescendant={open && activeIndex >= 0 && activeIndex < visible.length ? `${id}-opt-${activeIndex}` : undefined}
             aria-disabled={disabled || undefined}
-            aria-describedby={ariaDescribedBy}
+            // After a pick the input is empty (value === query) and the visible
+            // label is aria-hidden, so the chosen task reaches assistive tech as
+            // the field's description.
+            aria-describedby={
+              [ariaDescribedBy, chosen && !open ? `${id}-chosen` : undefined].filter(Boolean).join(" ") || undefined
+            }
             readOnly={disabled}
             value={query}
             placeholder={chosen ? optionText(chosen) : (selected?.label ?? placeholder)}
@@ -223,7 +228,7 @@ export default function Select({
           {chosen && !open && (
             // Visual twin of the placeholder (which stays for assistive tech):
             // only the title truncates, id and status always stay visible.
-            <span className="select-search-chosen" aria-hidden="true">
+            <span id={`${id}-chosen`} className="select-search-chosen" aria-hidden="true">
               <span className="select-search-chosen-label">{chosen.label}</span>
               {chosen.detail && <span className="select-search-chosen-detail">({chosen.detail})</span>}
             </span>

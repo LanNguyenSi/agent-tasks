@@ -2181,6 +2181,12 @@ html:not([data-theme="light"]) .prose-markdown a {
   white-space: nowrap;
 }
 
+/* On the highlighted row --muted on --surface-active falls below 4.5:1 in dark
+   mode; the secondary text token keeps the detail readable there. */
+.select-option--active .select-option-detail {
+  color: var(--text-secondary);
+}
+
 /* ── CollapsibleSection ───────────────────────────────────────── */
 
 .collapsible-section {

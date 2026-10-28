@@ -190,6 +190,15 @@ describe("Select searchable", () => {
     expect(container.querySelector(".select-search-chosen-detail")?.textContent).toBe("(cccc3333 · open)");
   });
 
+  it("announces the chosen option as the field's accessible description after a pick", async () => {
+    render(<Harness />);
+    const input = screen.getByRole("combobox");
+    expect(input).not.toHaveAccessibleDescription();
+    await userEvent.type(input, "docs{Enter}");
+    expect(input).toHaveAccessibleDescription(/Write Docs/);
+    expect(input).toHaveAccessibleDescription(/cccc3333 · open/);
+  });
+
   it("matches ids by prefix only, never inside the id", async () => {
     render(
       <Select
