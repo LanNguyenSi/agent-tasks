@@ -133,7 +133,7 @@ routes with the legacy rule (`routes/grounding-github.ts:82`,
 handler's own 403, the attempt and migration routes with a lock-free read
 before the task lock (`grounding-attempts.ts:78`,
 `services/grounding-migration.ts:44`), and the creation router before it looks
-at the `creationPolicy` selection (`routes/grounding-creation.ts:36`). The
+at the `creationPolicy` selection (`routes/grounding-creation.ts:37`). The
 principal differences from the unconfigured app are the boundary and in-scope
 refusals, the refusal of renamed or transferred repository writes, the
 agent-scope admission check that runs first, a transient

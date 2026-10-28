@@ -550,9 +550,9 @@ export const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
   // A state name of the project's (or the pinned) workflow, or "backlog". The
-  // schema only bounds the string: the route checks the name against the
-  // workflow's states (statusInputError), since a custom workflow carries its
-  // own vocabulary.
+  // schema accepts any value: the route judges it against the workflow's
+  // states (statusInputError), since a custom workflow carries its own
+  // vocabulary.
   status: statusNameSchema.optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
   workflowId: z.guid().optional(),
@@ -598,8 +598,8 @@ export const updateTaskSchema = z.object({
   // passes this schema so the handler can see it, but every other from-state
   // still 400s there for the same reason as "abandoned" (no workflow
   // definition declares a transition into "backlog").
-  // The schema only bounds the string; the handler checks it against the
-  // task's effective workflow plus backlog and abandoned (statusInputError).
+  // The schema accepts any value; the handler judges it against the task's
+  // effective workflow plus backlog and abandoned (statusInputError).
   status: statusNameSchema.optional(),
   dueAt: isoDatetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
