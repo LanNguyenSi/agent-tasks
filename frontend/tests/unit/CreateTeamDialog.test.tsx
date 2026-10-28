@@ -21,6 +21,7 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import AppHeader from "../../src/components/AppHeader";
+import CreateTeamForm from "../../src/components/CreateTeamForm";
 import { createTeam } from "../../src/lib/api";
 
 const USER = { login: "lan", avatarUrl: null };
@@ -113,6 +114,43 @@ describe("New team dialog", () => {
     expect(routerMocks.replace).not.toHaveBeenCalled();
   });
 
+  it("shows the server's name-rule message from a 400 and keeps the dialog open", async () => {
+    vi.mocked(createTeam).mockRejectedValue(new Error("Team name must not contain control characters"));
+    render(<AppHeader user={USER} teams={[T1]} />);
+    openFromAccount();
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+    await screen.findByText("Team name must not contain control characters");
+    expect(within(screen.getByRole("dialog", { name: "New team" })).getByLabelText("Team name")).toBeInTheDocument();
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["whitespace-only", "   "],
+    ["zero-width-space-only", "\u200b\u200b"],
+    ["NBSP-only", "\u00a0"],
+    ["format characters and whitespace", " \u200b \ufeff"],
+  ])("a %s name cannot be created, not even by submitting the form", (_label, name) => {
+    render(<AppHeader user={USER} teams={[T1]} />);
+    openFromAccount();
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: name } });
+    // A slug is filled in by hand, so only the name can block the button.
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "second" } });
+    expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
+    fireEvent.submit(screen.getByLabelText("Team name").closest("form")!);
+    expect(createTeam).not.toHaveBeenCalled();
+  });
+
+  it("sends the trimmed name", async () => {
+    vi.mocked(createTeam).mockResolvedValue(team("t9", "Second"));
+    render(<AppHeader user={USER} teams={[T1]} />);
+    openFromAccount();
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "  Second Team  " } });
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "second-team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+    await waitFor(() => expect(createTeam).toHaveBeenCalledWith({ name: "Second Team", slug: "second-team" }));
+  });
+
   it("success remembers the new team, opens its Home and closes the dialog", async () => {
     vi.mocked(createTeam).mockResolvedValue(team("t9", "Second"));
     render(<AppHeader user={USER} teams={[T1]} />);
@@ -132,5 +170,25 @@ describe("New team dialog", () => {
     expect(link.getAttribute("href")).toBe("/onboarding");
     expect(screen.queryByRole("menuitem", { name: "New team" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("first-team form (no Cancel row)", () => {
+  it.each([
+    ["whitespace-only", "   "],
+    ["zero-width-space-only", "\u200b"],
+  ])("a %s name keeps the full-width Create team button disabled", (_label, name) => {
+    render(<CreateTeamForm />);
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: name } });
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "first" } });
+    expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
+    fireEvent.submit(screen.getByLabelText("Team name").closest("form")!);
+    expect(createTeam).not.toHaveBeenCalled();
+  });
+
+  it("enables it for a real name", () => {
+    render(<CreateTeamForm />);
+    fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "First" } });
+    expect(screen.getByRole("button", { name: "Create team" })).toBeEnabled();
   });
 });

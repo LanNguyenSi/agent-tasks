@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidate } from "../lib/z-validate.js";
+import { teamNameSchema } from "../lib/team-name.js";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
@@ -12,7 +13,7 @@ import { ensureDefaultBoardForProject } from "../services/board-default.js";
 export const teamRouter = new Hono<{ Variables: AppVariables }>();
 
 const createTeamSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: teamNameSchema,
   slug: z
     .string()
     .min(1)
@@ -20,11 +21,10 @@ const createTeamSchema = z.object({
     .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with dashes"),
 });
 
-// Same rule as `createTeamSchema.name`, applied after trimming: a name that is
-// only whitespace is empty and rejected. The slug is not part of the body and
-// never changes on rename.
+// The same name rule as team creation (`teamNameSchema`, lib/team-name.ts).
+// The slug is not part of the body and never changes on rename.
 const renameTeamSchema = z.object({
-  name: z.string().trim().min(1).max(100),
+  name: teamNameSchema,
 });
 
 function toSlug(value: string): string {
@@ -84,7 +84,7 @@ teamRouter.get("/teams", async (c) => {
 
 // ── Create team ───────────────────────────────────────────────────────────────
 
-teamRouter.post("/teams", zValidate("json", createTeamSchema), async (c) => {
+teamRouter.post("/teams", zValidate("json", createTeamSchema, { message: true }), async (c) => {
   const actor = c.get("actor");
 
   if (actor.type !== "human") {
@@ -149,7 +149,7 @@ teamRouter.get("/teams/:id", async (c) => {
 
 // ── Rename team ───────────────────────────────────────────────────────────────
 
-teamRouter.patch("/teams/:id", zValidate("json", renameTeamSchema), async (c) => {
+teamRouter.patch("/teams/:id", zValidate("json", renameTeamSchema, { message: true }), async (c) => {
   const actor = c.get("actor");
 
   if (actor.type !== "human") {

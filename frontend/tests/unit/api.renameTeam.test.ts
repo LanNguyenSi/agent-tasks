@@ -4,7 +4,7 @@
  * bare Team, and that a backend rejection surfaces as an `ApiRequestError`.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { renameTeam, ApiRequestError, type Team } from "../../src/lib/api";
+import { createTeam, renameTeam, ApiRequestError, type Team } from "../../src/lib/api";
 
 const realFetch = globalThis.fetch;
 
@@ -65,5 +65,27 @@ describe("renameTeam", () => {
       message: "Only team admins can rename the team",
     });
     await expect(renameTeam("team-1", "Nope")).rejects.toBeInstanceOf(ApiRequestError);
+  });
+
+  it("surfaces the name-rule message of a 400 as the error message", async () => {
+    // The team routes add a top-level `message` to the shared validation body.
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        success: false,
+        error: { issues: [{ message: "Team name must not be empty" }], name: "ZodError" },
+        message: "Team name must not be empty",
+      }),
+    })) as unknown as typeof fetch;
+
+    await expect(renameTeam("team-1", "\u200b")).rejects.toMatchObject({
+      status: 400,
+      message: "Team name must not be empty",
+    });
+    await expect(createTeam({ name: "\u200b", slug: "x" })).rejects.toMatchObject({
+      status: 400,
+      message: "Team name must not be empty",
+    });
   });
 });
