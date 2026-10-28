@@ -7,8 +7,8 @@
  * visible count badge (the same tinted count-Badge pattern every other
  * column already uses in its header).
  */
-import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, within, fireEvent } from "@testing-library/react";
 import BoardView from "../../src/components/dashboard/BoardView";
 import type { Task } from "../../src/lib/api";
 
@@ -184,6 +184,35 @@ describe("BoardView -- column jump bar", () => {
       "#db-col-review",
       "#db-col-done",
     ]);
+  });
+
+  // Activation is handled in JS: the column scrolls into view and its heading
+  // (tabIndex -1) takes focus, so the next Tab continues from the column. The
+  // default anchor navigation is prevented, so no #db-col-* hash is ever
+  // written (a stale hash also survived the Board to List toggle before).
+  it("chip activation scrolls the column into view, focuses its heading, and writes no hash", () => {
+    window.history.replaceState(null, "", "/projects/p1/board");
+    const scrollIntoView = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      renderBoard();
+      const nav = screen.getByRole("navigation", { name: "Jump to column" });
+      // fireEvent returns false exactly when the handler prevented the
+      // default, i.e. the anchor's hash navigation never happened.
+      const notCancelled = fireEvent.click(
+        within(nav).getByRole("link", { name: "Jump to Open, 1 task" }),
+      );
+      const column = document.getElementById("db-col-open");
+      expect(column).not.toBeNull();
+      expect(notCancelled).toBe(false);
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(column!.querySelector(".db-col-title")).toHaveFocus();
+      expect(window.location.hash).toBe("");
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      window.history.replaceState(null, "", "/");
+    }
   });
 });
 

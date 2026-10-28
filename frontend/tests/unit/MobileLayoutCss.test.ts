@@ -4,7 +4,7 @@
  * applies), the bands that share the page's left edge take their side padding
  * from --page-gutter, long unbroken text wraps instead of widening the page,
  * the scope tabs scroll inside their own strip, and the board column jump bar
- * exists only below 640px.
+ * exists exactly while the columns are stacked (up to 760px).
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -104,9 +104,9 @@ describe("no sideways scroll from long content", () => {
 });
 
 describe("board column jump bar", () => {
-  it("is hidden by default and shown only under 640px", () => {
+  it("is hidden by default and shown exactly while the columns are stacked (to 760px)", () => {
     expect(rule(".db-jump")).toMatch(/display:\s*none/);
-    const narrow = media("(max-width: 639px)");
+    const narrow = media("(max-width: 760px)");
     expect(narrow.body).toMatch(/\.db-jump \{[^}]*display:\s*flex/);
     expect(narrow.body).toMatch(/\.db-jump \{[^}]*position:\s*sticky/);
     // The sticky toolbar would cover the bar, so it scrolls away when stacked.
@@ -114,13 +114,13 @@ describe("board column jump bar", () => {
   });
 
   it("sticks right below the app header, and a jumped-to column lands below both bars", () => {
-    const narrow = media("(max-width: 639px)");
+    const narrow = media("(max-width: 760px)");
     expect(narrow.body).toMatch(/\.db-jump \{[^}]*top:\s*var\(--app-header-height\)/);
     expect(narrow.body).toMatch(/\.db-col \{[^}]*scroll-margin-top:\s*calc\(var\(--app-header-height\) \+ \d+px\)/);
   });
 
   it("is declared after the base rules it relies on (page-header sticky)", () => {
     const sticky = topRules(".page-header")[0]!;
-    expect(media("(max-width: 639px)").at).toBeGreaterThan(sticky.at);
+    expect(media("(max-width: 760px)").at).toBeGreaterThan(sticky.at);
   });
 });

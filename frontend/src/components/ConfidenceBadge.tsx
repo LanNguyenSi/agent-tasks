@@ -3,9 +3,10 @@
 // Spec-completeness badge: shows a named
 // short score ("Spec 96", no "/100") so the value is recognisable and never
 // confused with task priority; the tier words are `complete` / `partial` /
-// `thin`, never low/medium/high. The `title` tooltip doubles as the
-// accessible description (aria-label supplies the name, title the
-// description), so the tier encoding is not color-only.
+// `thin`, never low/medium/high. The badge is a role="img" whose aria-label
+// carries the score, tier and the full tooltip explanation (readable without
+// hover, so on touch too); the `title` stays as the hover tooltip and
+// accessible description. The tier encoding is not color-only.
 //
 // Tiers are threshold-relative: `complete` = score >= threshold, `thin` =
 // score below half the threshold, `partial` in between. When the threshold
@@ -61,11 +62,16 @@ export default function ConfidenceBadge({
 }: ConfidenceBadgeProps) {
   const tier = getConfidenceTier(score, threshold);
 
+  // role="img": a bare span may not carry aria-label (axe
+  // aria-prohibited-attr). The name carries the whole explanation the title
+  // shows, so a touch screen reader reads it without hover; the title stays
+  // as the pointer-hover tooltip and accessible description.
   return (
     <span
+      role="img"
       tabIndex={tabIndex}
       title={getConfidenceTooltip(threshold)}
-      aria-label={`Spec ${score}, ${TIER_LABEL[tier]}`}
+      aria-label={`Spec ${score}, ${TIER_LABEL[tier]}. ${getConfidenceTooltip(threshold)}`}
       className={[
         "status-chip",
         "confidence-badge",
