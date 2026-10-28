@@ -134,12 +134,14 @@ async function callSelf(
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
-const transitionStatusEnum = z.enum([
-  "open",
-  "in_progress",
-  "review",
-  "done",
-]);
+// A state name of the task's workflow. The backend checks it against the
+// workflow's transitions (400 "Transition from ... is not allowed by
+// workflow" for an unknown name), so the vocabulary is not fixed here.
+const transitionStatus = z.string().min(1).max(100);
+// A status filter value: a state name of the searched project's or team's
+// workflow, or backlog / abandoned. The backend answers an unknown name with
+// 400 and the list of accepted names.
+const filterStatus = z.string().min(1).max(100);
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 const uuid = () => z.guid();
 
@@ -245,7 +247,7 @@ function buildServer(token: string): McpServer {
         "List tasks visible to the authenticated actor.\n\n" +
         "Default behaviour (no filters): claimable tasks only — status=open, not yet claimed, scoped to the actor's team.\n\n" +
         "Filters that broaden the search beyond claimable:\n" +
-        "  • status: one or more of open|in_progress|review|done|abandoned. When set, the implicit 'unclaimed' constraint is dropped so already-claimed tasks are reachable.\n" +
+        "  • status: one or more state names of the project's workflow (open|in_progress|review|done in the built-in one), backlog or abandoned; an unknown name is a 400. When set, the implicit 'unclaimed' constraint is dropped so already-claimed tasks are reachable.\n" +
         "  • claimedByAgentId: a UUID, or the magic value 'me' which resolves to the calling agent's tokenId. Drops the unclaimed constraint.\n" +
         "  • priority: one or more of LOW|MEDIUM|HIGH|CRITICAL.\n" +
         "  • labels: AND-match — only tasks carrying every listed label are returned.\n" +
@@ -259,8 +261,8 @@ function buildServer(token: string): McpServer {
         projectId: uuid().optional(),
         status: z
           .union([
-            z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"]),
-            z.array(z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"])).min(1),
+            filterStatus,
+            z.array(filterStatus).min(1),
           ])
           .optional(),
         priority: z
@@ -545,7 +547,7 @@ function buildServer(token: string): McpServer {
         "Transition a task to a new status. Preconditions from the task's workflow (branchPresent, prMerged, ciGreen, …) are enforced server-side. Use force=true with a forceReason only when you have explicit authorization to bypass gates.",
       inputSchema: {
         taskId: uuid(),
-        status: transitionStatusEnum,
+        status: transitionStatus,
         force: z.boolean().optional(),
         forceReason: z.string().max(500).optional(),
       },
