@@ -11,10 +11,9 @@ import { Button } from "../ui/Button";
 import Card from "../ui/Card";
 import FormField from "../ui/FormField";
 
-// Mirrors the server's 100 limit (PATCH /api/teams/:id). The server counts
-// code points, the input's maxLength counts UTF-16 units, so for astral
-// characters (emoji) the input is stricter than the server, never looser.
-const MAX_NAME_LENGTH = 100;
+// The input sets no maxLength: the attribute counts UTF-16 units while the
+// server's 100 limit counts code points, so it would refuse astral characters
+// (emoji) the server accepts. The server's 400 message is shown instead.
 
 interface TeamNameSectionProps {
   team: Team;
@@ -72,7 +71,6 @@ export default function TeamNameSection({ team, onRenamed }: TeamNameSectionProp
                   setValue(e.target.value);
                   setSaved(false);
                 }}
-                maxLength={MAX_NAME_LENGTH}
                 required
                 className="settings-input"
                 autoComplete="off"
