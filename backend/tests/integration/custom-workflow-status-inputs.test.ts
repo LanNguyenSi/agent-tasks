@@ -458,3 +458,78 @@ describe("GET /teams/:teamId/tasks priority count", () => {
     expect(body.counts.priority).toBe(3);
   });
 });
+
+describe("status values that are empty, over-long or not a string", () => {
+  const odd: [string, unknown][] = [["empty", ""], ["over-long", "x".repeat(101)], ["a number", 7], ["null", null]];
+
+  it.each(odd)("create answers a %s status with the old invalid_value issue", async (_label, value) => {
+    const projectId = await seedProject({ custom: false });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T", status: value });
+    expect(status).toBe(400);
+    expect(body.error.issues).toHaveLength(1);
+    expect(body.error.issues[0]).toMatchObject({ code: "invalid_value", path: ["status"], message: BUILTIN_CREATE_MESSAGE });
+    expect(await db.task.count({ where: { projectId } })).toBe(0);
+  });
+
+  it.each(odd)("import answers a %s status with the old invalid_value issue on tasks.<index>.status", async (_label, value) => {
+    const projectId = await seedProject({ custom: false });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks/import`, { tasks: [{ title: "A" }, { title: "B", status: value }] });
+    expect(status).toBe(400);
+    expect(body.error.issues[0]).toMatchObject({ code: "invalid_value", path: ["tasks", 1, "status"], message: BUILTIN_CREATE_MESSAGE });
+    expect(await db.task.count({ where: { projectId } })).toBe(0);
+  });
+
+  it.each(odd.filter(([label]) => label !== "null"))("PATCH answers a %s status with the old invalid_value message", async (_label, value) => {
+    const projectId = await seedProject({ custom: false });
+    const task = await seedTask(projectId, "open");
+    const { status, body } = await call(human, "PATCH", `/tasks/${task.id}`, { status: value });
+    expect(status).toBe(400);
+    expect(body.details.fieldErrors.status).toEqual(['Invalid option: expected one of "backlog"|"open"|"in_progress"|"review"|"done"|"abandoned"']);
+  });
+});
+
+describe("the order of the accepted names for a stored four-state definition", () => {
+  // The same four names as the built-in workflow, stored in another order.
+  const reordered = {
+    initialState: "open",
+    states: [
+      { name: "done", label: "Done", terminal: true },
+      { name: "review", label: "Review", terminal: false },
+      { name: "in_progress", label: "In progress", terminal: false },
+      { name: "open", label: "Open", terminal: false },
+    ],
+    transitions: [{ from: "open", to: "in_progress" }, { from: "in_progress", to: "review" }, { from: "review", to: "done" }],
+  };
+
+  it("lists them in the canonical order in the create, PATCH and filter messages", async () => {
+    const projectId = await seedProject({ custom: false });
+    await db.workflow.create({ data: { projectId, name: "reordered", isDefault: true, definition: reordered } });
+    const create = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T", status: "bogus" });
+    expect(create.body.error.issues[0].message).toBe(BUILTIN_CREATE_MESSAGE);
+    const task = await seedTask(projectId, "open");
+    const patch = await call(human, "PATCH", `/tasks/${task.id}`, { status: "bogus" });
+    expect(patch.body.details.fieldErrors.status[0]).toBe('Invalid option: expected one of "backlog"|"open"|"in_progress"|"review"|"done"|"abandoned"');
+    const filter = await call(human, "GET", `/projects/${projectId}/tasks?status=bogus`);
+    expect(filter.body.message).toBe("Invalid status 'bogus'. Expected one of: backlog, open, in_progress, review, done, abandoned");
+  });
+
+  it("keeps the stored order when the names are not the built-in set", async () => {
+    const projectId = await seedProject({ custom: true });
+    const create = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T", status: "bogus" });
+    expect(create.body.error.issues[0].message).toBe('Invalid option: expected one of "backlog"|"queued"|"working"|"checking"|"shipped"');
+  });
+});
+
+describe("a caller who may not write to the project and sends an unknown status", () => {
+  // The access answer comes before any judgement of the status, so a caller
+  // without access learns nothing about the project's workflow vocabulary.
+  it.each([["no access", () => accessMocks.hasProjectAccess.mockResolvedValue(false)], ["read-only role", () => accessMocks.requireProjectWrite.mockResolvedValue(false)]] as const)("create and import answer 403 for %s", async (_label, deny) => {
+    const projectId = await seedProject({ custom: true });
+    deny();
+    const create = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T", status: "bogus" });
+    expect(create.status).toBe(403);
+    const imported = await call(human, "POST", `/projects/${projectId}/tasks/import`, { tasks: [{ title: "T", status: "bogus" }] });
+    expect(imported.status).toBe(403);
+    expect(await db.task.count({ where: { projectId } })).toBe(0);
+  });
+});

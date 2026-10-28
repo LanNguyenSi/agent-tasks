@@ -363,3 +363,17 @@ it("HOOK changes requested on a task that is not in a review state of its workfl
   expect((await request(payload("changes_requested"))).status).toBe(200);
   expect(await reload(legacy.id)).toEqual(before);
 });
+
+it.each(["issue_closed", "merged"] as const)("HOOK a stored definition without a terminal state writes nothing on %s and keeps both claims", async kind => {
+  // The workflow API refuses such a definition, so it is stored directly.
+  // terminalTargetFrom falls back to the literal done there; done is not a
+  // state of this workflow, so the webhook must not write it.
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  await customWorkflow();
+  await store.db.workflow.updateMany({ where: { projectId: f.projectId }, data: { definition: { initialState: "queued", states: CUSTOM_STATES.filter(state => !state.terminal), transitions: [{ from: "queued", to: "working" }, { from: "working", to: "checking" }] } } });
+  const legacy = await bothClaims("checking"); await signal(legacy.id);
+  const before = await reload(legacy.id);
+  expect((await request(payload(kind))).status).toBe(200);
+  expect(await reload(legacy.id)).toEqual(before);
+  expect((await store.db.signal.findFirstOrThrow({ where: { taskId: legacy.id } })).acknowledgedAt).toBeNull();
+});

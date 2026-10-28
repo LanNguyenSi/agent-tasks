@@ -541,10 +541,10 @@ const deliverableRepoSchema = z
   .max(255)
   .regex(/^[^/\s]+\/[^/\s]+$/, "deliverableRepo must be in 'owner/repo' format");
 
-// A task status name as it arrives on a write: any non-empty string of a sane
-// length. Which names are valid depends on the workflow of the task or project,
-// so the routes check the name against it right after the body is parsed.
-const statusNameSchema = z.string().min(1).max(100);
+// A task status name as it arrives on a write. Deliberately unchecked here: the routes judge it against
+// the workflow (statusInputError), and a value of any kind (empty, over-long, not a string) still gets the
+// single invalid_value issue the old fixed list gave; that issue does not echo the value.
+const statusNameSchema = z.custom<string>(() => true);
 
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(255),

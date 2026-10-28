@@ -7,7 +7,7 @@ import { requireGroundingCohort } from "./grounding-cohort.js";
 import { GroundingAccessError, groundingWorkflow, unavailable, type GroundingTask } from "./grounding-context.js";
 import type { GroundingAttemptsService } from "./grounding-attempts.js";
 import type { GroundingCreationPolicy } from "../routes/grounding-creation.js";
-import { BACKLOG_STATE, isReviewState, isTerminalState, requestChangesTarget, resolveEffectiveDefinition, terminalTargetFrom } from "./default-workflow.js";
+import { BACKLOG_STATE, isKnownState, isReviewState, isTerminalState, requestChangesTarget, resolveEffectiveDefinition, terminalTargetFrom } from "./default-workflow.js";
 import { logger } from "../lib/logger.js";
 import { GroundingReceiptVerificationError } from "./grounding-receipt.js";
 import { GroundingDecisionError, groundingTransaction, lockGroundingProjects, lockGroundingTaskUnderProject } from "./grounding-transaction.js";
@@ -205,7 +205,10 @@ export class GroundingGithubWebhookService {
       }
       // Every state this handler writes or compares comes from the task's own
       // effective workflow (pinned workflow, else the project default, else the
-      // built-in one), as the legacy webhook does.
+      // built-in one), as the legacy webhook does. This is deliberately the
+      // legacy resolver and not groundingWorkflow: a task that is not
+      // provisioned for Grounding is handled here exactly as the legacy webhook
+      // handles it, so both resolve the same definition for it.
       const def = await resolveEffectiveDefinition(task, tx);
       const enrollment = await this.enrollment(tx, task);
       if (!enrollment.provisioned && (isTerminalState(def, task.status) || task.status === BACKLOG_STATE)) continue;
@@ -240,9 +243,18 @@ export class GroundingGithubWebhookService {
       } else if (event.kind === "pr_reopened" && match.strength === "EXACT" && await this.changedHead(tx, task, event)) {
         changes.push({ task, patch: {}, headChanged: true });
       } else if (positive) {
+        // issue_closed ends the task along the approve edge out of its current
+        // state when there is one, else in the workflow's first terminal state
+        // (terminalTargetFrom); a workflow with several terminal states can
+        // therefore end in a different one than the first, which is the choice
+        // the review approve makes too. A target that is not a state of the
+        // definition (terminalTargetFrom falls back to the literal done for a
+        // definition without a terminal state) writes nothing, as the legacy
+        // webhook does.
         const target = event.kind === "issue_closed" ? terminalTargetFrom(def, task.status) : pickMergeTargetStatus({ project: task.project, currentStatus: task.status, definition: def });
-        const terminal = target !== null && isTerminalState(def, target);
-        if (target && target !== task.status) changes.push({ task, patch: { status: target }, terminalStatus: terminal });
+        const known = target !== null && isKnownState(def, target);
+        const terminal = known && isTerminalState(def, target);
+        if (known && target !== task.status) changes.push({ task, patch: { status: target }, terminalStatus: terminal });
         if (terminal) acknowledge.push(task.id);
       }
       observations.push({ match, pending: false, reason: "external_observation", operationId: enrollment.operationId });

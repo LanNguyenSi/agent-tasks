@@ -48,12 +48,17 @@ function stateNames(def: WorkflowDefinitionShape): string[] {
  */
 export function statusVocabulary(names: Iterable<string>, opts: { withAbandoned: boolean }): string[] {
   const seen = new Set<string>([BACKLOG_STATE, ABANDONED_STATE]);
-  const out: string[] = [BACKLOG_STATE];
+  let out: string[] = [BACKLOG_STATE];
   for (const name of names) {
     if (seen.has(name)) continue;
     seen.add(name);
     out.push(name);
   }
+  // A stored four-state definition may list its states in another order than
+  // the built-in one. The accepted set is then the built-in set, so the 400
+  // message names it in the canonical order, as the old fixed list did.
+  const canonical = [BACKLOG_STATE, ...stateNames(defaultWorkflowDefinition())];
+  if (out.length === canonical.length && canonical.every((name) => seen.has(name))) out = canonical;
   if (opts.withAbandoned) out.push(ABANDONED_STATE);
   return out;
 }
