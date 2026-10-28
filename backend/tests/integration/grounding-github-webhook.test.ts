@@ -319,6 +319,17 @@ it.each(["merged", "issue_closed"] as const)("HOOK a task already in the custom 
   const before = await reload(legacy.id);
   expect((await request(payload(kind))).status).toBe(200);
   expect(await reload(legacy.id)).toEqual(before);
+  // A finished task is skipped before any observation is recorded for it.
+  expect(await store.db.groundingGithubObservation.count({ where: { taskId: legacy.id } })).toBe(0);
+});
+
+it("HOOK an unpromoted backlog task is never moved by a webhook event", async () => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  const draft = await store.db.task.update({ where: { id: (await unprovisioned("backlog")).id }, data: { claimedByAgentId: null } });
+  const before = await reload(draft.id);
+  expect((await request(payload("issue_closed"), "issue")).status).toBe(200);
+  expect((await request(payload("merged"), "merge")).status).toBe(200);
+  expect(await reload(draft.id)).toEqual(before);
 });
 
 it("HOOK changes requested moves a review task along the workflow's request-changes edge, not to a literal in_progress", async () => {

@@ -312,6 +312,12 @@ describe("PATCH /tasks/:id status", () => {
     const projectId = await seedProject({ custom: true });
     const task = await seedTask(projectId, "working");
     expect((await call(human, "PATCH", `/tasks/${task.id}`, { status: "working", title: "Renamed" })).status).toBe(200);
+    // A status the workflow no longer has (a task left over from before a
+    // workflow switch) can still be echoed back: nothing changes, nothing is checked.
+    const stale = await seedTask(projectId, "in_progress");
+    const echo = await call(human, "PATCH", `/tasks/${stale.id}`, { status: "in_progress", title: "Stale" });
+    expect(echo.status).toBe(200);
+    expect(echo.body.task).toMatchObject({ status: "in_progress", title: "Stale" });
     // "abandoned" is a valid name, but only the backlog discard may write it.
     const abandoned = await call(human, "PATCH", `/tasks/${task.id}`, { status: "abandoned" });
     expect(abandoned.status).toBe(400);
