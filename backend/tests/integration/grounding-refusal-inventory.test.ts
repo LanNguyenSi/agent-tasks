@@ -358,7 +358,7 @@ const rows: Row[] = [
   { id: "RM", label: "TGA by a merge-only non-claimant on a role-gated terminal edge: the transition role, not the tasks:transition scope",
     run: async () => { await mergerOfReview(); await scopes(["github:pr_merge"]); await gatedWorkflow(edge => edge.to === "done"); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("The transition to done requires the HUMAN_MEMBER project role") },
-  { id: "RN", label: "TGA by a merge-only non-claimant that holds the review claim: the tasks:transition scope (a held claim keeps the scope refusal)",
+  { id: "RN", label: "TGA by a merge-only non-claimant that holds the review claim and has no merge consent: the tasks:transition scope, not the consent",
     run: async () => { await mergerOfReview(); await data({ reviewClaimedByAgentId: ids.agent }); await scopes(["github:pr_merge"]); await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrMerge: false } }); return app().fetch(request({ intent: "merge" }, task("grounding-attempts"), null)); },
     expected: refused("Token missing scope: tasks:transition") },
   { id: "RP", label: "TGA by a review-claim holder with only github:pr_merge on a review task with two terminal edges: the merge route's bad_state, not the tasks:transition scope",
