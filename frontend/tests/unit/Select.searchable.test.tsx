@@ -199,6 +199,24 @@ describe("Select searchable", () => {
     expect(input).toHaveAccessibleDescription(/cccc3333 · open/);
   });
 
+  it("keeps a caller-supplied description next to the chosen option", async () => {
+    function WithHint() {
+      const [v, setV] = useState("");
+      return (
+        <div>
+          <p id="dep-hint">Only tasks of this project</p>
+          <Select options={OPTIONS} value={v} onChange={setV} ariaLabel="Add blocker" searchable ariaDescribedBy="dep-hint" />
+        </div>
+      );
+    }
+    render(<WithHint />);
+    const input = screen.getByRole("combobox");
+    expect(input).toHaveAccessibleDescription("Only tasks of this project");
+    await userEvent.type(input, "docs{Enter}");
+    expect(input).toHaveAccessibleDescription(/Only tasks of this project/);
+    expect(input).toHaveAccessibleDescription(/Write Docs/);
+  });
+
   it("matches ids by prefix only, never inside the id", async () => {
     render(
       <Select
