@@ -30,9 +30,10 @@ POST /api/teams/:id/sync          # GitHub repo sync
 # Team name rule (create and rename): trimmed, at most 100 code points, no control characters
 # (NUL, newline, tab, other C0/C1), no unpaired UTF-16 surrogate, no line or paragraph separator (U+2028, U+2029)
 # or bidi control (U+202A-U+202E, U+2066-U+2069), no private-use or noncharacter code point, no tag character
-# (U+E0020-U+E007F), implicit direction mark (U+200E, U+200F, U+061C), interlinear annotation mark (U+FFF9-U+FFFB),
+# (U+E0020-U+E007F), except the exact England, Scotland and Wales subdivision flag sequences (U+1F3F4, tag letters, U+E007F),
+# implicit direction mark (U+200E, U+200F, U+061C), interlinear annotation mark (U+FFF9-U+FFFB),
 # invisible operator (U+2061-U+2064) or unassigned code point (\p{Cn}, e.g. U+0378, U+2065), and never more than
-# 4 combining marks on one character; not empty once
+# 8 combining marks on one character (counted per grapheme cluster, so zero-width joiners cannot split a stack); not empty once
 # whitespace, format characters (zero-width space), combining marks and variation selectors, the Hangul fillers
 # (U+115F, U+1160, U+3164, U+FFA0), U+2800 and U+FFFC are removed. A refusal is a 400 with the first failed rule in `message`.
 

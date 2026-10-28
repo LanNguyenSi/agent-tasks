@@ -11,11 +11,13 @@
  * inside the name are refused; a normal name keeps its inner spaces and
  * accents and is stored trimmed. An unpaired UTF-16 surrogate (JSON "\ud800")
  * is refused too: Prisma cannot send it to Postgres, so it used to be a 500.
- * Invisible smuggling characters (tag characters, the implicit direction marks,
- * interlinear annotation, invisible operators, unassigned code points) and
- * stacks of more than 4 combining marks are refused as well, and U+FFFC counts
- * as blank. The refinements are checked in order, so a name that breaks several
- * rules reports the first one only (`message` is the first failed rule).
+ * Invisible smuggling characters (tag characters except the England, Scotland
+ * and Wales subdivision flags, the implicit direction marks, interlinear
+ * annotation, invisible operators, unassigned code points) and stacks of more
+ * than 8 combining marks on one character (counted per grapheme cluster, so
+ * zero-width joiners cannot split a stack) are refused as well, and U+FFFC
+ * counts as blank. The refinements are checked in order, so a name that breaks
+ * several rules reports the first one only (`message` is the first failed rule).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
@@ -267,26 +269,60 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
     ["unassigned code point U+0378", "a\u0378b"],
     ["unassigned code point U+2065", "a\u2065b"],
     ["an unassigned code point alone", "\u0378"],
+    ["a tag run spelling a subdivision flag without the U+1F3F4 base", "a\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}b"],
+    ["U+1F3F4 and tag letters without the cancel tag U+E007F", "a\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}b"],
+    ["U+1F3F4 with an unknown subdivision region (gbxyz)", "a\u{1f3f4}\u{e0067}\u{e0062}\u{e0078}\u{e0079}\u{e007a}\u{e007f}b"],
+    ["the England flag followed by an extra lone tag character", `\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}\u{e0020}`],
   ])("400s %s", async (_label, name) => {
     await expectRejected(name, TEAM_NAME_INVISIBLE_MESSAGE);
   });
 
   it.each([
-    ["5 combining marks on one letter", `a${"\u0301".repeat(5)}`],
-    ["5 combining marks inside a name", `a${"\u0302".repeat(5)}b`],
-    ["5 combining marks at the end of a name", `Team${"\u0300".repeat(5)}`],
+    ["the England flag alone", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}"],
+    ["the Scotland flag alone", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}"],
+    ["the Wales flag alone", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0077}\u{e006c}\u{e0073}\u{e007f}"],
+  ])("accepts %s (a subdivision flag renders as a visible flag)", async (_label, name) => {
+    await expectStored(name, name);
+  });
+
+  it.each([
+    ["England", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}"],
+    ["Scotland", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}"],
+    ["Wales", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0077}\u{e006c}\u{e0073}\u{e007f}"],
+  ])("accepts a name around the %s flag", async (_label, flag) => {
+    const name = `Team ${flag} One`;
+    await expectStored(name, name);
+  });
+
+  it.each([
+    ["9 combining marks on one letter", `a${"\u0301".repeat(9)}`],
+    ["9 combining marks inside a name", `a${"\u0302".repeat(9)}b`],
+    ["9 combining marks at the end of a name", `Team${"\u0300".repeat(9)}`],
     ["a Zalgo stack of 99 combining marks", `a${"\u0301".repeat(99)}`],
-    ["5 marks twice in one name", `a${"\u0301".repeat(5)}b${"\u0300".repeat(6)}`],
+    ["9 marks twice in one name", `a${"\u0301".repeat(9)}b${"\u0300".repeat(10)}`],
+    ["40 marks in one cluster split by zero-width joiners", `a${"\u0301\u0302\u0303\u0304\u200d".repeat(10)}`],
+    ["40 marks in one cluster split by zero-width non-joiners", `a${"\u0301\u0302\u0303\u0304\u200c".repeat(10)}`],
   ])("400s %s", async (_label, name) => {
     await expectRejected(name, TEAM_NAME_MARKS_MESSAGE);
   });
 
-  it("accepts exactly 4 combining marks on one letter", async () => {
-    await expectStored(`a${"\u0301\u0302\u0303\u0304"}`, `a${"\u0301\u0302\u0303\u0304"}`);
+  it("accepts exactly 8 combining marks on one letter", async () => {
+    const name = `a${"\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308"}`;
+    await expectStored(name, name);
   });
 
-  it("accepts 4 marks on each of two letters (two runs of 4 stay under the cap)", async () => {
-    const name = `a${"\u0301\u0302\u0303\u0304"}b${"\u0300\u0301\u0302\u0303"}`;
+  it("accepts 5 combining marks on one letter (below the per-cluster cap of 8)", async () => {
+    const name = `a${"\u0301".repeat(5)}`;
+    await expectStored(name, name);
+  });
+
+  it("accepts 8 marks on each of two letters (two clusters of 8 are not one stack)", async () => {
+    const name = `a${"\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308"}b${"\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307"}`;
+    await expectStored(name, name);
+  });
+
+  it("accepts 9 marks over three letters (3 per cluster: the count is per cluster, not per name)", async () => {
+    const name = `a\u0301\u0302\u0303b\u0301\u0302\u0303c\u0301\u0302\u0303`;
     await expectStored(name, name);
   });
 
@@ -308,10 +344,10 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
     await expectRejected("\u{e0020}", TEAM_NAME_INVISIBLE_MESSAGE);
     // A tag character and a bidi override: direction is checked before invisible.
     await expectRejected("a\u202e\u{e0020}b", TEAM_NAME_DIRECTION_MESSAGE);
-    // A private-use character and 5 marks: unassigned is checked before the cap.
-    await expectRejected(`a\ue000${"\u0301".repeat(5)}`, TEAM_NAME_UNASSIGNED_MESSAGE);
-    // A tag character and 5 marks: invisible is checked before the cap.
-    await expectRejected(`a\u{e0020}${"\u0301".repeat(5)}`, TEAM_NAME_INVISIBLE_MESSAGE);
+    // A private-use character and 9 marks: unassigned is checked before the cap.
+    await expectRejected(`a\ue000${"\u0301".repeat(9)}`, TEAM_NAME_UNASSIGNED_MESSAGE);
+    // A tag character and 9 marks: invisible is checked before the cap.
+    await expectRejected(`a\u{e0020}${"\u0301".repeat(9)}`, TEAM_NAME_INVISIBLE_MESSAGE);
     // A NUL byte and an unassigned code point: control is checked first.
     await expectRejected(`a\u0000\u0378`, TEAM_NAME_CONTROL_MESSAGE);
   });
@@ -336,6 +372,8 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
   it.each([
     ["Thai with vowel and tone marks", "\u0e17\u0e35\u0e21\u0e44\u0e17\u0e22"],
     ["Arabic with harakat", "\u0641\u064e\u0631\u0650\u064a\u0642"],
+    ["Burmese with 5 marks over 2 clusters (လျှော့)", "\u{101c}\u{103b}\u{103e}\u{1031}\u{102c}\u{1037}"],
+    ["Burmese with 7 marks over 4 clusters (မျှော်လင့်)", "\u{1019}\u{103b}\u{103e}\u{1031}\u{102c}\u{103a}\u{101c}\u{1004}\u{1037}\u{103a}"],
     ["Devanagari", "टीम"],
     ["Vietnamese", "Nguyễn Văn"],
     ["Vietnamese in decomposed NFD form", "Nguyễn Văn".normalize("NFD")],

@@ -20,14 +20,19 @@ import { z } from "zod";
  *     and the last two code points of every plane), which render as nothing
  *     or as a box;
  *   - hold no tag character (U+E0020-U+E007F, which can carry an invisible
- *     ASCII payload), no implicit direction mark (U+200E, U+200F, U+061C), no
- *     interlinear annotation mark (U+FFF9-U+FFFB), no invisible operator
- *     (U+2061-U+2064) and no unassigned code point (`\p{Cn}`, for example
- *     U+0378, U+2065). Most of these are `\p{Cf}`, but the rest of `\p{Cf}`
- *     stays allowed inside a visible name: the zero-width joiner U+200D in an
- *     emoji sequence and the variation selector U+FE0F are valid;
- *   - hold no stack of more than 4 combining marks on one character (Zalgo
- *     text): `\p{M}{5,}` in u-mode counts code points, and exactly 4 is fine;
+ *     ASCII payload) except the three exact subdivision flag sequences of
+ *     England, Scotland and Wales (U+1F3F4, tag letters, U+E007F), no implicit
+ *     direction mark (U+200E, U+200F, U+061C), no interlinear annotation mark
+ *     (U+FFF9-U+FFFB), no invisible operator (U+2061-U+2064) and no unassigned
+ *     code point (`\p{Cn}`, for example U+0378, U+2065). Most of these are
+ *     `\p{Cf}`, but the rest of `\p{Cf}` stays allowed inside a visible name:
+ *     the zero-width joiner U+200D in an emoji sequence and the variation
+ *     selector U+FE0F are valid;
+ *   - hold no stack of more than 8 combining marks on one character (Zalgo
+ *     text): the name is split into grapheme clusters with `Intl.Segmenter`
+ *     and the `\p{M}` code points are counted per cluster, so zero-width
+ *     joiners cannot split a stack and Burmese syllables (five marks over two
+ *     clusters) stay valid; exactly 8 in one cluster is fine;
  *   - not be empty once the characters that render as nothing are removed:
  *     format characters (`\p{Cf}`, for example the zero-width space),
  *     whitespace, combining marks and variation selectors (`\p{M}`, so a
@@ -46,22 +51,50 @@ export const TEAM_NAME_DIRECTION_MESSAGE =
   "Team name must not contain line or paragraph separators or text direction controls";
 export const TEAM_NAME_UNASSIGNED_MESSAGE = "Team name must not contain private-use or noncharacter code points";
 export const TEAM_NAME_INVISIBLE_MESSAGE = "Team name must not contain invisible or unassigned characters";
-export const TEAM_NAME_MARKS_MESSAGE = "Team name must not stack more than 4 combining marks on one character";
+export const TEAM_NAME_MARKS_MESSAGE = "Team name must not stack more than 8 combining marks on one character";
 export const TEAM_NAME_LENGTH_MESSAGE = `Team name must be at most ${TEAM_NAME_MAX_LENGTH} characters`;
 
 /**
  * The invisible or smuggling code points refused anywhere in the name: the tag
- * characters U+E0020-U+E007F (they can carry an invisible ASCII payload), the
- * implicit direction marks U+200E, U+200F and U+061C, the interlinear annotation
- * marks U+FFF9-U+FFFB, the invisible operators U+2061-U+2064 and every
- * unassigned code point (`\p{Cn}`, e.g. U+0378). Most of them are `\p{Cf}`, but
- * the rest of `\p{Cf}` must stay valid inside a visible name (the zero-width
- * joiner U+200D, the variation selector U+FE0F), so `\p{Cf}` is not used here.
+ * characters U+E0020-U+E007F (they can carry an invisible ASCII payload, save
+ * for the subdivision flags below), the implicit direction marks U+200E, U+200F
+ * and U+061C, the interlinear annotation marks U+FFF9-U+FFFB, the invisible
+ * operators U+2061-U+2064 and every unassigned code point (`\p{Cn}`, e.g.
+ * U+0378). Most of them are `\p{Cf}`, but the rest of `\p{Cf}` must stay valid
+ * inside a visible name (the zero-width joiner U+200D, the variation selector
+ * U+FE0F), so `\p{Cf}` is not used here.
  */
 const INVISIBLE_CODE_POINTS = /[\u061c\u200e\u200f\u2061-\u2064\u{fff9}-\u{fffb}\u{e0020}-\u{e007f}]|\p{Cn}/u;
 
-/** 5 or more combining marks in a row (`u`-mode counts code points, not units). */
-const MARK_STACK = /\p{M}{5,}/u;
+/**
+ * The three RGI subdivision flag sequences that stay valid: England, Scotland
+ * and Wales, each U+1F3F4 followed by five tag letters and the cancel tag
+ * U+E007F. They are removed from the value before the invisible-character
+ * check only (the stored name keeps them); any other tag character, a tag run
+ * without the leading U+1F3F4, a partial sequence or one without U+E007F is
+ * still refused.
+ */
+const RGI_SUBDIVISION_FLAGS = [
+  "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}", // England
+  "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}", // Scotland
+  "\u{1f3f4}\u{e0067}\u{e0062}\u{e0077}\u{e006c}\u{e0073}\u{e007f}", // Wales
+];
+
+/** One `\p{M}` code point (`u`-mode counts code points, not UTF-16 units). */
+const COMBINING_MARK = /\p{M}/gu;
+
+/** A grapheme cluster with more combining marks than this is refused. */
+const MARK_CLUSTER_CAP = 8;
+
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** True when one grapheme cluster stacks more than `MARK_CLUSTER_CAP` marks. */
+function exceedsMarkCap(value: string): boolean {
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(value)) {
+    if ((segment.match(COMBINING_MARK) ?? []).length > MARK_CLUSTER_CAP) return true;
+  }
+  return false;
+}
 
 /** True for a noncharacter: U+FDD0-U+FDEF or a code point ending in FFFE/FFFF. */
 function hasNoncharacter(value: string): boolean {
@@ -79,8 +112,11 @@ export const teamNameSchema = z
   .refine((value) => !/\p{Cs}/u.test(value), TEAM_NAME_ENCODING_MESSAGE)
   .refine((value) => !/[\p{Zl}\p{Zp}\u202a-\u202e\u2066-\u2069]/u.test(value), TEAM_NAME_DIRECTION_MESSAGE)
   .refine((value) => !/\p{Co}/u.test(value) && !hasNoncharacter(value), TEAM_NAME_UNASSIGNED_MESSAGE)
-  .refine((value) => !INVISIBLE_CODE_POINTS.test(value), TEAM_NAME_INVISIBLE_MESSAGE)
-  .refine((value) => !MARK_STACK.test(value), TEAM_NAME_MARKS_MESSAGE)
+  .refine(
+    (value) => !INVISIBLE_CODE_POINTS.test(RGI_SUBDIVISION_FLAGS.reduce((v, flag) => v.replaceAll(flag, ""), value)),
+    TEAM_NAME_INVISIBLE_MESSAGE,
+  )
+  .refine((value) => !exceedsMarkCap(value), TEAM_NAME_MARKS_MESSAGE)
   .refine(
     (value) => value.replace(/[\p{Cf}\p{M}\s\u115f\u1160\u3164\uffa0\u2800\ufffc]/gu, "").length > 0,
     TEAM_NAME_EMPTY_MESSAGE,
