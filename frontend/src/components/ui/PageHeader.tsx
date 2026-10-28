@@ -29,8 +29,9 @@ interface PageHeaderProps {
    * Opt in when the summary can be arbitrarily long (a user-chosen name): the
    * title keeps its full width and the summary shrinks with an ellipsis
    * instead of pushing the band wider than the viewport. The text stays in
-   * the DOM, so assistive tech still reads all of it. Off by default: the
-   * summary then stays on one line at its natural width.
+   * the DOM, so assistive tech still reads all of it, and a string summary
+   * also gets the full text as `title` on the truncated element. Off by
+   * default: the summary then stays on one line at its natural width.
    */
   truncateSummary?: boolean;
   /** Right-aligned actions (buttons, toggles). */
@@ -62,7 +63,20 @@ export function PageHeader({
         )}
         <div className="page-header-title-row">
           <h1 className="page-header-title">{title}</h1>
-          {summary && <div className="page-header-summary">{summary}</div>}
+          {summary && (
+            // An ellipsised summary is unreadable past the ellipsis, so the
+            // truncated element carries the full text as a tooltip. Only
+            // then: without truncateSummary the text is never cut, and a
+            // non-string summary has no text to title.
+            <div
+              className="page-header-summary"
+              title={
+                truncateSummary && typeof summary === "string" ? summary : undefined
+              }
+            >
+              {summary}
+            </div>
+          )}
         </div>
       </div>
       {children && <div className="page-header-actions">{children}</div>}

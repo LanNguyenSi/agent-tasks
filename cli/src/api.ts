@@ -232,9 +232,8 @@ export async function getTask(config: Config, taskId: string): Promise<Task> {
 // forever. Hitting the cap without a match is disclosed to the caller (see
 // resolve.ts) rather than silently reported as "no such task" -- it may
 // just be further back than this search went.
-// "backlog" is included (D18 revision): the backend's `/tasks/claimable`
-// accepts it as an explicit-search-only status value (see
-// CLAIMABLE_VALID_STATUSES in backend/src/routes/tasks.ts) that does not
+// "backlog" is included (D18 revision): the backend's `/tasks/claimable` accepts it as an explicit-search-only
+// status value (checked per workflow, backend/src/services/task-status-input.ts) that does not
 // change claim eligibility -- a backlog task found this way is still 403
 // backlog_not_promoted at start/claim time until a human promotes it. This
 // only makes backlog tasks reachable by id-prefix search, which previously

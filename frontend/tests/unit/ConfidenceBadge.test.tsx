@@ -37,7 +37,39 @@ describe("ConfidenceBadge; visible name", () => {
 
   it("exposes the tier word in the accessible name (not color-only)", () => {
     render(<ConfidenceBadge score={10} threshold={60} />);
-    expect(screen.getByText(/^Spec 10/)).toHaveAttribute("aria-label", "Spec 10, thin");
+    expect(screen.getByText(/^Spec 10/).getAttribute("aria-label")).toContain("Spec 10, thin");
+  });
+});
+
+/**
+ * The badge is a role="img" (an aria-label on a role-less span is an
+ * aria-prohibited-attr violation), and its accessible name carries the whole
+ * explanation the title tooltip shows, so a touch screen reader reads it
+ * without hover. The visible text stays "Spec N, tier".
+ */
+describe("ConfidenceBadge; role=img with the explanation in the name", () => {
+  it("renders as role=img named by the badge text", () => {
+    render(<ConfidenceBadge score={96} threshold={60} />);
+    expect(screen.getByRole("img", { name: /^Spec 96, complete/ })).toBeInTheDocument();
+  });
+
+  it("known threshold: the name carries score, tier and the full explanation", () => {
+    render(<ConfidenceBadge score={96} threshold={60} />);
+    expect(screen.getByRole("img")).toHaveAccessibleName(
+      "Spec 96, complete. How complete the task spec is (0-100). Project threshold: 60.",
+    );
+  });
+
+  it("unknown threshold: the name carries the explanation without the threshold clause", () => {
+    render(<ConfidenceBadge score={42} />);
+    expect(screen.getByRole("img")).toHaveAccessibleName(
+      "Spec 42, partial. How complete the task spec is (0-100).",
+    );
+  });
+
+  it("visible text is unchanged (not the explanation)", () => {
+    render(<ConfidenceBadge score={96} threshold={60} />);
+    expect(screen.getByRole("img").textContent).toBe("Spec 96, complete");
   });
 });
 

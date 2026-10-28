@@ -2115,6 +2115,78 @@ html:not([data-theme="light"]) .prose-markdown a {
   color: var(--muted);
 }
 
+/* Searchable Select: text input replaces the button trigger. */
+.select-search {
+  position: relative;
+}
+
+.select-search-input {
+  cursor: text;
+  padding-right: calc(var(--space-2) + 22px);
+  text-overflow: ellipsis;
+}
+
+.select-search-input::placeholder {
+  color: var(--muted);
+}
+
+/* Chosen option: the placeholder text stays for assistive tech but is not
+   painted; .select-search-chosen draws it with a non-truncating suffix. */
+.select-search-input--chosen::placeholder {
+  color: transparent;
+}
+
+.select-search-chosen {
+  position: absolute;
+  left: 1px;
+  right: calc(var(--space-2) + 22px);
+  top: 1px;
+  bottom: 1px;
+  padding-left: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.select-search-chosen-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-search-chosen-detail {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.select-search-chevron {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  margin-top: -7px;
+  cursor: pointer;
+}
+
+.select-option-detail {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* On the highlighted row --muted on --surface-active falls below 4.5:1 in dark
+   mode; the secondary text token keeps the detail readable there. */
+.select-option--active .select-option-detail {
+  color: var(--text-secondary);
+}
+
 /* ── CollapsibleSection ───────────────────────────────────────── */
 
 .collapsible-section {
@@ -3586,10 +3658,15 @@ html[data-theme="light"] {
   color: var(--text-secondary);
 }
 
+/* Priority + spec badge + PR chip. On narrow cards (e.g. the ~220px Review
+   column at 1280px) the three do not fit in one row, so the row wraps: with
+   flex-shrink: 0 on the chip a non-wrapping row pushed it past the card's
+   right edge. */
 .db-card-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: 4px var(--space-2);
   margin-bottom: 6px;
 }
 
@@ -8496,14 +8573,17 @@ a.proj-chip:hover {
 }
 
 /* ── Board column jump bar ────────────────────────────────────────
- * Shown only while the board columns are stacked (under 640px): one chip per
- * column with its task count; each links to that column's section. Sits
- * sticky below the app header. */
+ * Shown only while the board columns are stacked (up to 760px, the width
+ * where the .db-board grid drops to one column; measured at 760: five
+ * full-width 712px columns, at 761: five 240px columns in the horizontal
+ * scroller): one chip per column with its task count; activating a chip
+ * scrolls that column into view and focuses its heading. Sits sticky below
+ * the app header. */
 .db-jump {
   display: none;
 }
 
-@media (max-width: 639px) {
+@media (max-width: 760px) {
   .db-jump {
     display: flex;
     gap: var(--space-2);
@@ -8542,9 +8622,10 @@ a.proj-chip:hover {
     color: var(--muted);
   }
 
-  /* The toolbar is three rows tall at this width; keeping it sticky as well
-     would cover the jump bar and eat a seventh of the screen. It scrolls away
-     and the jump bar takes the sticky slot under the app header. */
+  /* The toolbar is three rows tall at the stacked widths (measured 123px at
+     700px); keeping it sticky as well would cover the jump bar and eat a
+     seventh of the screen. It scrolls away and the jump bar takes the sticky
+     slot under the app header. */
   .db-toolbar {
     position: static;
   }
@@ -8560,11 +8641,10 @@ a.proj-chip:hover {
  * page itself scrolls past the heads:
  *  - 1280px and up: five columns in a row; the head sticks below the sticky
  *    toolbar (--board-toolbar-height is that bar's one-row height).
- *  - under 640px: stacked columns; the head sticks below the sticky jump bar
+ *  - up to 760px (stacked columns): the head sticks below the sticky jump bar
  *    (--board-jump-height), inside its own column.
- * From 640px to 1279px the heads stay in the flow: there the board is either a
- * horizontal scroller (761 to 1279px), which sticky cannot pin against the
- * page, or the toolbar wraps to a height no token can name (640 to 760px). */
+ * From 761px to 1279px the heads stay in the flow: there the board is a
+ * horizontal scroller, which sticky cannot pin against the page. */
 @media (min-width: 1280px) {
   .db-col-head {
     position: sticky;
@@ -8574,7 +8654,7 @@ a.proj-chip:hover {
   }
 }
 
-@media (max-width: 639px) {
+@media (max-width: 760px) {
   .db-col-head {
     position: sticky;
     top: calc(var(--app-header-height) + var(--board-jump-height));

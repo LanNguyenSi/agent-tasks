@@ -175,6 +175,8 @@ function ProjectRowActions({
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") e.stopPropagation();
         }}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
         aria-label={`Actions for ${project.name}`}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -183,34 +185,49 @@ function ProjectRowActions({
           <circle cx="12" cy="19" r="1.8" />
         </svg>
       </button>
+      {/* Menu semantics as on the /tasks row menu and AppHeader: the panel
+          holds a role="menu" named after the project, its entries are
+          role="menuitem", and the GitHub-sync note is an aria-disabled
+          menuitem the keyboard can reach but the panel never activates
+          (see DropdownMenu.getFocusableItems). */}
       <DropdownMenu
         anchorRef={menuBtnRef}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         minWidth={160}
       >
-        <Link
-          href={`/projects/workflow?projectId=${project.id}`}
-          className="app-dropdown-item"
-          onClick={() => setMenuOpen(false)}
-        >
-          Workflow
-        </Link>
-        {onDelete ? (
-          <button
-            className="app-dropdown-item app-dropdown-item-danger"
-            onClick={() => {
-              setMenuOpen(false);
-              onDelete();
-            }}
+        <div role="menu" aria-label={`Actions for ${project.name}`}>
+          <Link
+            href={`/projects/workflow?projectId=${project.id}`}
+            role="menuitem"
+            className="app-dropdown-item"
+            onClick={() => setMenuOpen(false)}
           >
-            Delete project
-          </button>
-        ) : project.githubRepo ? (
-          <p className="app-dropdown-item app-dropdown-item-disabled">
-            Managed by GitHub sync
-          </p>
-        ) : null}
+            Workflow
+          </Link>
+          {onDelete ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="app-dropdown-item app-dropdown-item-danger"
+              onClick={() => {
+                setMenuOpen(false);
+                onDelete();
+              }}
+            >
+              Delete project
+            </button>
+          ) : project.githubRepo ? (
+            <p
+              className="app-dropdown-item app-dropdown-item-disabled"
+              role="menuitem"
+              aria-disabled="true"
+              tabIndex={-1}
+            >
+              Managed by GitHub sync
+            </p>
+          ) : null}
+        </div>
       </DropdownMenu>
     </>
   );

@@ -3,6 +3,7 @@ import type { AppVariables } from "../types/hono.js";
 import { GroundingAccessError } from "../services/grounding-context.js";
 import { GroundingReceiptVerificationError } from "../services/grounding-receipt.js";
 import { GroundingMigrationService, groundingMigrationRequestSchema } from "../services/grounding-migration.js";
+import { unstorableTextResponse } from "../lib/error-handler.js";
 
 async function body(request: Request): Promise<unknown> {
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json" || !request.body) throw new Error("invalid body");
@@ -24,6 +25,11 @@ async function body(request: Request): Promise<unknown> {
 export function createGroundingMigrationRouter(service?: GroundingMigrationService) {
   const router = new Hono<{ Variables: AppVariables }>();
   router.onError((error, c) => {
+    // Unstorable client text (a NUL byte, an unpaired surrogate) is the caller's
+    // error and answers 400 in the shared shape; the catch-all below would
+    // report it as a grounding failure.
+    const unstorable = unstorableTextResponse(error, c);
+    if (unstorable) return unstorable;
     if (error instanceof GroundingAccessError) return c.json({ error: error.code }, error.status);
     if (error instanceof GroundingReceiptVerificationError) return c.json({ error: error.code }, 503);
     return c.json({ error: "grounding_verification_unavailable" }, 503);

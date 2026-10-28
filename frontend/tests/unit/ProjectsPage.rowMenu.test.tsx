@@ -132,7 +132,7 @@ async function openByKeyboard(name: string): Promise<HTMLElement> {
   await userEvent.keyboard("{Enter}");
   const panel = await menuPanel();
   await waitFor(() =>
-    expect(within(panel).getByRole("link", { name: "Workflow" })).toHaveFocus(),
+    expect(within(panel).getByRole("menuitem", { name: "Workflow" })).toHaveFocus(),
   );
   return panel;
 }
@@ -154,7 +154,7 @@ describe("/projects Table view: row menu items run instead of opening the board"
   ])("%s on Delete project opens the confirmation and does not navigate", async (_label, key) => {
     const panel = await openByKeyboard("Manual Project");
     await userEvent.keyboard("{ArrowDown}");
-    expect(within(panel).getByRole("button", { name: "Delete project" })).toHaveFocus();
+    expect(within(panel).getByRole("menuitem", { name: "Delete project" })).toHaveFocus();
     await userEvent.keyboard(key);
 
     expect(await screen.findByRole("dialog", { name: "Delete project?" })).toBeInTheDocument();
@@ -166,7 +166,7 @@ describe("/projects Table view: row menu items run instead of opening the board"
     await tableRow("Manual Project");
     await userEvent.click(trigger("Manual Project"));
     const panel = await menuPanel();
-    await userEvent.click(within(panel).getByRole("button", { name: "Delete project" }));
+    await userEvent.click(within(panel).getByRole("menuitem", { name: "Delete project" }));
 
     expect(await screen.findByRole("dialog", { name: "Delete project?" })).toBeInTheDocument();
     expect(router.push).not.toHaveBeenCalled();
@@ -196,5 +196,70 @@ describe("/projects Table view: row menu items run instead of opening the board"
     fireEvent.click(within(tr).getByText("Manual project"));
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push.mock.calls[0]?.[0]).toContain("/projects/proj-1/board");
+  });
+});
+
+/**
+ * Menu semantics (same pattern as the /tasks row menu and AppHeader): the
+ * trigger declares aria-haspopup="menu" and aria-expanded, the panel holds a
+ * role="menu" named after the project with role="menuitem" items, and the
+ * "Managed by GitHub sync" note is an aria-disabled menuitem the keyboard
+ * reaches (focusable, never activated). Escape closes and returns focus to
+ * the trigger.
+ */
+describe("/projects Table view: row menu semantics", () => {
+  beforeEach(() => {
+    render(<ProjectsPage />);
+  });
+
+  /** Open the row menu of `name` with the mouse; focus lands on the first item. */
+  async function openMenu(name: string): Promise<HTMLElement> {
+    await tableRow(name);
+    await userEvent.click(trigger(name));
+    const panel = await menuPanel();
+    await waitFor(() =>
+      expect(panel.querySelector(".app-dropdown-item")).toHaveFocus(),
+    );
+    return panel;
+  }
+
+  it("trigger declares a menu popup and follows the open state", async () => {
+    await tableRow("Manual Project");
+    const btn = trigger("Manual Project");
+    expect(btn).toHaveAttribute("aria-haspopup", "menu");
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("the panel is a menu named after the project and its items are menuitems", async () => {
+    const panel = await openMenu("Manual Project");
+    const menu = within(panel).getByRole("menu", { name: "Actions for Manual Project" });
+    expect(within(menu).getByRole("menuitem", { name: "Workflow" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete project" })).toBeInTheDocument();
+  });
+
+  it("the GitHub-sync note is an aria-disabled menuitem the keyboard cycles through", async () => {
+    const panel = await openMenu("Synced Project");
+    const note = within(panel).getByRole("menuitem", { name: "Managed by GitHub sync" });
+    expect(note).toHaveAttribute("aria-disabled", "true");
+    // ArrowDown from the first item (Workflow) lands on the note; another
+    // ArrowDown cycles back, so the note is in the panel's item cycle.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(note).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(within(panel).getByRole("menuitem", { name: "Workflow" })).toHaveFocus();
+  });
+
+  it("Escape closes the menu and returns focus to the trigger", async () => {
+    await tableRow("Manual Project");
+    const btn = trigger("Manual Project");
+    btn.focus();
+    await userEvent.keyboard("{Enter}");
+    const panel = await menuPanel();
+    await waitFor(() => expect(panel.querySelector(".app-dropdown-item")).toHaveFocus());
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(document.querySelector(".app-dropdown-menu")).toBeNull());
+    await waitFor(() => expect(btn).toHaveFocus());
   });
 });

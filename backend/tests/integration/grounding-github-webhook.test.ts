@@ -225,15 +225,15 @@ it.each([false, true])("HOOK exact unprovisioned PR merge preserves legacy revie
   const legacy = await unprovisioned(); await signal(legacy.id);
   expect((await request()).status).toBe(200);
   const task = await store.db.task.findUniqueOrThrow({ where: { id: legacy.id } });
-  expect(task.status).toBe(autonomous ? "done" : "review"); expect(task.claimedByAgentId).toBe(ids.agent);
+  expect(task.status).toBe(autonomous ? "done" : "review"); expect(task.claimedByAgentId).toBe(autonomous ? null : ids.agent);
   const row = await store.db.signal.findFirstOrThrow({ where: { taskId: legacy.id } }); expect(row.acknowledgedAt !== null).toBe(autonomous);
   expect((await f.task()).status).toBe("in_progress");
 });
 
-it("HOOK legacy issue-close status and signal acknowledgement stay transactional and claims remain unchanged", async () => {
+it("HOOK legacy issue-close status, claim clearing and signal acknowledgement are one transaction", async () => {
   const legacy = await unprovisioned(); await signal(legacy.id);
   expect((await request(payload("issue_closed"))).status).toBe(200);
-  const task = await store.db.task.findUniqueOrThrow({ where: { id: legacy.id } }); expect(task.status).toBe("done"); expect(task.claimedByAgentId).toBe(ids.agent);
+  const task = await store.db.task.findUniqueOrThrow({ where: { id: legacy.id } }); expect(task.status).toBe("done"); expect(task.claimedByAgentId).toBeNull();
   expect((await store.db.signal.findFirstOrThrow({ where: { taskId: legacy.id } })).acknowledgedAt).not.toBeNull();
   expect((await f.task()).status).toBe("in_progress");
 });
@@ -261,4 +261,119 @@ it("HOOK opened issues are created once per delivery and issue-reopen invents no
   expect((await request(payload("issue_opened"), "created")).status).toBe(200);
   expect(await store.db.task.count({ where: { projectId: f.projectId } })).toBe(count + 1);
   const before = await f.task(); expect((await request(payload("issue_reopened"), "reopen")).status).toBe(200); expect(await f.task()).toEqual(before);
+});
+
+// ── Task states come from the task's own workflow ────────────────────────────
+// The workflow API still accepts only the four built-in names, so a custom
+// vocabulary is stored directly. `checking` is the review state (not the
+// initial state's direct target, has an edge to the terminal `shipped`);
+// `working` is the work state, `shipped` the terminal one.
+type Edge = { from: string; to: string };
+const CUSTOM_STATES = [{ name: "queued", label: "Queued", terminal: false }, { name: "working", label: "Working", terminal: false }, { name: "checking", label: "Checking", terminal: false }, { name: "shipped", label: "Shipped", terminal: true }];
+const CUSTOM_EDGES: Edge[] = [{ from: "queued", to: "working" }, { from: "working", to: "checking" }, { from: "checking", to: "shipped" }, { from: "checking", to: "working" }];
+async function customWorkflow(transitions: Edge[] = CUSTOM_EDGES) {
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Custom", isDefault: true, definition: { initialState: "queued", states: CUSTOM_STATES, transitions } } });
+}
+async function bothClaims(status: string) {
+  const task = await unprovisioned(status);
+  return store.db.task.update({ where: { id: task.id }, data: { claimedAt: new Date(), reviewClaimedByUserId: ids.user, reviewClaimedAt: new Date() } });
+}
+const NO_CLAIMS = { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null };
+const reload = (id: string) => store.db.task.findUniqueOrThrow({ where: { id } });
+
+it.each(["merged", "issue_closed"] as const)("HOOK a terminal write clears the work and the review claim in the same transaction (built-in workflow, %s)", async kind => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  const legacy = await bothClaims("review");
+  expect(legacy.claimedByAgentId).toBe(ids.agent); expect(legacy.reviewClaimedByUserId).toBe(ids.user);
+  expect((await request(payload(kind))).status).toBe(200);
+  expect(await reload(legacy.id)).toMatchObject({ status: "done", ...NO_CLAIMS });
+});
+
+it.each(["merged", "issue_closed"] as const)("HOOK a terminal write derives the terminal state and clears both claims for a custom workflow (%s)", async kind => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  await customWorkflow();
+  const legacy = await bothClaims("checking"); await signal(legacy.id);
+  expect((await request(payload(kind))).status).toBe(200);
+  expect(await reload(legacy.id)).toMatchObject({ status: "shipped", ...NO_CLAIMS });
+  expect((await store.db.signal.findFirstOrThrow({ where: { taskId: legacy.id } })).acknowledgedAt).not.toBeNull();
+});
+
+it("HOOK a non-terminal write keeps the claims (confirmation-required merge hands over to the workflow's review state)", async () => {
+  await customWorkflow();
+  const legacy = await bothClaims("working");
+  expect((await request()).status).toBe(200);
+  expect(await reload(legacy.id)).toMatchObject({ status: "checking", claimedByAgentId: ids.agent, reviewClaimedByUserId: ids.user });
+});
+
+it("HOOK a merge in a workflow without a review-like state hands the confirmation-required task nowhere", async () => {
+  await customWorkflow([{ from: "queued", to: "working" }, { from: "working", to: "shipped" }]);
+  const legacy = await bothClaims("working");
+  expect((await request()).status).toBe(200);
+  expect(await reload(legacy.id)).toMatchObject({ status: "working", claimedByAgentId: ids.agent });
+});
+
+it.each(["merged", "issue_closed"] as const)("HOOK a task already in the custom terminal state is left alone (%s)", async kind => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  await customWorkflow();
+  const legacy = await store.db.task.update({ where: { id: (await unprovisioned("shipped")).id }, data: { claimedByAgentId: null } });
+  const before = await reload(legacy.id);
+  expect((await request(payload(kind))).status).toBe(200);
+  expect(await reload(legacy.id)).toEqual(before);
+  // A finished task is skipped before any observation is recorded for it.
+  expect(await store.db.groundingGithubObservation.count({ where: { taskId: legacy.id } })).toBe(0);
+});
+
+it("HOOK an unpromoted backlog task is never moved by a webhook event", async () => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  const draft = await store.db.task.update({ where: { id: (await unprovisioned("backlog")).id }, data: { claimedByAgentId: null } });
+  const before = await reload(draft.id);
+  expect((await request(payload("issue_closed"), "issue")).status).toBe(200);
+  expect((await request(payload("merged"), "merge")).status).toBe(200);
+  expect(await reload(draft.id)).toEqual(before);
+});
+
+it("HOOK changes requested moves a review task along the workflow's request-changes edge, not to a literal in_progress", async () => {
+  await customWorkflow();
+  const legacy = await bothClaims("checking");
+  expect((await request(payload("changes_requested"))).status).toBe(200);
+  // The write is not terminal: both claims stay.
+  expect(await reload(legacy.id)).toMatchObject({ status: "working", claimedByAgentId: ids.agent, reviewClaimedByUserId: ids.user });
+});
+
+it("HOOK changes requested on a built-in review task still returns it to in_progress", async () => {
+  const legacy = await unprovisioned("review");
+  expect((await request(payload("changes_requested"))).status).toBe(200);
+  expect((await reload(legacy.id)).status).toBe("in_progress");
+});
+
+it("HOOK changes requested leaves the status alone when the review state has no non-terminal edge out", async () => {
+  await customWorkflow([{ from: "queued", to: "working" }, { from: "working", to: "checking" }, { from: "checking", to: "shipped" }]);
+  const legacy = await bothClaims("checking");
+  const before = await reload(legacy.id);
+  expect((await request(payload("changes_requested"))).status).toBe(200);
+  expect(await reload(legacy.id)).toEqual(before);
+  // The delivery is still recorded as an observation.
+  expect(await store.db.groundingGithubObservation.findFirstOrThrow({ where: { taskId: legacy.id } })).toMatchObject({ state: "OBSERVED", event: "review_changes_requested" });
+});
+
+it("HOOK changes requested on a task that is not in a review state of its workflow changes nothing", async () => {
+  await customWorkflow();
+  const legacy = await bothClaims("working");
+  const before = await reload(legacy.id);
+  expect((await request(payload("changes_requested"))).status).toBe(200);
+  expect(await reload(legacy.id)).toEqual(before);
+});
+
+it.each(["issue_closed", "merged"] as const)("HOOK a stored definition without a terminal state writes nothing on %s and keeps both claims", async kind => {
+  // The workflow API refuses such a definition, so it is stored directly.
+  // terminalTargetFrom falls back to the literal done there; done is not a
+  // state of this workflow, so the webhook must not write it.
+  await store.db.project.update({ where: { id: f.projectId }, data: { soloMode: true } });
+  await customWorkflow();
+  await store.db.workflow.updateMany({ where: { projectId: f.projectId }, data: { definition: { initialState: "queued", states: CUSTOM_STATES.filter(state => !state.terminal), transitions: [{ from: "queued", to: "working" }, { from: "working", to: "checking" }] } } });
+  const legacy = await bothClaims("checking"); await signal(legacy.id);
+  const before = await reload(legacy.id);
+  expect((await request(payload(kind))).status).toBe(200);
+  expect(await reload(legacy.id)).toEqual(before);
+  expect((await store.db.signal.findFirstOrThrow({ where: { taskId: legacy.id } })).acknowledgedAt).toBeNull();
 });

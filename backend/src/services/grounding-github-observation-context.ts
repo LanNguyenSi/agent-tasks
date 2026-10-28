@@ -1,12 +1,15 @@
 import type { Prisma } from "@prisma/client";
 import { mismatch, type GroundingTask } from "./grounding-context.js";
 import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
+import { clearAllClaims } from "./task-claim-fields.js";
 import { assertNoGroundingReservation, invalidateGroundingContext } from "./grounding-transaction.js";
 
 export type GithubObservedContextChange = {
   task: GroundingTask;
   patch: Partial<Pick<GroundingTask, "status" | "prNumber" | "prUrl" | "branchName">>;
   headChanged?: boolean;
+  /** The patched status is a terminal state of the task's workflow: the same write clears the work and review claims. */
+  terminalStatus?: boolean;
 };
 
 /** Internal DB-only observation adapter. The caller holds sorted project/task locks.
@@ -15,9 +18,9 @@ export type GithubObservedContextChange = {
 export async function applyGithubObservedContext(tx: Prisma.TransactionClient, changes: GithubObservedContextChange[], event: { deliveryId: string; reason: string }) {
   const actual = changes.filter(({ task, patch, headChanged }) => headChanged || Object.entries(patch).some(([key, value]) => task[key as keyof typeof patch] !== value));
   for (const change of actual) await assertNoGroundingReservation(tx, change.task.id);
-  for (const { task, patch } of actual) {
+  for (const { task, patch, terminalStatus } of actual) {
     if (Object.keys(patch).length) {
-      const updated = await tx.task.updateMany({ where: { id: task.id, status: task.status, prNumber: task.prNumber, prUrl: task.prUrl, branchName: task.branchName }, data: { ...patch, ...(patch.status !== undefined ? STATUS_VERSION_BUMP : {}) } });
+      const updated = await tx.task.updateMany({ where: { id: task.id, status: task.status, prNumber: task.prNumber, prUrl: task.prUrl, branchName: task.branchName }, data: { ...patch, ...(patch.status !== undefined ? STATUS_VERSION_BUMP : {}), ...(patch.status !== undefined && terminalStatus ? clearAllClaims : {}) } });
       if (updated.count !== 1) mismatch();
     }
     await invalidateGroundingContext(tx, task.id);
