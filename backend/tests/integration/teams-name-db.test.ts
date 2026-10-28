@@ -5,9 +5,10 @@
  * write routes (POST /teams, PATCH /teams/:id) now answer 400 and nothing is
  * written; the same holds for an unpaired UTF-16 surrogate (Prisma refuses it
  * before the query, which also surfaced as a 500). A name that is accepted
- * round-trips through the database trimmed. The England subdivision flag
- * (U+1F3F4, tag letters, U+E007F) is accepted and stored unchanged; a mark
- * stack split by zero-width joiners is still refused.
+  * round-trips through the database trimmed. The England subdivision flag
+  * (U+1F3F4, tag letters, U+E007F) is accepted and stored unchanged; a mark
+  * stack split by invisible separators (zero-width joiners or zero-width
+  * spaces) is still refused.
  */
 import { type PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -108,10 +109,11 @@ describe("team names (real database)", () => {
     ["a high surrogate inside the name", "A\ud800B"],
     ["a lone high surrogate", "\ud800"],
     ["a lone low surrogate before text", "\udc00x"],
-  ])("answers 400, not 500, for %s on both routes and writes nothing", async (_label, name) => {
-    const created = await post(name, "surrogate-team");
+  ])("answers 400, not 500, for %s on both routes and writes nothing", async (label, name) => {
+    const slug = rowSlug(label);
+    const created = await post(name, slug);
     expect(created.status).toBe(400);
-    expect(await pg.db.team.findUnique({ where: { slug: "surrogate-team" } })).toBeNull();
+    expect(await pg.db.team.findUnique({ where: { slug } })).toBeNull();
 
     const renamed = await patch(name);
     expect(renamed.status).toBe(400);
@@ -127,10 +129,11 @@ describe("team names (real database)", () => {
     ["noncharacter U+FFFE", "\ufffe"],
     ["bidi override inside a name", "abc\u202edef"],
     ["line separator inside a name", "a\u2028b"],
-  ])("answers 400 for %s on both routes and writes nothing", async (_label, name) => {
-    const created = await post(name, "invisible-team");
+  ])("answers 400 for %s on both routes and writes nothing", async (label, name) => {
+    const slug = rowSlug(label);
+    const created = await post(name, slug);
     expect(created.status).toBe(400);
-    expect(await pg.db.team.findUnique({ where: { slug: "invisible-team" } })).toBeNull();
+    expect(await pg.db.team.findUnique({ where: { slug } })).toBeNull();
 
     const renamed = await patch(name);
     expect(renamed.status).toBe(400);
@@ -151,6 +154,11 @@ describe("team names (real database)", () => {
     [
       "40 marks in one cluster split by zero-width joiners",
       `Team ${`a${"\u0301\u0302\u0303\u0304\u200d".repeat(10)}`}`,
+      TEAM_NAME_MARKS_MESSAGE,
+    ],
+    [
+      "40 marks split by zero-width spaces",
+      `Team ${`a${"\u0301\u0302\u0303\u0304\u200b".repeat(10)}`}`,
       TEAM_NAME_MARKS_MESSAGE,
     ],
     ["U+FFFC alone", "\ufffc", TEAM_NAME_EMPTY_MESSAGE],

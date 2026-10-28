@@ -14,8 +14,10 @@
  * Invisible smuggling characters (tag characters except the England, Scotland
  * and Wales subdivision flags, the implicit direction marks, interlinear
  * annotation, invisible operators, unassigned code points) and stacks of more
- * than 8 combining marks on one character (counted per grapheme cluster, so
- * zero-width joiners cannot split a stack) are refused as well, and U+FFFC
+ * than 8 combining marks in one grapheme cluster are refused as well (the
+ * marks are counted after removing invisible format characters, so zero-width
+ * spaces, word joiners, soft hyphens or a BOM cannot split a stack; the stored
+ * name keeps them), and U+FFFC
  * counts as blank. The refinements are checked in order, so a name that breaks
  * several rules reports the first one only (`message` is the first failed rule).
  */
@@ -302,8 +304,31 @@ describe.each(ROUTES)("%s: team name rule", (route) => {
     ["9 marks twice in one name", `a${"\u0301".repeat(9)}b${"\u0300".repeat(10)}`],
     ["40 marks in one cluster split by zero-width joiners", `a${"\u0301\u0302\u0303\u0304\u200d".repeat(10)}`],
     ["40 marks in one cluster split by zero-width non-joiners", `a${"\u0301\u0302\u0303\u0304\u200c".repeat(10)}`],
+    ["40 marks split by zero-width spaces (4 per cluster, 40 on one letter)", `a${"\u0301\u0302\u0303\u0304\u200b".repeat(10)}`],
+    ["40 marks split by word joiners U+2060", `a${"\u0301\u0302\u0303\u0304\u2060".repeat(10)}`],
+    ["40 marks split by soft hyphens U+00AD", `a${"\u0301\u0302\u0303\u0304\u00ad".repeat(10)}`],
+    ["40 marks split by BOMs U+FEFF", `a${"\u0301\u0302\u0303\u0304\ufeff".repeat(10)}`],
+    [
+      "16 marks split by a mix of zero-width space, word joiner, soft hyphen and BOM",
+      "a\u0301\u0302\u0303\u0304\u200b\u0305\u0306\u0307\u0308\u2060\u0301\u0302\u0303\u0304\u00ad\u0305\u0306\u0307\u0308\ufeff",
+    ],
+    ["9 marks on one letter split by a zero-width space into 5 + 4", "a\u0301\u0302\u0303\u0304\u0305\u200b\u0306\u0307\u0308\u0309"],
   ])("400s %s", async (_label, name) => {
     await expectRejected(name, TEAM_NAME_MARKS_MESSAGE);
+  });
+
+  it("accepts 8 marks split by a zero-width space into 4 + 4 on one letter and keeps the separator stored", async () => {
+    // 8 marks in one cluster after the separator removal (the cap allows 8);
+    // the stored and returned name must still contain the U+200B (the removal
+    // applies to the mark-cap check copy only).
+    const name = "a\u0301\u0302\u0303\u0304\u200b\u0305\u0306\u0307\u0308";
+    expect(name).toContain("\u200b");
+    await expectStored(name, name);
+    expect(storedName(route)).toContain("\u200b");
+  });
+
+  it("accepts a zero-width space between words with no marks (`Team\u200bA`)", async () => {
+    await expectStored("Team\u200bA", "Team\u200bA");
   });
 
   it("accepts exactly 8 combining marks on one letter", async () => {

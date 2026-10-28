@@ -33,7 +33,8 @@ POST /api/teams/:id/sync          # GitHub repo sync
 # (U+E0020-U+E007F), except the exact England, Scotland and Wales subdivision flag sequences (U+1F3F4, tag letters, U+E007F),
 # implicit direction mark (U+200E, U+200F, U+061C), interlinear annotation mark (U+FFF9-U+FFFB),
 # invisible operator (U+2061-U+2064) or unassigned code point (\p{Cn}, e.g. U+0378, U+2065), and never more than
-# 8 combining marks on one character (counted per grapheme cluster, so zero-width joiners cannot split a stack); not empty once
+# 8 combining marks in one grapheme cluster, counted after removing invisible format characters (so zero-width joiners, zero-width
+# spaces, word joiners, soft hyphens or a BOM cannot split a stack); not empty once
 # whitespace, format characters (zero-width space), combining marks and variation selectors, the Hangul fillers
 # (U+115F, U+1160, U+3164, U+FFA0), U+2800 and U+FFFC are removed. A refusal is a 400 with the first failed rule in `message`.
 

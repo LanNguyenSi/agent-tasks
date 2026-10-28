@@ -28,11 +28,15 @@ import { z } from "zod";
  *     `\p{Cf}`, but the rest of `\p{Cf}` stays allowed inside a visible name:
  *     the zero-width joiner U+200D in an emoji sequence and the variation
  *     selector U+FE0F are valid;
- *   - hold no stack of more than 8 combining marks on one character (Zalgo
- *     text): the name is split into grapheme clusters with `Intl.Segmenter`
- *     and the `\p{M}` code points are counted per cluster, so zero-width
- *     joiners cannot split a stack and Burmese syllables (five marks over two
- *     clusters) stay valid; exactly 8 in one cluster is fine;
+ *   - hold no more than 8 combining marks in one grapheme cluster, counted
+ *     after removing invisible format characters (so zero-width joiners, zero-width
+ *     spaces, word joiners, soft hyphens or a BOM cannot split a stack)
+ *     (Zalgo text): the mark-cap check runs on a copy of the name with every
+ *     `\p{Cf}` code point and U+00AD removed (`withoutInvisibleSeparators`),
+ *     splits that copy into grapheme clusters with `Intl.Segmenter` and counts
+ *     the `\p{M}` code points per cluster; the stored name is never changed
+ *     and Burmese syllables (five marks over two clusters) stay valid;
+ *     exactly 8 in one cluster is fine;
  *   - not be empty once the characters that render as nothing are removed:
  *     format characters (`\p{Cf}`, for example the zero-width space),
  *     whitespace, combining marks and variation selectors (`\p{M}`, so a
@@ -88,6 +92,15 @@ const MARK_CLUSTER_CAP = 8;
 
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
+/**
+ * Invisible separators (zero-width spaces, word joiners, soft hyphens, a BOM:
+ * `\p{Cf}` and U+00AD) each split a grapheme cluster, so they are removed from
+ * the copy used for the mark-cap check only, never from the stored name.
+ */
+function withoutInvisibleSeparators(value: string): string {
+  return value.replace(/[\p{Cf}\u00ad]/gu, "");
+}
+
 /** True when one grapheme cluster stacks more than `MARK_CLUSTER_CAP` marks. */
 function exceedsMarkCap(value: string): boolean {
   for (const { segment } of GRAPHEME_SEGMENTER.segment(value)) {
@@ -116,7 +129,7 @@ export const teamNameSchema = z
     (value) => !INVISIBLE_CODE_POINTS.test(RGI_SUBDIVISION_FLAGS.reduce((v, flag) => v.replaceAll(flag, ""), value)),
     TEAM_NAME_INVISIBLE_MESSAGE,
   )
-  .refine((value) => !exceedsMarkCap(value), TEAM_NAME_MARKS_MESSAGE)
+  .refine((value) => !exceedsMarkCap(withoutInvisibleSeparators(value)), TEAM_NAME_MARKS_MESSAGE)
   .refine(
     (value) => value.replace(/[\p{Cf}\p{M}\s\u115f\u1160\u3164\uffa0\u2800\ufffc]/gu, "").length > 0,
     TEAM_NAME_EMPTY_MESSAGE,
