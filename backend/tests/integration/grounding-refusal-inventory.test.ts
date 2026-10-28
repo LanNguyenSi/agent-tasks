@@ -41,26 +41,8 @@
  * I27  services/grounding-attempts.ts:81                    TGA                   deliberately bare: no access, one 403 whatever the task's state
  * RE   services/grounding-context.ts:139                    TGA intent merge      message: self-merge blocked (work claimant, work state)
  * RF   services/grounding-completion.ts:122, LEGACY_LOCAL   TM                    message: self-merge blocked on an admin-migrated task
- * RA-RD, RG, RH, RI-RU  TGA admission precedence (grounding-attempts.ts authorizeRouteIssue). The rule, as written in
- *      docs/agent-workflow.md and CHANGELOG.md:
- *      The grounding-attempt issue route admits a caller through the claim and scope check (an agent token with
- *      `tasks:transition`, project write access and the work or review claim on the task) or else through merge
- *      eligibility (the `task_merge` checks), both before it reads the request's `intent`, so the intent never
- *      changes the answer. When neither admits the caller, the answer is the claim or scope refusal (`Token
- *      missing scope: tasks:transition` for an agent token without that scope, otherwise `You hold neither the
- *      work claim nor the review claim on this task`), also for `intent: "merge"`, with two exceptions. First,
- *      a caller that passes merge eligibility's actor check (a human, or an agent token with `github:pr_merge`)
- *      and meets its `409 bad_state` on a task in its initial or a terminal state, or in a review state with no
- *      single terminal edge (an ambiguous workflow), gets that `409 bad_state`, whether or not it holds a claim
- *      and whether or not it has `tasks:transition`; an unavailable workflow definition keeps its own answer
- *      likewise. The `bad_state` of a work state outside review, such as `in_progress`, is not an exception:
- *      the claim or scope refusal stays. Second, a merge-only token (an agent token with `github:pr_merge` and
- *      project write access, without `tasks:transition`, holding no claim on the task) can never pass the claim
- *      path, so it gets whatever merge eligibility refused with, the same answer `task_merge` gives that
- *      caller: the missing `allowAgentPrMerge` consent, the review lock or the review approval gate, the
- *      transition role, or `409 bad_state` in any state, a work state included. A token without
- *      `github:pr_merge` is not merge-capable and always gets the claim or scope refusal. A caller without
- *      project access gets one bare 403 before any of this.
+ * RA-RD, RG, RH, RI-RX  TGA admission precedence (grounding-attempts.ts authorizeRouteIssue). The rule is written in
+ *      docs/agent-workflow.md (the single source; this table maps it to rows):
  *      Per combination of {holds a claim, has tasks:transition, has github:pr_merge} the route sees, for an agent token:
  *        claim, tasks:transition, any pr_merge       -> admitted by the claim path (the later policy decides)
  *        claim, no tasks:transition, no pr_merge     -> the tasks:transition scope (RB)
@@ -76,9 +58,11 @@
  *                                                       refusal whatever the intent: RI consent, RJ review lock,
  *                                                       RL / RR 409 bad_state on in_progress, RM transition role, RS consent
  *                                                       for intent finish; RT is the bare 403 without project access
- *      A human has no scope: no claim gets the claim refusal even when merge eligibility refuses too (RO).
- *      RU: an unexpected error of the merge-actor check on the merge-only path propagates (the service's unavailable answer, 503
- *      on the route); it is not a scope refusal.
+ *      A human has no scope: with a claim, admitted by the claim path; without one, admitted when merge eligibility admits (RW),
+ *      else the claim refusal (RO), except the same 409 bad_state (RV).
+ *      An unavailable workflow definition keeps its own answer (RX: grounding_verification_unavailable).
+ *      RU: an unexpected error of the merge-actor check on the merge-only path propagates as the service's
+ *      grounding_verification_unavailable error; it is not a scope refusal.
  *
  * Deliberately bare or unreachable, not rows of this table:
  *  - PRC / PRM callers without access, and a missing task: the legacy handler's own answer via next()
@@ -399,7 +383,24 @@ it("RO TGA by a human non-claimant that merge eligibility refuses too: the claim
   await expect(f.attempts.authorizeRouteIssue(f.taskId, { type: "human", userId: ids.user })).rejects.toMatchObject({ code: "forbidden", status: 403, detail: "You hold neither the work claim nor the review claim on this task" });
 });
 
-it("RU an unexpected error of the merge-actor check on the merge-only path propagates as the service's unavailable answer (503 on the route); it is not the tasks:transition scope refusal", async () => {
+it("RV TGA by a human non-claimant on a done task: merge eligibility's bad_state, not the claim refusal", async () => {
+  await data({ status: "done", claimedByAgentId: null, claimedByUserId: null });
+  await expect(f.attempts.authorizeRouteIssue(f.taskId, { type: "human", userId: ids.user })).rejects.toMatchObject({ code: "bad_state", status: 409 });
+});
+
+it("RW TGA by a human non-claimant on a review task that merge eligibility admits: admitted, not the claim refusal", async () => {
+  await mergerOfReview(); await data({ claimedByUserId: null });
+  await expect(f.attempts.authorizeRouteIssue(f.taskId, { type: "human", userId: ids.user })).resolves.not.toThrow();
+});
+
+it("RX TGA by a review-claim holder with only github:pr_merge when the default workflow definition is unavailable: the unavailable answer, not the tasks:transition scope", async () => {
+  await mergerOfReview(); await data({ reviewClaimedByAgentId: ids.agent });
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Broken", isDefault: true, definition: { broken: true } as object } });
+  const reviewHolder = { ...completionActor, scopes: ["github:pr_merge"] };
+  await expect(f.attempts.authorizeRouteIssue(f.taskId, reviewHolder)).rejects.toMatchObject({ name: "GroundingReceiptVerificationError", code: "grounding_verification_unavailable" });
+});
+
+it("RU an unexpected error of the merge-actor check on the merge-only path propagates as the service's grounding_verification_unavailable error; it is not the tasks:transition scope refusal", async () => {
   await data({ claimedByAgentId: null, claimedByUserId: null });
   const mergeOnly = { ...completionActor, scopes: ["github:pr_merge"] };
   // Write checks in order: the route admission (1), the merge eligibility fallback (2), the merge-only classification (3).
