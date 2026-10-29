@@ -3,7 +3,7 @@
  * /tasks page with stored custom workflows (src/app/tasks/page.tsx): the
  * Priority, My Tasks, In Review and Recently Done presets resolve their status
  * lists from the team's project workflows, the status filter keeps any state
- * name of the URL (the backend checks the vocabulary), and a chip appears for
+ * name of the URL (unknown names reach the server unchecked and match no task), and a chip appears for
  * each custom state the loaded workflows define.
  * Active stays the fixed open + in progress. With no workflow readable the
  * presets are the built-in lists. Mock/render pattern mirrors
@@ -261,13 +261,24 @@ describe("/tasks status chips", () => {
 });
 
 describe("/tasks status parameter", () => {
+  it("renders its chips when a stored workflow holds a state entry that is not an object", async () => {
+    const broken = {
+      ...QA_FLOW,
+      definition: { ...QA_FLOW.definition, states: [null, 7, { label: "No name" }, ...QA_FLOW.definition.states] },
+    } as unknown as Workflow;
+    vi.mocked(getWorkflows).mockImplementation(async (projectId) => (projectId === "p1" ? [PIPELINE] : [broken]));
+    await renderAt("scope=all");
+    await waitFor(() => expect(chipNames()).toContain("Quality gate"));
+    expect(chipNames()).toContain("Spec");
+  });
+
   it("accepts a custom state name from the workflows", async () => {
     await renderAt("status=qa,spec");
     await waitFor(() => expect(statusRequests().at(-1)).toBe("qa,spec"));
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tasks · custom filter");
   });
 
-  it("keeps a name no workflow defines and lets the backend check it", async () => {
+  it("keeps a name no workflow defines and sends it to the server", async () => {
     await renderAt("scope=review&status=nonsense");
     await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
     await lastStatusIs("nonsense");

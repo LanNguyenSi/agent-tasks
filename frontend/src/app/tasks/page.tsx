@@ -141,6 +141,9 @@ function statusChipsFor(
       const states = w.definition?.states;
       if (!Array.isArray(states)) continue;
       for (const st of states) {
+        // A stored row may be malformed (legacy or hand-edited); skip entries
+        // without a string name instead of crashing the whole page.
+        if (!st || typeof st !== "object" || typeof st.name !== "string") continue;
         if (seen.has(st.name)) continue;
         seen.add(st.name);
         chips.push({ name: st.name, label: st.label || st.name });
@@ -161,9 +164,9 @@ interface FilterState<T> {
 // `allowed` null keeps every name: the status filter does not know the team's
 // vocabulary until the workflows are read (and never does for a project whose
 // workflow list answers 403), and a custom name in the URL must reach the
-// first request and survive a chip click meanwhile. The backend checks the
-// names against the team's vocabulary, so an unknown one comes back as an
-// error instead of being dropped here.
+// first request and survive a chip click meanwhile. The team task list does
+// not check the names, so a name no workflow defines matches no task and stays
+// in the URL until the filter is cleared or reset.
 function parseCsv<T extends string>(value: string | null, allowed: readonly T[] | null): T[] {
   if (!value) return [];
   const set = allowed ? new Set(allowed as readonly string[]) : null;
