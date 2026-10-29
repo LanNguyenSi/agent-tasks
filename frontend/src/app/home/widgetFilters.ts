@@ -3,7 +3,7 @@
 // so they stay unit-testable without rendering the full auth/team-fetching
 // page.
 
-import type { Task } from "../../lib/api";
+import type { Task, Workflow } from "../../lib/api";
 
 /** Agent-created draft awaiting operator promotion out of backlog. */
 export function isBacklogTask(t: Pick<Task, "status">): boolean {
@@ -13,16 +13,84 @@ export function isBacklogTask(t: Pick<Task, "status">): boolean {
 /** Statuses that count as actionable work on the /home dashboard. */
 const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["open", "in_progress", "review"]);
 
+/** The two names outside every workflow definition (backend BACKLOG_STATE, ABANDONED_STATE). */
+const NON_ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["backlog", "abandoned"]);
+
+/** Terminal states of the built-in workflow (backend defaultWorkflowDefinition). */
+const BUILT_IN_TERMINAL_STATES: ReadonlySet<string> = new Set(["done"]);
+
+/** What a task row needs for its workflow to be found. */
+export type WorkflowTask = Pick<Task, "projectId"> & { workflowId?: string | null };
+
+/** The terminal states of one task's own workflow. */
+export type TerminalStatesOf = (task: WorkflowTask) => ReadonlySet<string>;
+
+function terminalNames(workflow: Workflow): ReadonlySet<string> {
+  const states = workflow.definition?.states;
+  // An unreadable stored definition reads as the built-in workflow, as the
+  // backend's safeStates does when the definition does not sanitize.
+  if (!Array.isArray(states)) return BUILT_IN_TERMINAL_STATES;
+  return new Set(states.filter((s) => s.terminal).map((s) => s.name));
+}
+
 /**
- * High/critical priority AND actionable: only open, in-progress or in-review
- * tasks. Done and abandoned tasks are finished, and backlog drafts are not
- * promoted yet (they surface in their own widget instead).
+ * Resolves a task's terminal states the way the backend's home count does
+ * (workflow-status-filter.ts isStatusOfKind): the task's pinned workflow, else
+ * the project's default workflow, else the built-in one (`done`). `byProject`
+ * holds the workflow rows of each project, oldest first as the API lists them
+ * per project (default first), so the first default row wins like the backend's.
+ * A project that is not in the map reads as built-in.
+ */
+export function terminalStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): TerminalStatesOf {
+  return (task) => {
+    const rows = byProject.get(task.projectId) ?? [];
+    const pinned = task.workflowId ? rows.find((w) => w.id === task.workflowId) : undefined;
+    const row = pinned ?? rows.find((w) => w.isDefault);
+    return row ? terminalNames(row) : BUILT_IN_TERMINAL_STATES;
+  };
+}
+
+/**
+ * The status names the priority widget asks for: the three built-in actionable
+ * ones plus every non-terminal state of a stored workflow. A name that is
+ * terminal in one workflow and open in another is requested; the per-task
+ * check in isPriorityTask drops the rows where it is terminal.
+ */
+export function actionableStatusParam(byProject: ReadonlyMap<string, readonly Workflow[]>): string {
+  const names = new Set<string>(ACTIONABLE_STATUSES);
+  for (const rows of byProject.values()) {
+    for (const w of rows) {
+      const states = w.definition?.states;
+      if (!Array.isArray(states)) continue;
+      for (const s of states) {
+        if (!s.terminal && !NON_ACTIONABLE_STATUSES.has(s.name)) names.add(s.name);
+      }
+    }
+  }
+  return [...names].join(",");
+}
+
+/**
+ * High/critical priority AND actionable. Done and abandoned tasks are
+ * finished, and backlog drafts are not promoted yet (they surface in their own
+ * widget instead).
+ *
+ * Without `terminalStatesOf` only open, in-progress or in-review count, the
+ * allowlist of the built-in workflow. With it, a task counts unless its status
+ * is `backlog`, `abandoned` or a terminal state of its own workflow, so a
+ * custom non-terminal state is actionable and a custom terminal state is done.
  */
 // Kept in sync with the backend priorityCount query (routes/tasks.ts,
 // counts.priority) and the /tasks scope=priority preset: all three use
-// this status allowlist.
-export function isPriorityTask(t: Pick<Task, "priority" | "status">): boolean {
-  return (t.priority === "CRITICAL" || t.priority === "HIGH") && ACTIONABLE_STATUSES.has(t.status);
+// this status rule.
+export function isPriorityTask(
+  t: Pick<Task, "priority" | "status"> & Partial<WorkflowTask>,
+  terminalStatesOf?: TerminalStatesOf,
+): boolean {
+  if (t.priority !== "CRITICAL" && t.priority !== "HIGH") return false;
+  if (!terminalStatesOf) return ACTIONABLE_STATUSES.has(t.status);
+  if (NON_ACTIONABLE_STATUSES.has(t.status)) return false;
+  return !terminalStatesOf({ projectId: t.projectId ?? "", workflowId: t.workflowId }).has(t.status);
 }
 
 // ── Active (open + in_progress) ───────────────────────────────────────────────

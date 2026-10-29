@@ -238,8 +238,71 @@ export async function getTask(config: Config, taskId: string): Promise<Task> {
 // backlog_not_promoted at start/claim time until a human promotes it. This
 // only makes backlog tasks reachable by id-prefix search, which previously
 // required the full UUID.
+//
+// The six names above are the built-in workflow's states plus backlog and
+// abandoned. A project may store a workflow with other state names, and the
+// endpoint's status filter accepts the states of every workflow row in the
+// team (the backend judges the names), so a task sitting in such a state would
+// never show up in a pool filtered by the six. searchTaskPool therefore runs a
+// second pass over those names when the first pass finds nothing (see
+// listCustomTaskStatuses); the common case, a prefix that resolves in the
+// built-in pool, costs no extra request.
 export const ALL_TASK_STATUSES = ["backlog", "open", "in_progress", "review", "done", "abandoned"];
 export const SEARCH_TASK_POOL_MAX_PAGES = 10;
+
+// A task status is a state name of a workflow. The workflow API stores names
+// that match [a-z0-9_]+; the length bound keeps a client from sending what no
+// backend row could hold. Which names exist is the backend's call: it answers
+// a well-formed but unknown name with a 400 the CLI shows unchanged.
+export const STATUS_NAME_MAX_LENGTH = 64;
+const STATUS_NAME_PATTERN = /^[a-z0-9_]+$/;
+export function isStatusName(value: string): boolean {
+  return value.length <= STATUS_NAME_MAX_LENGTH && STATUS_NAME_PATTERN.test(value);
+}
+
+/**
+ * The state names of the projects' workflows that are not in
+ * ALL_TASK_STATUSES, i.e. the extra statuses a task can sit in. One workflow
+ * list per project the caller can see. `complete` is false when a project's
+ * list could not be read (no access, an error), so the caller can say the
+ * search may have missed a state instead of reporting "no such task".
+ */
+export async function listCustomTaskStatuses(
+  config: Config,
+): Promise<{ names: string[]; complete: boolean }> {
+  const builtIn = new Set(ALL_TASK_STATUSES);
+  const names = new Set<string>();
+  let complete = true;
+  let projects: Project[];
+  try {
+    projects = await listProjects(config);
+  } catch {
+    return { names: [], complete: false };
+  }
+  const lists = await Promise.all(
+    projects.map(async (p) => {
+      try {
+        const { workflows } = await request<{
+          workflows: { definition?: { states?: { name?: unknown }[] } }[];
+        }>(config, `/api/projects/${p.id}/workflows`);
+        return workflows;
+      } catch {
+        complete = false;
+        return [];
+      }
+    }),
+  );
+  for (const workflows of lists) {
+    for (const w of workflows) {
+      for (const st of w.definition?.states ?? []) {
+        if (typeof st?.name === "string" && isStatusName(st.name) && !builtIn.has(st.name)) {
+          names.add(st.name);
+        }
+      }
+    }
+  }
+  return { names: [...names].sort(), complete };
+}
 
 export type PrefixMatch =
   | { kind: "unique"; id: string }
@@ -269,9 +332,10 @@ async function fetchTaskPoolPage(
   config: Config,
   limit: number,
   cursor: string | undefined,
+  statuses: readonly string[],
 ): Promise<TaskPoolPage> {
   const params = new URLSearchParams();
-  params.set("status", ALL_TASK_STATUSES.join(","));
+  params.set("status", statuses.join(","));
   params.set("limit", String(limit));
   params.set("sort", "createdAt:desc");
   if (cursor) params.set("cursor", cursor);
@@ -284,6 +348,50 @@ export interface SearchTaskPoolResult {
   searched: number;
   /** True when SEARCH_TASK_POOL_MAX_PAGES was hit with pages still remaining. */
   capped: boolean;
+  /**
+   * Present (true) only when the pass over custom workflow states ran and some
+   * project's workflow list could not be read, so a task in a state only that
+   * workflow has may not have been searched.
+   */
+  customStatesIncomplete?: true;
+}
+
+interface PoolPass {
+  match: PrefixMatch;
+  seen: number;
+  capped: boolean;
+}
+
+/** Pages one status set newest-first until the prefix resolves or the pool ends. */
+async function searchStatuses(
+  config: Config,
+  prefix: string,
+  limit: number,
+  statuses: readonly string[],
+): Promise<PoolPass> {
+  const seen: Task[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < SEARCH_TASK_POOL_MAX_PAGES; page++) {
+    const { tasks, nextCursor } = await fetchTaskPoolPage(config, limit, cursor, statuses);
+    seen.push(...tasks);
+    const match = matchTaskIdPrefix(seen, prefix);
+    if (match.kind !== "none" || !nextCursor) {
+      return { match, seen: seen.length, capped: false };
+    }
+    cursor = nextCursor;
+  }
+  return { match: { kind: "none" }, seen: seen.length, capped: true };
+}
+
+// The status filter of the pool endpoint is checked per team: a state name
+// that exists in a workflow the caller can see but not in the searched team
+// comes back as `400 invalid status: <name>; must be one of ...`. The names
+// are candidates, so such a name is dropped and the pass retried.
+function rejectedStatus(err: unknown): string | undefined {
+  if (!(err instanceof ApiError) || err.status !== 400) return undefined;
+  const body = err.body as { message?: unknown } | null;
+  const m = typeof body?.message === "string" ? /^invalid status: (\S+);/.exec(body.message) : null;
+  return m?.[1];
 }
 
 /**
@@ -293,27 +401,43 @@ export interface SearchTaskPoolResult {
  * SEARCH_TASK_POOL_MAX_PAGES so a prefix with zero matches on a very large
  * team can't page forever; `capped` tells the caller whether that bound
  * (rather than a genuinely exhausted pool) is why nothing was found.
+ *
+ * The first pass covers ALL_TASK_STATUSES. When it finds nothing, a second
+ * pass covers the custom workflow states (listCustomTaskStatuses), paged the
+ * same way with its own page budget, so a task in a state no built-in workflow
+ * has is still reachable by its id prefix. A prefix that already resolves, or
+ * is ambiguous, in the first pass is not widened.
  */
 export async function searchTaskPool(
   config: Config,
   prefix: string,
   limit = 200,
 ): Promise<SearchTaskPoolResult> {
-  const seen: Task[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < SEARCH_TASK_POOL_MAX_PAGES; page++) {
-    const { tasks, nextCursor } = await fetchTaskPoolPage(config, limit, cursor);
-    seen.push(...tasks);
-    const match = matchTaskIdPrefix(seen, prefix);
-    if (match.kind !== "none") {
-      return { match, searched: seen.length, capped: false };
-    }
-    if (!nextCursor) {
-      return { match, searched: seen.length, capped: false };
-    }
-    cursor = nextCursor;
+  const first = await searchStatuses(config, prefix, limit, ALL_TASK_STATUSES);
+  if (first.match.kind !== "none") {
+    return { match: first.match, searched: first.seen, capped: false };
   }
-  return { match: { kind: "none" }, searched: seen.length, capped: true };
+
+  const custom = await listCustomTaskStatuses(config);
+  let names = custom.names;
+  let second: PoolPass = { match: { kind: "none" }, seen: 0, capped: false };
+  while (names.length > 0) {
+    try {
+      second = await searchStatuses(config, prefix, limit, names);
+      break;
+    } catch (err) {
+      const rejected = rejectedStatus(err);
+      if (rejected === undefined || !names.includes(rejected)) throw err;
+      names = names.filter((n) => n !== rejected);
+    }
+  }
+
+  return {
+    match: second.match,
+    searched: first.seen + second.seen,
+    capped: first.capped || second.capped,
+    ...(custom.complete ? {} : { customStatesIncomplete: true as const }),
+  };
 }
 
 export interface CreateTaskInput {

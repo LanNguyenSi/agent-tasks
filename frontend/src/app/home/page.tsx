@@ -11,6 +11,7 @@ import {
   type Task,
   type TeamTasksCounts,
   type TeamTasksProject,
+  type Workflow,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { DONE_RECENT_DAYS, isDoneTaskHidden } from "../../lib/dashboardPrefs";
@@ -42,8 +43,11 @@ import {
   isActiveTask,
   isBacklogTask,
   isPriorityTask,
+  actionableStatusParam,
+  terminalStatesResolver,
   type WidgetKey,
 } from "./widgetFilters";
+import { loadMissingProjectWorkflows } from "./projectWorkflows";
 
 type EnrichedTask = Task & { projectName: string };
 
@@ -335,6 +339,14 @@ export default function HomeDashboardPage() {
   const [staleWarning, setStaleWarning] = useState(false);
   const [refetchKey, setRefetchKey] = useState(0);
   const hasDataRef = useRef(false);
+  // The stored workflows of the team's projects: what makes a custom state
+  // terminal or open for the priority widget. Read once per team (a project
+  // whose list cannot be read reads as the built-in workflow); the state copy
+  // is what the render reads.
+  const workflowsRef = useRef<Map<string, Workflow[]>>(new Map());
+  const [workflowsByProject, setWorkflowsByProject] = useState<ReadonlyMap<string, readonly Workflow[]>>(
+    () => new Map(),
+  );
   // The team whose tasks are on screen.
   const loadedTeamIdRef = useRef<string | null>(null);
 
@@ -375,6 +387,8 @@ export default function HomeDashboardPage() {
     if (loadedTeamIdRef.current !== selectedTeam.id) {
       loadedTeamIdRef.current = selectedTeam.id;
       hasDataRef.current = false;
+      workflowsRef.current = new Map();
+      setWorkflowsByProject(new Map());
       setWidgetRows(emptyWidgetRows());
       setCounts(null);
       setError(null);
@@ -388,12 +402,39 @@ export default function HomeDashboardPage() {
         // widget come from its own scope, not from filtering one capped slice
         // of the whole team. `counts` and `projects` are team-wide and the
         // same in every response, so the first one supplies them.
+        // The priority widget asks for the workflows' non-terminal states too
+        // (a custom open state is actionable); the other widgets' scopes are
+        // the built-in names of their own presets.
+        const requestFor = (key: WidgetKey) =>
+          key === "priority"
+            ? { ...WIDGET_REQUESTS.priority, status: actionableStatusParam(workflowsRef.current) }
+            : WIDGET_REQUESTS[key];
+        const sentPriorityStatus = requestFor("priority").status;
         const responses = await Promise.all(
-          WIDGET_KEYS.map((key) => getTeamTasks(teamId, WIDGET_REQUESTS[key])),
+          WIDGET_KEYS.map((key) => getTeamTasks(teamId, requestFor(key))),
         );
         if (cancelled) return;
         const first = responses[0];
         if (!first) return;
+        // Workflows of projects not seen yet. When they add a state the priority
+        // request lacked, it is asked again once with the full list.
+        const gained = await loadMissingProjectWorkflows(
+          first.projects.map((p) => p.id),
+          workflowsRef.current,
+        );
+        if (cancelled) return;
+        if (gained) {
+          setWorkflowsByProject(new Map(workflowsRef.current));
+          const priorityIndex = WIDGET_KEYS.indexOf("priority");
+          if (actionableStatusParam(workflowsRef.current) !== sentPriorityStatus && priorityIndex >= 0) {
+            try {
+              responses[priorityIndex] = await getTeamTasks(teamId, requestFor("priority"));
+            } catch {
+              // keep the rows of the first request; the next poll asks again
+            }
+            if (cancelled) return;
+          }
+        }
         const projectName = new Map(first.projects.map((p) => [p.id, p.name]));
         const rows = emptyWidgetRows();
         WIDGET_KEYS.forEach((key, i) => {
@@ -438,9 +479,10 @@ export default function HomeDashboardPage() {
     [widgetRows.review],
   );
 
+  const terminalStatesOf = useMemo(() => terminalStatesResolver(workflowsByProject), [workflowsByProject]);
   const priorityTasks = useMemo(
-    () => widgetRows.priority.filter(isPriorityTask),
-    [widgetRows.priority],
+    () => widgetRows.priority.filter((t) => isPriorityTask(t, terminalStatesOf)),
+    [widgetRows.priority, terminalStatesOf],
   );
 
   const backlogTasks = useMemo(

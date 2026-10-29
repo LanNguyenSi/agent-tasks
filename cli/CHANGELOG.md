@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `tasks list --project --status` checks only that each value has the shape of a workflow state name (lowercase letters, digits and underscores, at most 64 characters) and lets the backend judge which names exist, so a state of a custom workflow works and an unknown name shows the backend's 400. The task-id prefix search (`tasks get|start|finish|...` with a short id) keeps searching the built-in statuses first; when that finds nothing it reads the workflow list of each project you can see and pages the pool once more over the extra state names (its own 10-page budget), so a task in a custom state resolves by prefix. A prefix that already resolves, or is ambiguous, in the built-in pool costs no extra request. If a project's workflow list cannot be read, a "no task found" message says so.
+
 ### Added
 
 - `tasks claim` gains `--force-reason <text>` (at least 10 characters, required with `--force`, `--force-reason` alone is an error); both are checked before any request. `--force` alone could never succeed under confidence enforcement mode BLOCK because the server needs a reason.
