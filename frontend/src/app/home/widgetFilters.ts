@@ -22,8 +22,17 @@ const BUILT_IN_TERMINAL_STATES: ReadonlySet<string> = new Set(["done"]);
 /** What a task row needs for its workflow to be found. */
 export type WorkflowTask = Pick<Task, "projectId"> & { workflowId?: string | null };
 
+/** The status names of one task's own workflow (terminal, review-like). */
+export type StatesOf = (task: WorkflowTask) => ReadonlySet<string>;
+
 /** The terminal states of one task's own workflow. */
-export type TerminalStatesOf = (task: WorkflowTask) => ReadonlySet<string>;
+export type TerminalStatesOf = StatesOf;
+
+/** The review-like states of one task's own workflow. */
+export type ReviewStatesOf = StatesOf;
+
+/** Review-like state of the built-in workflow (backend defaultWorkflowDefinition). */
+const BUILT_IN_REVIEW_STATES: ReadonlySet<string> = new Set(["review"]);
 
 function terminalNames(workflow: Workflow): ReadonlySet<string> {
   const states = workflow.definition?.states;
@@ -34,44 +43,132 @@ function terminalNames(workflow: Workflow): ReadonlySet<string> {
 }
 
 /**
- * Resolves a task's terminal states the way the backend's home count does
+ * The review-like states of one stored workflow: a port of the backend's
+ * isReviewState (services/default-workflow.ts). A state qualifies when it is
+ * not the initial state, not terminal, has an edge to a terminal state and is
+ * not a direct target of an edge from the initial state. As there, a name is
+ * terminal by its first state entry. `backlog` and `abandoned` live outside
+ * every workflow and never qualify.
+ */
+function reviewNames(workflow: Workflow): ReadonlySet<string> {
+  const def = workflow.definition;
+  const states = def?.states;
+  if (!Array.isArray(states)) return BUILT_IN_REVIEW_STATES;
+  const transitions = Array.isArray(def.transitions) ? def.transitions : [];
+  const terminalByName = new Map<string, boolean>();
+  for (const s of states) if (!terminalByName.has(s.name)) terminalByName.set(s.name, s.terminal === true);
+  const isTerminal = (name: string) => terminalByName.get(name) === true;
+  const names = new Set<string>();
+  for (const s of states) {
+    if (NON_ACTIONABLE_STATUSES.has(s.name)) continue;
+    if (s.name === def.initialState || isTerminal(s.name)) continue;
+    if (!transitions.some((t) => t.from === s.name && isTerminal(t.to))) continue;
+    if (transitions.some((t) => t.from === def.initialState && t.to === s.name)) continue;
+    names.add(s.name);
+  }
+  return names;
+}
+
+/**
+ * The workflow row a task follows, the way the backend's home count finds it
  * (workflow-status-filter.ts isStatusOfKind): the task's pinned workflow, else
- * the project's default workflow, else the built-in one (`done`). `byProject`
- * holds the workflow rows of each project, oldest first as the API lists them
- * per project (default first), so the first default row wins like the backend's.
- * A project that is not in the map reads as built-in.
+ * the project's default workflow. `byProject` holds the workflow rows of each
+ * project, oldest first as the API lists them per project (default first), so
+ * the first default row wins like the backend's. Undefined for a project that
+ * is not in the map, which then reads as the built-in workflow.
+ */
+function workflowRowOf(
+  byProject: ReadonlyMap<string, readonly Workflow[]>,
+  task: WorkflowTask,
+): Workflow | undefined {
+  const rows = byProject.get(task.projectId) ?? [];
+  const pinned = task.workflowId ? rows.find((w) => w.id === task.workflowId) : undefined;
+  return pinned ?? rows.find((w) => w.isDefault);
+}
+
+/**
+ * Resolves a task's terminal states the way the backend's home count does:
+ * its workflow row (see workflowRowOf), else the built-in workflow (`done`).
  */
 export function terminalStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): TerminalStatesOf {
   return (task) => {
-    const rows = byProject.get(task.projectId) ?? [];
-    const pinned = task.workflowId ? rows.find((w) => w.id === task.workflowId) : undefined;
-    const row = pinned ?? rows.find((w) => w.isDefault);
+    const row = workflowRowOf(byProject, task);
     return row ? terminalNames(row) : BUILT_IN_TERMINAL_STATES;
   };
 }
 
+/** Resolves a task's review-like states: its workflow row, else the built-in `review`. */
+export function reviewStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): ReviewStatesOf {
+  return (task) => {
+    const row = workflowRowOf(byProject, task);
+    return row ? reviewNames(row) : BUILT_IN_REVIEW_STATES;
+  };
+}
+
+/** The status names a scope asks for, over all the projects' workflows. */
+export interface WorkflowStatusNames {
+  /** Non-terminal work states: open, in progress, review and every custom non-terminal state. */
+  actionable: string[];
+  /** Review-like states: the built-in `review` plus every review-like state of a stored workflow. */
+  review: string[];
+  /** Terminal states: the built-in `done` plus every terminal state of a stored workflow. */
+  terminal: string[];
+}
+
 /**
- * The status names the priority widget asks for: the three built-in actionable
- * ones plus every non-terminal state of a stored workflow. A name that is
- * terminal in one workflow and open in another is requested; the per-task
- * check in isPriorityTask drops the rows where it is terminal.
+ * The status names behind the /tasks scope presets and the Home widgets, from
+ * the stored workflows of the projects. The built-in names are always in, in
+ * front: a project that is not in `byProject` (not loaded yet, or its list is
+ * not readable) reads as the built-in workflow. A name that is terminal in one
+ * workflow and open in another lands in both lists; a request asks for the
+ * union and the per-task resolvers drop the rows where it means the other
+ * thing. An unreadable stored definition reads as the built-in workflow.
  */
-export function actionableStatusParam(byProject: ReadonlyMap<string, readonly Workflow[]>): string {
-  const names = new Set<string>(ACTIONABLE_STATUSES);
+export function workflowStatusNames(byProject: ReadonlyMap<string, readonly Workflow[]>): WorkflowStatusNames {
+  const actionable = new Set<string>(ACTIONABLE_STATUSES);
+  const review = new Set<string>(BUILT_IN_REVIEW_STATES);
+  const terminal = new Set<string>(BUILT_IN_TERMINAL_STATES);
   for (const rows of byProject.values()) {
     for (const w of rows) {
       const states = w.definition?.states;
       if (!Array.isArray(states)) continue;
       for (const s of states) {
-        if (!s.terminal && !NON_ACTIONABLE_STATUSES.has(s.name)) names.add(s.name);
+        if (s.terminal) terminal.add(s.name);
+        else if (!NON_ACTIONABLE_STATUSES.has(s.name)) actionable.add(s.name);
       }
+      for (const name of reviewNames(w)) review.add(name);
     }
   }
-  return [...names].join(",");
+  return { actionable: [...actionable], review: [...review], terminal: [...terminal] };
 }
 
 /**
- * High/critical priority AND actionable. Done and abandoned tasks are
+ * The status names the priority and mine widgets ask for: the three built-in
+ * actionable ones plus every non-terminal state of a stored workflow. A name
+ * that is terminal in one workflow and open in another is requested; the
+ * per-task check in isActionableTask drops the rows where it is terminal.
+ */
+export function actionableStatusParam(byProject: ReadonlyMap<string, readonly Workflow[]>): string {
+  return workflowStatusNames(byProject).actionable.join(",");
+}
+
+/**
+ * Actionable work: not a backlog draft, not abandoned and not in a terminal
+ * state of its own workflow (so a custom non-terminal state is actionable and
+ * a custom terminal state is done). Without `terminalStatesOf` only the
+ * built-in allowlist (open, in progress, review) counts.
+ */
+export function isActionableTask(
+  t: Pick<Task, "status"> & Partial<WorkflowTask>,
+  terminalStatesOf?: TerminalStatesOf,
+): boolean {
+  if (!terminalStatesOf) return ACTIONABLE_STATUSES.has(t.status);
+  if (NON_ACTIONABLE_STATUSES.has(t.status)) return false;
+  return !terminalStatesOf({ projectId: t.projectId ?? "", workflowId: t.workflowId }).has(t.status);
+}
+
+/**
+ * High/critical priority AND actionable (isActionableTask). Done and abandoned tasks are
  * finished, and backlog drafts are not promoted yet (they surface in their own
  * widget instead).
  *
@@ -88,9 +185,7 @@ export function isPriorityTask(
   terminalStatesOf?: TerminalStatesOf,
 ): boolean {
   if (t.priority !== "CRITICAL" && t.priority !== "HIGH") return false;
-  if (!terminalStatesOf) return ACTIONABLE_STATUSES.has(t.status);
-  if (NON_ACTIONABLE_STATUSES.has(t.status)) return false;
-  return !terminalStatesOf({ projectId: t.projectId ?? "", workflowId: t.workflowId }).has(t.status);
+  return isActionableTask(t, terminalStatesOf);
 }
 
 // ── Active (open + in_progress) ───────────────────────────────────────────────
@@ -152,3 +247,25 @@ export const WIDGET_REQUESTS: Record<WidgetKey, WidgetRequest> = {
   review: { status: "review", limit: WIDGET_LIMIT },
   done: { status: "done", recency: "recent", limit: WIDGET_LIMIT },
 };
+
+/**
+ * The request of one widget once the projects' workflows are known: the mine
+ * and priority widgets ask for every actionable name, the review widget for
+ * every review-like name and the done widget for every terminal name (the
+ * `/tasks` presets of the same scopes resolve the same lists). Without any
+ * workflow this is WIDGET_REQUESTS[key], the fixed built-in lists, which stay
+ * the fallback when the workflows cannot be read. The widgets that are not
+ * defined by a workflow (backlog, active) keep their fixed request.
+ */
+export function widgetRequest(
+  key: WidgetKey,
+  byProject: ReadonlyMap<string, readonly Workflow[]>,
+): WidgetRequest {
+  const base = WIDGET_REQUESTS[key];
+  if (key === "mine" || key === "priority") {
+    return { ...base, status: workflowStatusNames(byProject).actionable.join(",") };
+  }
+  if (key === "review") return { ...base, status: workflowStatusNames(byProject).review.join(",") };
+  if (key === "done") return { ...base, status: workflowStatusNames(byProject).terminal.join(",") };
+  return base;
+}
