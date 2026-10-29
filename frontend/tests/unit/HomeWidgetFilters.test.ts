@@ -273,12 +273,14 @@ const QA_FLOW = def(
   { id: "wf-qa" },
 );
 
-// hotfix is reachable from the entry state and ends in a terminal one (not review-like);
-// check is two steps in (review-like); lonely has no edge to a terminal state.
+// The entry state has an edge to a terminal one and `done` an edge to another terminal
+// state (neither is review-like); hotfix is reachable from the entry state and ends in a
+// terminal one (not review-like); check is two steps in (review-like); lonely has no edge
+// to a terminal state.
 const EDGY = def(
   "open",
-  [["open", false], ["hotfix", false], ["work", false], ["check", false], ["done", true], ["lonely", false]],
-  [["open", "hotfix"], ["hotfix", "done"], ["open", "work"], ["work", "check"], ["check", "done"], ["check", "work"], ["open", "lonely"]],
+  [["open", false], ["hotfix", false], ["work", false], ["check", false], ["done", true], ["closed", true], ["lonely", false]],
+  [["open", "done"], ["done", "closed"], ["open", "hotfix"], ["hotfix", "done"], ["open", "work"], ["work", "check"], ["check", "done"], ["check", "work"], ["open", "lonely"]],
   { id: "wf-edgy" },
 );
 
