@@ -7355,11 +7355,20 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
     );
   });
 
-  it("skips the workflow lookup and creates the task when workflowId is omitted", async () => {
+  it("looks up only the project default workflow (for the initial state) when workflowId is omitted", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // no default row -> built-in
+
     const res = await postCreate({ title: "No workflow" });
 
     expect(res.status).toBe(201);
-    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+    // One lookup, for the project default row that answers the initial-state
+    // question; no pinned-workflow lookup without a workflowId.
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectId: CREATE_PROJECT_ID, isDefault: true }),
+      }),
+    );
     const createArg = prismaMocks.taskCreate.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(createArg.data.workflowId).toBeUndefined();
   });

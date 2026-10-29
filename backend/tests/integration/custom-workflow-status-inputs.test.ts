@@ -71,6 +71,7 @@ vi.mock("../../src/services/grounding-client.js", () => ({
 
 import { taskRouter } from "../../src/routes/tasks.js";
 import { mcpRouter, setApp } from "../../src/routes/mcp.js";
+import { emitTaskAvailableSignal } from "../../src/services/task-signal.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
@@ -272,6 +273,91 @@ describe("POST /projects/:id/tasks/import status", () => {
     expect(bad.status).toBe(400);
     expect(bad.body.error.issues[0]).toMatchObject({ path: ["tasks", 1, "status"] });
     expect(await db.task.count({ where: { projectId } })).toBe(2);
+  });
+});
+
+describe("initial status of a created or imported task", () => {
+  const signalCalls = () => (emitTaskAvailableSignal as any).mock.calls as [string, string, string, string][];
+
+  // Case 1: no status input, no stored workflow -> the built-in initial
+  // state `open`, and task_available fires for it.
+  it("no status, four-state project default: open, signal emitted", async () => {
+    const projectId = await seedProject({ custom: false });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T" });
+    expect(status).toBe(201);
+    expect(body.task.status).toBe("open");
+    expect(signalCalls()).toEqual([[body.task.id, projectId, "human", "Human"]]);
+  });
+
+  // Case 2: no status input, task pinned to a stored workflow whose initial
+  // state is a custom name -> that name, and the signal fires for it. The
+  // project default here is the built-in workflow, so `open` (not a state of
+  // the pinned definition) proves which workflow was consulted.
+  it("no status, pinned workflow: its initialState, signal emitted", async () => {
+    const projectId = await seedProject({ custom: false });
+    const pinned = await db.workflow.create({ data: { projectId, name: "pinned", isDefault: false, definition: pinnedDefinition } });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T", workflowId: pinned.id });
+    expect(status).toBe(201);
+    expect(body.task.status).toBe("todo");
+    expect(signalCalls()).toEqual([[body.task.id, projectId, "human", "Human"]]);
+  });
+
+  // Case 3: no status input, no pin -> the project default stored definition's
+  // initial state, not the literal `open`.
+  it("no status, custom project default definition: its initialState, signal emitted", async () => {
+    const projectId = await seedProject({ custom: true });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T" });
+    expect(status).toBe(201);
+    expect(body.task.status).toBe("queued");
+    expect(signalCalls()).toEqual([[body.task.id, projectId, "human", "Human"]]);
+  });
+
+  // Case 4: both pins set and they differ -> the task's pinned workflow wins
+  // over the project default (`todo`, not `queued`).
+  it("no status, pinned workflow and a differing project default: the pin wins", async () => {
+    const projectId = await seedProject({ custom: true });
+    const pinned = await db.workflow.create({ data: { projectId, name: "pinned", isDefault: false, definition: pinnedDefinition } });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "T", workflowId: pinned.id });
+    expect(status).toBe(201);
+    expect(body.task.status).toBe("todo");
+    expect(signalCalls()).toEqual([[body.task.id, projectId, "human", "Human"]]);
+  });
+
+  // Case 5: an explicit status is the caller's, and the signal follows it:
+  // emitted only when that status is the initial state.
+  it("explicit status wins over the initial state; signal only when it equals it", async () => {
+    const projectId = await seedProject({ custom: true });
+    const nonInitial = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "A", status: "working" });
+    expect(nonInitial.status).toBe(201);
+    expect(nonInitial.body.task.status).toBe("working");
+    expect(signalCalls()).toEqual([]);
+    const initial = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "B", status: "queued" });
+    expect(initial.status).toBe(201);
+    expect(initial.body.task.status).toBe("queued");
+    expect(signalCalls()).toEqual([[initial.body.task.id, projectId, "human", "Human"]]);
+    const draft = await call(human, "POST", `/projects/${projectId}/tasks`, { title: "C", status: "backlog" });
+    expect(draft.body.task.status).toBe("backlog");
+    expect(signalCalls()).toHaveLength(1);
+  });
+
+  // Case 6: the batch path has no per-item workflow pin, so the project
+  // default decides; rows without a status get its initial state, rows with a
+  // status keep theirs, and the signal fires only for the initial state.
+  it("batch import: rows without status use the initial state, rows with status keep theirs", async () => {
+    const projectId = await seedProject({ custom: true });
+    const { status, body } = await call(human, "POST", `/projects/${projectId}/tasks/import`, {
+      tasks: [{ title: "A" }, { title: "B", status: "working" }, { title: "C", status: "backlog" }, { title: "D", status: "queued" }],
+    });
+    expect(status).toBe(201);
+    expect(body.created).toBe(4);
+    const rows = await db.task.findMany({ where: { projectId }, orderBy: { title: "asc" } });
+    expect(rows.map((t) => t.status)).toEqual(["queued", "working", "backlog", "queued"]);
+    expect(signalCalls().map(([taskId]) => taskId).sort()).toEqual([rows[0]!.id, rows[3]!.id].sort());
+    const plain = await seedProject({ custom: false });
+    const plainRes = await call(human, "POST", `/projects/${plain}/tasks/import`, { tasks: [{ title: "E" }, { title: "F", status: "review" }] });
+    expect(plainRes.status).toBe(201);
+    expect((await db.task.findMany({ where: { projectId: plain }, orderBy: { title: "asc" } })).map((t) => t.status)).toEqual(["open", "review"]);
+    expect(signalCalls()).toHaveLength(3);
   });
 });
 
