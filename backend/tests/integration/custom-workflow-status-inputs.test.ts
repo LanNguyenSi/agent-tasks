@@ -359,6 +359,22 @@ describe("initial status of a created or imported task", () => {
     expect((await db.task.findMany({ where: { projectId: plain }, orderBy: { title: "asc" } })).map((t) => t.status)).toEqual(["open", "review"]);
     expect(signalCalls()).toHaveLength(3);
   });
+
+  // Case 7: an agent token is hard-routed to `backlog` whatever the workflow's
+  // initial state is, on create and on import, and a backlog task is not
+  // claimable, so neither path emits task_available.
+  it("agent create and agent import in a custom-workflow project: backlog, no signal", async () => {
+    const projectId = await seedProject({ custom: true });
+    const created = await call(agent, "POST", `/projects/${projectId}/tasks`, { title: "A" });
+    expect(created.status).toBe(201);
+    expect(created.body.task.status).toBe("backlog");
+    expect(signalCalls()).toEqual([]);
+    const imported = await call(agent, "POST", `/projects/${projectId}/tasks/import`, { tasks: [{ title: "B" }, { title: "C" }] });
+    expect(imported.status).toBe(201);
+    expect(imported.body.created).toBe(2);
+    expect((await db.task.findMany({ where: { projectId }, orderBy: { title: "asc" } })).map((t) => t.status)).toEqual(["backlog", "backlog", "backlog"]);
+    expect(signalCalls()).toEqual([]);
+  });
 });
 
 describe("PATCH /tasks/:id status", () => {
