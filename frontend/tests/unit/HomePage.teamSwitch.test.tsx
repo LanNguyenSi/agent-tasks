@@ -25,6 +25,7 @@ vi.mock("../../src/lib/api", () => ({
   getCurrentUser: vi.fn(),
   getTeams: vi.fn(),
   getTeamTasks: vi.fn(),
+  getWorkflows: vi.fn(),
   logout: vi.fn(),
 }));
 
@@ -33,7 +34,7 @@ import { withTeamList } from "./helpers/withTeamList";
 const HomeDashboardPage = withTeamList(HomeDashboardPageRaw);
 import AppHeader from "../../src/components/AppHeader";
 import { nav } from "../setup/fakeNavigation";
-import { getCurrentUser, getTeams, getTeamTasks } from "../../src/lib/api";
+import { getCurrentUser, getTeams, getTeamTasks, getWorkflows } from "../../src/lib/api";
 
 const TEAMS = [
   { id: "team-1", name: "Alpha Team", slug: "alpha", role: "ADMIN", createdAt: "2026-01-01T00:00:00Z" },
@@ -92,6 +93,7 @@ beforeEach(() => {
   nav.reset("/home");
   vi.mocked(getCurrentUser).mockResolvedValue({ id: "u-1", login: "lan" } as User);
   vi.mocked(getTeams).mockResolvedValue(TEAMS);
+  vi.mocked(getWorkflows).mockResolvedValue([]);
   vi.mocked(getTeamTasks).mockImplementation(async (teamId: string) =>
     teamId === "team-2" ? result("Beta only task", "b") : result("Alpha only task", "a"),
   );
@@ -115,6 +117,20 @@ describe("/home: current team follows the URL", () => {
     // The old team's tasks do not linger next to the new team's heading.
     expect(screen.queryByText("Alpha only task")).not.toBeInTheDocument();
     expect(headerTeam()).toBe("Beta Team");
+  });
+
+  it("asks a project whose workflow list answered 403 again after a team switch", async () => {
+    // The same project id is listed under both teams here: what the first team
+    // learned about it (403) must not carry over to the second.
+    vi.mocked(getWorkflows).mockRejectedValue(Object.assign(new Error("Forbidden"), { status: 403 }));
+    renderBoth();
+    await screen.findAllByText("Alpha only task");
+    await waitFor(() => expect(vi.mocked(getWorkflows)).toHaveBeenCalledTimes(1));
+
+    pick("Beta Team");
+
+    await screen.findAllByText("Beta only task");
+    await waitFor(() => expect(vi.mocked(getWorkflows)).toHaveBeenCalledTimes(2));
   });
 
   it("shows the loading state, not the old team's tasks, until the new team's tasks arrive", async () => {

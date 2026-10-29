@@ -4,6 +4,13 @@
 // page.
 
 import type { Task, Workflow } from "../../lib/api";
+import {
+  BUILT_IN_REVIEW_STATES,
+  BUILT_IN_TERMINAL_STATES,
+  storedReviewStates,
+  storedTerminalStates,
+  storedWorkStates,
+} from "../../lib/workflow-vocabulary";
 
 /** Agent-created draft awaiting operator promotion out of backlog. */
 export function isBacklogTask(t: Pick<Task, "status">): boolean {
@@ -16,62 +23,126 @@ const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["open", "in_progress",
 /** The two names outside every workflow definition (backend BACKLOG_STATE, ABANDONED_STATE). */
 const NON_ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["backlog", "abandoned"]);
 
-/** Terminal states of the built-in workflow (backend defaultWorkflowDefinition). */
-const BUILT_IN_TERMINAL_STATES: ReadonlySet<string> = new Set(["done"]);
-
 /** What a task row needs for its workflow to be found. */
 export type WorkflowTask = Pick<Task, "projectId"> & { workflowId?: string | null };
 
-/** The terminal states of one task's own workflow. */
-export type TerminalStatesOf = (task: WorkflowTask) => ReadonlySet<string>;
+/** The status names of one task's own workflow (terminal, review-like). */
+export type StatesOf = (task: WorkflowTask) => ReadonlySet<string>;
 
-function terminalNames(workflow: Workflow): ReadonlySet<string> {
-  const states = workflow.definition?.states;
-  // An unreadable stored definition reads as the built-in workflow, as the
-  // backend's safeStates does when the definition does not sanitize.
-  if (!Array.isArray(states)) return BUILT_IN_TERMINAL_STATES;
-  return new Set(states.filter((s) => s.terminal).map((s) => s.name));
+/** The terminal states of one task's own workflow. */
+export type TerminalStatesOf = StatesOf;
+
+/** The review-like states of one task's own workflow. */
+export type ReviewStatesOf = StatesOf;
+
+/** Terminal states of the built-in workflow (backend defaultWorkflowDefinition). */
+const BUILT_IN_TERMINAL_SET: ReadonlySet<string> = new Set(BUILT_IN_TERMINAL_STATES);
+
+/** Review-like state of the built-in workflow (backend defaultWorkflowDefinition). */
+const BUILT_IN_REVIEW_SET: ReadonlySet<string> = new Set(BUILT_IN_REVIEW_STATES);
+
+// The terminal and review-like names of a stored workflow are the backend's:
+// they are read from the sanitized definition, with the built-in names as the
+// fallback for one that cannot be read (see lib/workflow-vocabulary.ts).
+const terminalNames = (workflow: Workflow): ReadonlySet<string> => new Set(storedTerminalStates(workflow));
+const reviewNames = (workflow: Workflow): ReadonlySet<string> => new Set(storedReviewStates(workflow));
+
+/**
+ * The workflow row a task follows, the way the backend's home count finds it
+ * (workflow-status-filter.ts isStatusOfKind): the task's pinned workflow, else
+ * the project's default workflow. `byProject` holds the workflow rows of each
+ * project, oldest first as the API lists them per project (default first), so
+ * the first default row wins like the backend's. Undefined for a project that
+ * is not in the map, which then reads as the built-in workflow.
+ */
+function workflowRowOf(
+  byProject: ReadonlyMap<string, readonly Workflow[]>,
+  task: WorkflowTask,
+): Workflow | undefined {
+  const rows = byProject.get(task.projectId) ?? [];
+  const pinned = task.workflowId ? rows.find((w) => w.id === task.workflowId) : undefined;
+  return pinned ?? rows.find((w) => w.isDefault);
 }
 
 /**
- * Resolves a task's terminal states the way the backend's home count does
- * (workflow-status-filter.ts isStatusOfKind): the task's pinned workflow, else
- * the project's default workflow, else the built-in one (`done`). `byProject`
- * holds the workflow rows of each project, oldest first as the API lists them
- * per project (default first), so the first default row wins like the backend's.
- * A project that is not in the map reads as built-in.
+ * Resolves a task's terminal states the way the backend's home count does:
+ * its workflow row (see workflowRowOf), else the built-in workflow (`done`).
  */
 export function terminalStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): TerminalStatesOf {
   return (task) => {
-    const rows = byProject.get(task.projectId) ?? [];
-    const pinned = task.workflowId ? rows.find((w) => w.id === task.workflowId) : undefined;
-    const row = pinned ?? rows.find((w) => w.isDefault);
-    return row ? terminalNames(row) : BUILT_IN_TERMINAL_STATES;
+    const row = workflowRowOf(byProject, task);
+    return row ? terminalNames(row) : BUILT_IN_TERMINAL_SET;
   };
 }
 
-/**
- * The status names the priority widget asks for: the three built-in actionable
- * ones plus every non-terminal state of a stored workflow. A name that is
- * terminal in one workflow and open in another is requested; the per-task
- * check in isPriorityTask drops the rows where it is terminal.
- */
-export function actionableStatusParam(byProject: ReadonlyMap<string, readonly Workflow[]>): string {
-  const names = new Set<string>(ACTIONABLE_STATUSES);
-  for (const rows of byProject.values()) {
-    for (const w of rows) {
-      const states = w.definition?.states;
-      if (!Array.isArray(states)) continue;
-      for (const s of states) {
-        if (!s.terminal && !NON_ACTIONABLE_STATUSES.has(s.name)) names.add(s.name);
-      }
-    }
-  }
-  return [...names].join(",");
+/** Resolves a task's review-like states: its workflow row, else the built-in `review`. */
+export function reviewStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): ReviewStatesOf {
+  return (task) => {
+    const row = workflowRowOf(byProject, task);
+    return row ? reviewNames(row) : BUILT_IN_REVIEW_SET;
+  };
+}
+
+/** The status names a scope asks for, over all the projects' workflows. */
+export interface WorkflowStatusNames {
+  /** Non-terminal work states: open, in progress, review and every custom non-terminal state. */
+  actionable: string[];
+  /** Review-like states: the built-in `review` plus every review-like state of a stored workflow. */
+  review: string[];
+  /** Terminal states: the built-in `done` plus every terminal state of a stored workflow. */
+  terminal: string[];
 }
 
 /**
- * High/critical priority AND actionable. Done and abandoned tasks are
+ * The status names behind the /tasks scope presets and the Home widgets, from
+ * the stored workflows of the projects. The built-in names are always in, in
+ * front: a project that is not in `byProject` (not loaded yet, or its list is
+ * not readable) reads as the built-in workflow. A name that is terminal in one
+ * workflow and open in another lands in both lists; a request asks for the
+ * union and the per-task resolvers drop the rows where it means the other
+ * thing. An unreadable stored definition reads as the built-in workflow.
+ */
+export function workflowStatusNames(byProject: ReadonlyMap<string, readonly Workflow[]>): WorkflowStatusNames {
+  const actionable = new Set<string>(ACTIONABLE_STATUSES);
+  const review = new Set<string>(BUILT_IN_REVIEW_STATES);
+  const terminal = new Set<string>(BUILT_IN_TERMINAL_STATES);
+  for (const rows of byProject.values()) {
+    for (const w of rows) {
+      for (const name of storedTerminalStates(w)) terminal.add(name);
+      for (const name of storedWorkStates(w)) if (!NON_ACTIONABLE_STATUSES.has(name)) actionable.add(name);
+      for (const name of storedReviewStates(w)) review.add(name);
+    }
+  }
+  return { actionable: [...actionable], review: [...review], terminal: [...terminal] };
+}
+
+/**
+ * The status names the priority and mine widgets ask for: the three built-in
+ * actionable ones plus every non-terminal state of a stored workflow. A name
+ * that is terminal in one workflow and open in another is requested; the
+ * per-task check in isActionableTask drops the rows where it is terminal.
+ */
+export function actionableStatusParam(byProject: ReadonlyMap<string, readonly Workflow[]>): string {
+  return workflowStatusNames(byProject).actionable.join(",");
+}
+
+/**
+ * Actionable work: not a backlog draft, not abandoned and not in a terminal
+ * state of its own workflow (so a custom non-terminal state is actionable and
+ * a custom terminal state is done). Without `terminalStatesOf` only the
+ * built-in allowlist (open, in progress, review) counts.
+ */
+export function isActionableTask(
+  t: Pick<Task, "status"> & Partial<WorkflowTask>,
+  terminalStatesOf?: TerminalStatesOf,
+): boolean {
+  if (!terminalStatesOf) return ACTIONABLE_STATUSES.has(t.status);
+  if (NON_ACTIONABLE_STATUSES.has(t.status)) return false;
+  return !terminalStatesOf({ projectId: t.projectId ?? "", workflowId: t.workflowId }).has(t.status);
+}
+
+/**
+ * High/critical priority AND actionable (isActionableTask). Done and abandoned tasks are
  * finished, and backlog drafts are not promoted yet (they surface in their own
  * widget instead).
  *
@@ -88,9 +159,7 @@ export function isPriorityTask(
   terminalStatesOf?: TerminalStatesOf,
 ): boolean {
   if (t.priority !== "CRITICAL" && t.priority !== "HIGH") return false;
-  if (!terminalStatesOf) return ACTIONABLE_STATUSES.has(t.status);
-  if (NON_ACTIONABLE_STATUSES.has(t.status)) return false;
-  return !terminalStatesOf({ projectId: t.projectId ?? "", workflowId: t.workflowId }).has(t.status);
+  return isActionableTask(t, terminalStatesOf);
 }
 
 // ── Active (open + in_progress) ───────────────────────────────────────────────
@@ -152,3 +221,25 @@ export const WIDGET_REQUESTS: Record<WidgetKey, WidgetRequest> = {
   review: { status: "review", limit: WIDGET_LIMIT },
   done: { status: "done", recency: "recent", limit: WIDGET_LIMIT },
 };
+
+/**
+ * The request of one widget once the projects' workflows are known: the mine
+ * and priority widgets ask for every actionable name, the review widget for
+ * every review-like name and the done widget for every terminal name (the
+ * `/tasks` presets of the same scopes resolve the same lists). Without any
+ * workflow this is WIDGET_REQUESTS[key], the fixed built-in lists, which stay
+ * the fallback when the workflows cannot be read. The widgets that are not
+ * defined by a workflow (backlog, active) keep their fixed request.
+ */
+export function widgetRequest(
+  key: WidgetKey,
+  byProject: ReadonlyMap<string, readonly Workflow[]>,
+): WidgetRequest {
+  const base = WIDGET_REQUESTS[key];
+  if (key === "mine" || key === "priority") {
+    return { ...base, status: workflowStatusNames(byProject).actionable.join(",") };
+  }
+  if (key === "review") return { ...base, status: workflowStatusNames(byProject).review.join(",") };
+  if (key === "done") return { ...base, status: workflowStatusNames(byProject).terminal.join(",") };
+  return base;
+}

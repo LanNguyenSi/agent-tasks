@@ -19,7 +19,13 @@ import {
   isBacklogTask,
   isPriorityTask,
   actionableStatusParam,
+  isActionableTask,
+  reviewStatesResolver,
   terminalStatesResolver,
+  widgetRequest,
+  workflowStatusNames,
+  WIDGET_REQUESTS,
+  type WidgetKey,
 } from "../../src/app/home/widgetFilters";
 import type { Workflow } from "../../src/lib/api";
 
@@ -209,5 +215,206 @@ describe("actionableStatusParam", () => {
   it("never asks for backlog or abandoned, even if a stored definition names them", () => {
     const odd = workflow({ id: "wf-b", states: [["backlog", false], ["abandoned", false], ["qa", false]] });
     expect(actionableStatusParam(new Map([["p1", [odd]]]))).toBe("open,in_progress,review,qa");
+  });
+});
+
+// ── Review-like and terminal names, widget requests ───────────────────────────
+//
+// reviewStatesResolver is a port of the backend's isReviewState
+// (services/default-workflow.ts). The expected names below are what the
+// backend's reviewStates() / terminalStates() return for the same definitions
+// (measured by running them on these fixtures); the workflow rows here are the
+// frontend shape of those definitions.
+
+function def(
+  initialState: string,
+  states: [string, boolean][],
+  edges: [string, string][],
+  over: Partial<Workflow> & { id: string },
+): Workflow {
+  return {
+    projectId: "p1",
+    name: over.id,
+    isDefault: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...over,
+    definition: {
+      states: states.map(([name, terminal]) => ({ name, label: name, terminal })),
+      transitions: edges.map(([from, to]) => ({ from, to })),
+      initialState,
+    },
+  } as Workflow;
+}
+
+const BUILT_IN_DEF = def(
+  "open",
+  [["open", false], ["in_progress", false], ["review", false], ["done", true]],
+  [["open", "in_progress"], ["in_progress", "review"], ["in_progress", "done"], ["in_progress", "open"], ["review", "done"], ["review", "in_progress"]],
+  { id: "wf-builtin" },
+);
+
+// The retired seven-stage pipeline with `open` as its entry state.
+const SEVEN_STAGE = def(
+  "open",
+  [["open", false], ["spec", false], ["plan", false], ["implement", false], ["test", false], ["review", false], ["done", true]],
+  [
+    ["open", "spec"], ["spec", "plan"], ["plan", "implement"], ["implement", "test"], ["test", "review"],
+    ["test", "implement"], ["review", "done"], ["review", "implement"], ["implement", "plan"], ["plan", "spec"], ["spec", "open"],
+  ],
+  { id: "wf-seven-stage" },
+);
+
+// Custom names: qa is the review-like state, shipped and wontfix are finished.
+const QA_FLOW = def(
+  "open",
+  [["open", false], ["work", false], ["qa", false], ["shipped", true], ["wontfix", true]],
+  [["open", "work"], ["work", "qa"], ["qa", "shipped"], ["qa", "work"], ["work", "wontfix"]],
+  { id: "wf-qa" },
+);
+
+// The entry state has an edge to a terminal one and the terminal states `done` and
+// `closed` have edges to each other (none of them is review-like); hotfix is reachable from the entry state and ends in a
+// terminal one (not review-like); check is two steps in (review-like); lonely has no edge
+// to a terminal state.
+const EDGY = def(
+  "open",
+  [["open", false], ["hotfix", false], ["work", false], ["check", false], ["done", true], ["closed", true], ["lonely", false]],
+  [["open", "done"], ["done", "closed"], ["closed", "done"], ["open", "hotfix"], ["hotfix", "done"], ["open", "work"], ["work", "check"], ["check", "done"], ["check", "work"], ["open", "lonely"]],
+  { id: "wf-edgy" },
+);
+
+const taskIn = (projectId: string, workflowId?: string) => ({ projectId, workflowId });
+
+describe("reviewStatesResolver: parity with the backend isReviewState", () => {
+  it.each([
+    ["built-in workflow", BUILT_IN_DEF, ["review"]],
+    ["seven-stage workflow", SEVEN_STAGE, ["review"]],
+    ["custom review-like name", QA_FLOW, ["qa"]],
+    ["entry-state targets and dead ends are not review-like", EDGY, ["check"]],
+  ])("%s", (_label, wf, expected) => {
+    expect([...reviewStatesResolver(new Map([["p1", [wf]]]))(taskIn("p1"))].sort()).toEqual(expected);
+  });
+
+  it("reads the legacy backlog-entry shape like the sanitized backend definition", () => {
+    // Stored with initialState backlog and a backlog state; the backend's
+    // sanitizeStoredDefinition turns the entry state into open and reviewStates()
+    // then answers `review`.
+    const legacy = def(
+      "backlog",
+      [["backlog", false], ["spec", false], ["plan", false], ["implement", false], ["test", false], ["review", false], ["done", true]],
+      [["backlog", "spec"], ["spec", "plan"], ["spec", "backlog"], ["plan", "implement"], ["implement", "test"], ["test", "review"], ["review", "done"], ["review", "implement"]],
+      { id: "wf-legacy" },
+    );
+    expect([...reviewStatesResolver(new Map([["p1", [legacy]]]))(taskIn("p1"))]).toEqual(["review"]);
+  });
+
+  it("never lists backlog, and lists abandoned only where the stored definition makes it review-like like the backend does", () => {
+    const odd = def("open", [["open", false], ["backlog", false], ["abandoned", false], ["done", true]], [["open", "backlog"], ["backlog", "done"], ["abandoned", "done"]], { id: "wf-odd" });
+    expect([...reviewStatesResolver(new Map([["p1", [odd]]]))(taskIn("p1"))]).toEqual(["abandoned"]);
+  });
+
+  it("reads a project that is not loaded as the built-in workflow", () => {
+    expect([...reviewStatesResolver(new Map())(taskIn("p9"))]).toEqual(["review"]);
+  });
+
+  it("reads an unreadable stored definition as the built-in workflow", () => {
+    const broken = { ...BUILT_IN_DEF, id: "wf-x", definition: null } as unknown as Workflow;
+    expect([...reviewStatesResolver(new Map([["p1", [broken]]]))(taskIn("p1"))]).toEqual(["review"]);
+  });
+
+  it("uses the pinned workflow of a task before the project default", () => {
+    const pinned = def("open", [["open", false], ["work", false], ["audit", false], ["closed", true]], [["open", "work"], ["work", "audit"], ["audit", "closed"]], { id: "wf-pinned", isDefault: false });
+    const resolve = reviewStatesResolver(new Map([["p1", [QA_FLOW, pinned]]]));
+    expect([...resolve(taskIn("p1"))]).toEqual(["qa"]);
+    expect([...resolve(taskIn("p1", "wf-pinned"))]).toEqual(["audit"]);
+  });
+});
+
+describe("workflowStatusNames", () => {
+  it("is the built-in lists while no workflow is known", () => {
+    expect(workflowStatusNames(new Map())).toEqual({
+      actionable: ["open", "in_progress", "review"],
+      review: ["review"],
+      terminal: ["done"],
+    });
+  });
+
+  it("adds the custom names of the stored workflows after the built-in ones", () => {
+    expect(workflowStatusNames(new Map([["p1", [QA_FLOW]]]))).toEqual({
+      actionable: ["open", "in_progress", "review", "work", "qa"],
+      review: ["review", "qa"],
+      terminal: ["done", "shipped", "wontfix"],
+    });
+  });
+
+  it("lists the seven-stage names", () => {
+    const names = workflowStatusNames(new Map([["p1", [SEVEN_STAGE]]]));
+    expect(names.actionable).toEqual(["open", "in_progress", "review", "spec", "plan", "implement", "test"]);
+    expect(names.review).toEqual(["review"]);
+    expect(names.terminal).toEqual(["done"]);
+  });
+
+  it("keeps a name that is terminal in one workflow and open in another in both lists", () => {
+    const other = def("open", [["open", false], ["shipped", false], ["closed", true]], [["open", "shipped"], ["shipped", "closed"]], { id: "wf-o", projectId: "p2" });
+    const names = workflowStatusNames(new Map([["p1", [QA_FLOW]], ["p2", [other]]]));
+    expect(names.terminal).toContain("shipped");
+    expect(names.actionable).toContain("shipped");
+  });
+
+  it("agrees with actionableStatusParam", () => {
+    const byProject = new Map([["p1", [QA_FLOW]]]);
+    expect(actionableStatusParam(byProject)).toBe(workflowStatusNames(byProject).actionable.join(","));
+  });
+});
+
+describe("isActionableTask", () => {
+  const resolve = terminalStatesResolver(new Map([["p1", [QA_FLOW]]]));
+
+  it("counts a custom non-terminal state, not a custom terminal one", () => {
+    expect(isActionableTask({ status: "qa", projectId: "p1" }, resolve)).toBe(true);
+    expect(isActionableTask({ status: "shipped", projectId: "p1" }, resolve)).toBe(false);
+  });
+
+  it("keeps backlog and abandoned out", () => {
+    expect(isActionableTask({ status: "backlog", projectId: "p1" }, resolve)).toBe(false);
+    expect(isActionableTask({ status: "abandoned", projectId: "p1" }, resolve)).toBe(false);
+  });
+
+  it("is the built-in allowlist without a resolver", () => {
+    expect(isActionableTask({ status: "review" })).toBe(true);
+    expect(isActionableTask({ status: "qa" })).toBe(false);
+  });
+});
+
+describe("widgetRequest", () => {
+  const KEYS = Object.keys(WIDGET_REQUESTS) as WidgetKey[];
+  const byProject = new Map([["p1", [QA_FLOW]]]);
+
+  it("is the fixed request of every widget while no workflow is known", () => {
+    for (const key of KEYS) expect(widgetRequest(key, new Map())).toEqual(WIDGET_REQUESTS[key]);
+  });
+
+  it("asks the mine widget for the actionable names, mine only", () => {
+    expect(widgetRequest("mine", byProject)).toEqual({ ...WIDGET_REQUESTS.mine, status: "open,in_progress,review,work,qa" });
+  });
+
+  it("asks the priority widget for the actionable names and the priority filter", () => {
+    expect(widgetRequest("priority", byProject)).toEqual({ ...WIDGET_REQUESTS.priority, status: "open,in_progress,review,work,qa" });
+  });
+
+  it("asks the review widget for the review-like names", () => {
+    expect(widgetRequest("review", byProject)).toEqual({ ...WIDGET_REQUESTS.review, status: "review,qa" });
+  });
+
+  it("asks the done widget for the terminal names and keeps the recency window", () => {
+    const r = widgetRequest("done", byProject);
+    expect(r.status).toBe("done,shipped,wontfix");
+    expect(r.recency).toBe("recent");
+  });
+
+  it("leaves the backlog and active widgets alone", () => {
+    expect(widgetRequest("backlog", byProject)).toEqual(WIDGET_REQUESTS.backlog);
+    expect(widgetRequest("open", byProject)).toEqual(WIDGET_REQUESTS.open);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
@@ -8,6 +8,7 @@ import {
   updateTask,
   type TeamTasksCounts,
   type TeamTasksProject,
+  type Workflow,
 } from "../../lib/api";
 import { projectsHref, taskHref } from "../../lib/routes";
 import { useCurrentTeam } from "../../lib/teamSwitch";
@@ -27,6 +28,8 @@ import Select from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
 import NewTaskFlow from "../../components/tasks/NewTaskFlow";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import { workflowStatusNames, type WorkflowStatusNames } from "../home/widgetFilters";
+import { useProjectWorkflows } from "./_components/useProjectWorkflows";
 // Column definitions live outside this route file — see _components/columns.tsx
 // for why (Next's typed-routes codegen rejects extra named exports from a
 // page.tsx).
@@ -89,7 +92,6 @@ const SCOPE_TAB_LABELS: Record<Scope, string> = {
 };
 
 interface ScopePreset {
-  statuses?: Status[];
   priorities?: Priority[];
   mine?: boolean;
   defaultSort?: { column: SortColumn; direction: SortDirection };
@@ -97,12 +99,59 @@ interface ScopePreset {
 
 const SCOPE_PRESETS: Record<Scope, ScopePreset> = {
   all: {},
-  open: { statuses: ["open", "in_progress"] },
-  mine: { mine: true, statuses: ["open", "in_progress", "review"] },
-  priority: { priorities: ["CRITICAL", "HIGH"], statuses: ["open", "in_progress", "review"] },
-  review: { statuses: ["review"] },
-  done: { statuses: ["done"], defaultSort: { column: "updated", direction: "desc" } },
+  open: {},
+  mine: { mine: true },
+  priority: { priorities: ["CRITICAL", "HIGH"] },
+  review: {},
+  done: { defaultSort: { column: "updated", direction: "desc" } },
 };
+
+// The status chips a scope tab preselects. Active is fixed (open, in progress);
+// the other tabs follow the workflow vocabulary of the team's projects (see
+// workflowStatusNames: with no workflow known these are the built-in lists
+// open/in_progress/review, review and done): My Tasks and Priority are the
+// actionable states, In Review the review-like ones, Recently Done the
+// terminal ones. The same lists the Home widgets of those scopes request.
+function presetStatuses(scope: Scope, names: WorkflowStatusNames): string[] {
+  switch (scope) {
+    case "open":
+      return ["open", "in_progress"];
+    case "mine":
+    case "priority":
+      return names.actionable;
+    case "review":
+      return names.review;
+    case "done":
+      return names.terminal;
+    default:
+      return [];
+  }
+}
+
+// One chip per status the filter knows: the five built-in names, then every
+// other state name of the loaded workflows (first spelling of its label wins),
+// so a custom state can be filtered on.
+function statusChipsFor(
+  byProject: ReadonlyMap<string, readonly Workflow[]>,
+): { name: string; label: string }[] {
+  const chips = STATUSES.map((name) => ({ name: name as string, label: STATUS_CHIP_LABELS[name] }));
+  const seen = new Set<string>(STATUSES);
+  for (const rows of byProject.values()) {
+    for (const w of rows) {
+      const states = w.definition?.states;
+      if (!Array.isArray(states)) continue;
+      for (const st of states) {
+        // A stored row may be malformed (legacy or hand-edited); skip entries
+        // without a string name instead of crashing the whole page.
+        if (!st || typeof st !== "object" || typeof st.name !== "string") continue;
+        if (seen.has(st.name)) continue;
+        seen.add(st.name);
+        chips.push({ name: st.name, label: st.label || st.name });
+      }
+    }
+  }
+  return chips;
+}
 
 const EMPTY_SENTINEL = "__any__";
 
@@ -112,13 +161,24 @@ interface FilterState<T> {
   source: FilterSource;
 }
 
-function parseCsv<T extends string>(value: string | null, allowed: readonly T[]): T[] {
+// `allowed` null keeps every name: the status filter does not know the team's
+// vocabulary until the workflows are read (and never does for a project whose
+// workflow list answers 403), and a custom name in the URL must reach the
+// first request and survive a chip click meanwhile. The team task list does
+// not check the names, so a name no workflow defines matches no task and stays
+// in the URL until the filter is cleared or reset.
+function parseCsv<T extends string>(value: string | null, allowed: readonly T[] | null): T[] {
   if (!value) return [];
-  const set = new Set(allowed as readonly string[]);
+  const set = allowed ? new Set(allowed as readonly string[]) : null;
+  const seen = new Set<string>();
   return value
     .split(",")
     .map((v) => v.trim())
-    .filter((v): v is T => set.has(v));
+    .filter((v): v is T => {
+      if (!v || v === EMPTY_SENTINEL || seen.has(v)) return false;
+      seen.add(v);
+      return set === null || set.has(v);
+    });
 }
 
 // Resolves a multi-value URL param with preset fallback. Supports the
@@ -127,7 +187,7 @@ function parseCsv<T extends string>(value: string | null, allowed: readonly T[])
 // without the preset snapping back on the next render.
 function resolveFilter<T extends string>(
   rawParam: string | null,
-  allowed: readonly T[],
+  allowed: readonly T[] | null,
   presetDefault: readonly T[],
 ): FilterState<T> {
   if (rawParam === EMPTY_SENTINEL) return { values: [], source: "url" };
@@ -312,8 +372,16 @@ function TasksPageInner() {
     return SCOPES.includes(raw as Scope) ? (raw as Scope) : "all";
   })();
   const preset = SCOPE_PRESETS[scope];
+  // The status vocabulary of the team's projects: what the scope presets
+  // preselect and which names the status filter accepts. Built-in names until
+  // the workflows are read (and for a project whose workflows cannot be read).
+  const workflowsByProject = useProjectWorkflows(selectedTeamId, projects);
+  const statusNames = useMemo(() => workflowStatusNames(workflowsByProject), [workflowsByProject]);
+  const statusChips = useMemo(() => statusChipsFor(workflowsByProject), [workflowsByProject]);
+  const presetStatusList = useMemo(() => presetStatuses(scope, statusNames), [scope, statusNames]);
 
-  const statusState = resolveFilter(searchParams.get("status"), STATUSES, preset.statuses ?? []);
+  // The names in the URL are not narrowed to the chips: see parseCsv.
+  const statusState = resolveFilter<string>(searchParams.get("status"), null, presetStatusList);
   const priorityState = resolveFilter(searchParams.get("priority"), PRIORITIES, preset.priorities ?? []);
   const statusFilter = statusState.values;
   const priorityFilter = priorityState.values;
@@ -712,7 +780,7 @@ function TasksPageInner() {
   // the H1 reads "Tasks · custom filter", and the row offers Reset.
   // Project and search stay ordinary filters (their own clear affordances).
   const isCustomFilter =
-    !sameValues(statusFilter, preset.statuses ?? []) ||
+    !sameValues(statusFilter, presetStatusList) ||
     !sameValues(priorityFilter, preset.priorities ?? []) ||
     mineOnly !== (preset.mine === true);
 
@@ -909,15 +977,15 @@ function TasksPageInner() {
         <div className="tasks-filter-band">
           <div className="tasks-filter-row">
             <span className="tasks-filter-label">Status</span>
-            {STATUSES.map((s) => (
+            {statusChips.map((s) => (
               <button
-                key={s}
+                key={s.name}
                 type="button"
-                aria-pressed={statusFilter.includes(s)}
-                className={`filter-chip ${statusFilter.includes(s) ? "filter-chip-active" : ""}`}
-                onClick={() => toggleInCsv("status", s, preset.statuses ?? [])}
+                aria-pressed={statusFilter.includes(s.name)}
+                className={`filter-chip ${statusFilter.includes(s.name) ? "filter-chip-active" : ""}`}
+                onClick={() => toggleInCsv("status", s.name, presetStatusList)}
               >
-                {STATUS_CHIP_LABELS[s]}
+                {s.label}
               </button>
             ))}
             <span className="tasks-filter-label tasks-filter-label--spaced">Priority</span>
