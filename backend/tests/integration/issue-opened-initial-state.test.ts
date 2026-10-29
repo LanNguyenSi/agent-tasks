@@ -27,6 +27,13 @@ vi.mock("../../src/lib/prisma.js", () => ({
   ),
 }));
 
+// The real delivery runs (a project without a notification webhook sends nothing); the spy records the calls.
+vi.mock("../../src/services/signal.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../src/services/signal.js")>();
+  return { ...original, maybeDeliverSignalWebhook: vi.fn(original.maybeDeliverSignalWebhook) };
+});
+
+import { maybeDeliverSignalWebhook } from "../../src/services/signal.js";
 import { handleIssuesEvent } from "../../src/services/github-webhook.js";
 import { GroundingGithubWebhookService } from "../../src/services/grounding-github-webhook.js";
 
@@ -111,6 +118,7 @@ afterAll(async () => {
   if (store) await store.close();
 });
 beforeEach(async () => {
+  vi.mocked(maybeDeliverSignalWebhook).mockClear();
   userId = randomUUID();
   await db.user.create({ data: { id: userId, login: `u-${userId}` } });
   teamId = randomUUID();
@@ -235,5 +243,27 @@ describe("issues.opened through the grounding webhook handler: replay", () => {
     expect(replay).toMatchObject({ duplicate: true, changed: 1 });
     expect(await tasksOf(projectId)).toHaveLength(1);
     expect(await signalsOf(projectId)).toHaveLength(1);
+  });
+
+  it("hands each signal to the outbound notification webhook once, after the commit, and not again on a replay", async () => {
+    const projectId = await seedProject(queuedDefinition);
+    await seedAgent();
+    await seedAgent();
+    const service = new GroundingGithubWebhookService(db);
+    const input = {
+      deliveryId: `notify-${randomUUID()}`,
+      event: "issues",
+      rawBody: JSON.stringify({ action: "opened", repository: { full_name: repo }, issue: { number: 4, title: "Issue", body: null, html_url: `https://github.com/${repo}/issues/4`, state: "open" } }),
+    };
+
+    await service.handle(input);
+    const stored = await signalsOf(projectId);
+    expect(stored).toHaveLength(2);
+    // Every delivered signal is a committed row: the spy gets the rows the transaction wrote.
+    expect(vi.mocked(maybeDeliverSignalWebhook).mock.calls.map(([signal]) => signal.id).sort()).toEqual(stored.map((s) => s.id).sort());
+
+    vi.mocked(maybeDeliverSignalWebhook).mockClear();
+    await service.handle(input);
+    expect(vi.mocked(maybeDeliverSignalWebhook)).not.toHaveBeenCalled();
   });
 });
