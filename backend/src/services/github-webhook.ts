@@ -12,6 +12,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { acknowledgeSignalsForTask } from "./signal.js";
+import { emitTaskAvailableSignal } from "./task-signal.js";
+import { createInitialStatus } from "./task-status-input.js";
 import { STATUS_VERSION_BUMP, taskStatusVersionWhere } from "./task-status-cas.js";
 import { logger } from "../lib/logger.js";
 import {
@@ -285,13 +287,15 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
 
   for (const project of projects) {
     if (payload.action === "opened") {
-      // Create a new task for the opened issue
+      // Create a new task for the opened issue, in the initial state of the
+      // project's default workflow (`open` in the built-in one). Each linked
+      // project resolves its own.
       const task = await prisma.task.create({
         data: {
           projectId: project.id,
           title: `[GH #${payload.issue.number}] ${payload.issue.title}`,
           description: payload.issue.body ?? undefined,
-          status: "open",
+          status: await createInitialStatus(prisma, project.id, undefined),
         },
       });
 
@@ -301,6 +305,15 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
         taskId: task.id,
         payload: { source: "github_webhook", issue_number: payload.issue.number },
       });
+
+      // The new task is claimable from its initial state: tell the claim-eligible
+      // agents of the team. Best effort, as for every other creator: a failed
+      // signal must not abort the other linked projects of this delivery.
+      try {
+        await emitTaskAvailableSignal(task.id, project.id, "webhook", "GitHub");
+      } catch (err) {
+        logger.warn({ component: "github-webhook", taskId: task.id, err }, "task_available signal for a webhook-created task failed");
+      }
     } else if (payload.action === "closed") {
       // Find and close tasks that match this issue. v1 backlog gate: an
       // unpromoted backlog task must never be moved by a webhook event, so

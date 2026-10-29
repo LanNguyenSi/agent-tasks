@@ -5,6 +5,12 @@ const harness = vi.hoisted(() => ({ db: null as PrismaClient | null, wrapper: { 
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
 vi.mock("../../src/services/grounding-client.js", () => ({ getGroundingClient: () => harness.wrapper }));
+// Records the (projectId, workflowId) of every initial-state resolution, then runs the real one.
+const initialStatusCalls = vi.hoisted(() => [] as Array<[string, string | undefined]>);
+vi.mock("../../src/services/task-status-input.js", async importOriginal => {
+  const original = await importOriginal<typeof import("../../src/services/task-status-input.js")>();
+  return { ...original, createInitialStatus: (db: Parameters<typeof original.createInitialStatus>[0], projectId: string, workflowId: string | undefined) => { initialStatusCalls.push([projectId, workflowId]); return original.createInitialStatus(db, projectId, workflowId); } };
+});
 import { createApp } from "../../src/app.js";
 import { createGroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 import { completionStore, completionFixture, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
@@ -259,6 +265,21 @@ it("selected creation without a status follows the pinned workflow's initial sta
   const explicitTask = (await explicit.json() as { task: { id: string; status: string } }).task;
   expect(explicitTask.status).toBe("doing");
   expect(await store.db.signal.count({ where: { taskId: explicitTask.id, type: "task_available" } })).toBe(0);
+});
+it("selected creation refuses a workflowId of another project as bad_state before any initial-state read of that pin", async () => {
+  // The initial state must be resolved only after the workflow-ownership check: a foreign pin is refused
+  // and never has its workflow row read for the initial status (createInitialStatus is not even called).
+  const foreign = await store.db.project.create({ data: { teamId: ids.team, name: "Foreign", slug: randomUUID() } });
+  const foreignPin = await store.db.workflow.create({ data: { projectId: foreign.id, name: "Foreign pin", isDefault: false, definition: pinnedDefinition } });
+  const count = await createdRows(); initialStatusCalls.length = 0;
+  const refused = await app(selected()).fetch(createRequest({ title: "Foreign pin", workflowId: foreignPin.id }));
+  expect(refused.status).toBe(409); expect(await refused.json()).toEqual({ error: "bad_state" });
+  expect(initialStatusCalls).toEqual([]);
+  expect(await createdRows()).toBe(count);
+  // Control, so the recorder is not inert: this project's own pin does reach the initial-state resolution.
+  const ownPin = await store.db.workflow.create({ data: { projectId: f.projectId, name: "Own pin", isDefault: false, definition: pinnedDefinition } });
+  const accepted = await app(selected()).fetch(createRequest({ title: "Own pin", workflowId: ownPin.id })); expect(accepted.status).toBe(201);
+  expect(initialStatusCalls).toEqual([[f.projectId, ownPin.id]]);
 });
 it("selected creation with an empty or over-long status gets the old invalid_value issue", async () => {
   for (const status of ["", "x".repeat(101)]) {

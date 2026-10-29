@@ -13,6 +13,7 @@ const {
   mockWorkflowFindFirst,
   mockWorkflowFindUnique,
   mockWorkflowFindMany,
+  mockEmitTaskAvailable,
 } = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskUpdate: vi.fn().mockResolvedValue({}),
@@ -28,6 +29,7 @@ const {
   mockWorkflowFindFirst: vi.fn().mockResolvedValue(null),
   mockWorkflowFindUnique: vi.fn().mockResolvedValue(null),
   mockWorkflowFindMany: vi.fn().mockResolvedValue([]),
+  mockEmitTaskAvailable: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -44,6 +46,10 @@ vi.mock("../../src/lib/prisma.js", () => ({
     signal: { updateMany: mockSignalUpdateMany },
     workflow: { findFirst: mockWorkflowFindFirst, findUnique: mockWorkflowFindUnique, findMany: mockWorkflowFindMany },
   },
+}));
+
+vi.mock("../../src/services/task-signal.js", () => ({
+  emitTaskAvailableSignal: mockEmitTaskAvailable,
 }));
 
 vi.mock("../../src/services/audit.js", () => ({
@@ -414,6 +420,86 @@ describe("handlePullRequestEvent", () => {
         content: expect.stringContaining("PR #42 opened"),
       }),
     });
+  });
+});
+
+describe("handleIssuesEvent: issue opened", () => {
+  const openedPayload = {
+    action: "opened" as const,
+    repository: { full_name: "test/repo" },
+    issue: { number: 7, title: "Something", body: "Details", html_url: "https://github.com/test/repo/issues/7", state: "open" as const },
+  };
+  const queuedDefinition = {
+    initialState: "queued",
+    states: [
+      { name: "queued", label: "Queued", terminal: false },
+      { name: "working", label: "Working", terminal: false },
+      { name: "shipped", label: "Shipped", terminal: true },
+    ],
+    transitions: [{ from: "queued", to: "working" }, { from: "working", to: "shipped" }],
+  };
+
+  it("creates the task as open in a project without a stored workflow and signals it", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+
+    await handleIssuesEvent(openedPayload);
+
+    expect(mockTaskCreate).toHaveBeenCalledWith({
+      data: { projectId: "proj-1", title: "[GH #7] Something", description: "Details", status: "open" },
+    });
+    expect(mockEmitTaskAvailable).toHaveBeenCalledWith("new-task-1", "proj-1", "webhook", "GitHub");
+  });
+
+  it("creates the task in the initial state of the project's stored default workflow", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockWorkflowFindFirst.mockResolvedValue({ definition: queuedDefinition });
+
+    await handleIssuesEvent(openedPayload);
+
+    expect(mockTaskCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ status: "queued" }) });
+    expect(mockEmitTaskAvailable).toHaveBeenCalledWith("new-task-1", "proj-1", "webhook", "GitHub");
+  });
+
+  it("falls back to the built-in initial state when the stored definition cannot be read", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockWorkflowFindFirst.mockResolvedValue({ definition: { unreadable: true } });
+
+    await handleIssuesEvent(openedPayload);
+
+    expect(mockTaskCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ status: "open" }) });
+  });
+
+  it("resolves the initial state per linked project", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-a" }, { id: "proj-b" }]);
+    mockWorkflowFindFirst.mockImplementation(({ where }: { where: { projectId: string } }) =>
+      Promise.resolve(where.projectId === "proj-a" ? { definition: queuedDefinition } : null),
+    );
+
+    await handleIssuesEvent(openedPayload);
+
+    expect(mockTaskCreate).toHaveBeenNthCalledWith(1, { data: expect.objectContaining({ projectId: "proj-a", status: "queued" }) });
+    expect(mockTaskCreate).toHaveBeenNthCalledWith(2, { data: expect.objectContaining({ projectId: "proj-b", status: "open" }) });
+    expect(mockEmitTaskAvailable).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed task_available signal does not stop the other linked projects", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-a" }, { id: "proj-b" }]);
+    mockEmitTaskAvailable.mockRejectedValueOnce(new Error("signal store down"));
+
+    await handleIssuesEvent(openedPayload);
+
+    expect(mockTaskCreate).toHaveBeenCalledTimes(2);
+    expect(mockEmitTaskAvailable).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not signal for an issue event that is not an opened one", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([]);
+
+    await handleIssuesEvent({ ...openedPayload, action: "closed" });
+
+    expect(mockTaskCreate).not.toHaveBeenCalled();
+    expect(mockEmitTaskAvailable).not.toHaveBeenCalled();
   });
 });
 

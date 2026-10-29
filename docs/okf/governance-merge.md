@@ -248,8 +248,12 @@ delivery is at-most-once: a handler that throws is logged and a redelivery
 does not run it again. The route answers `200` with `{ received: true, event }`
 before the handler runs; the handlers run detached after the response. Per
 event: `ping` does nothing; `push` sets `githubSyncAt` on every project
-linked to the repository; `issues` `opened` creates an `open` task titled
-`[GH #<n>] <issue title>` in each linked project, and `closed` moves the
+linked to the repository; `issues` `opened` creates a task titled
+`[GH #<n>] <issue title>` in each linked project, in the initial state of that
+project's default workflow (`createInitialStatus` with no `workflowId`: the
+built-in `open` when the project has no default row or its stored definition
+cannot be read) and sends `task_available` to the team's claim-eligible agents
+(`emitTaskAvailableSignal`, best effort per project), and `closed` moves the
 matching `[GH #<n>]` tasks outside the terminal states of their own workflow
 and `backlog` to that workflow's first terminal state (`done` in the built-in
 workflow);
@@ -292,4 +296,4 @@ Related: [receipt contract](../grounding-receipt-contract.md),
 
 Administrative holds participate in repository fencing. Group discovery includes held unenrolled peers, and held seeds fail admission. Every matching held-task webhook fact remains pending, including PR-open, reopen and review changes requested; it cannot select the unprovisioned compatibility branch. The migration-only app composition also selects these configured adapters. See [migration and rollback](../grounding-migration.md).
 
-Configured issue-open deliveries apply the runtime project creation selection. Selected creation validates that the preserved `open` state exists and is neither review nor terminal, then provisions the external cohort and binding in the same delivery transaction. Workflow, provisioning or audit failure rolls back all creation and delivery effects. Unselected creation and exact delivery deduplication retain their behavior.
+Configured issue-open deliveries apply the runtime project creation selection. Every created task starts in the initial state of the project's default workflow (`createInitialStatus` on the delivery transaction, `open` for the built-in workflow); selected creation validates that this state exists and is neither review nor terminal, then provisions the external cohort and binding in the same delivery transaction. The `task_available` rows (`createTaskAvailableSignalsInTx`) are written in that same transaction, selected or not, and their notification webhooks go out only after the commit; a replayed delivery returns its stored result and writes none. Workflow, provisioning or audit failure rolls back all creation and delivery effects, signals included. Exact delivery deduplication retains its behavior.
