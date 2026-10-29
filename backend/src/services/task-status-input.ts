@@ -130,6 +130,36 @@ export async function createStatusVocabulary(
 }
 
 /**
+ * The status a create without an explicit status starts in: the initial state
+ * of the effective definition, resolved with the same precedence as
+ * `createStatusVocabulary` (pinned workflow of this project, else project
+ * default, else built-in). An unreadable stored definition falls back to the
+ * built-in initial state, and a backlog initial state never surfaces (the
+ * sanitizer rewrites the legacy shape to `open`), so the answer is never
+ * `backlog` and an agent's forced-backlog create can never equal it.
+ */
+export async function createInitialStatus(
+  db: ProjectWorkflowReader,
+  projectId: string,
+  workflowId: string | undefined,
+): Promise<string> {
+  const initialOf = (def: WorkflowDefinitionShape): string => {
+    const initial = def?.initialState;
+    return typeof initial === "string" && initial.length > 0
+      ? initial
+      : defaultWorkflowDefinition().initialState;
+  };
+  if (workflowId) {
+    const pinned = await db.workflow.findFirst({ where: { id: workflowId, projectId }, select: { id: true, definition: true } });
+    if (pinned) return initialOf(sanitizeStoredDefinition(pinned.definition, { workflowId, projectId }));
+    // A workflowId that is not this project's is refused by the caller's own
+    // check with its own message; the initial status comes from the project
+    // default, as the create vocabulary above does.
+  }
+  return initialOf(await resolveProjectEffectiveDefinition(projectId, db));
+}
+
+/**
  * The zod error a status outside `allowed` produces: the same issue, with the
  * same message ("Invalid option: expected one of ..."), the old fixed enum
  * produced on `status`. Null when `value` is allowed.

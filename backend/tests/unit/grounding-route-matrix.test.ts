@@ -199,6 +199,7 @@ it.each(["missing", "wrong", "valid"])("N-12 selected positive create/import rej
 });
 const customStates = [{ name: "queued", label: "Queued", terminal: false }, { name: "working", label: "Working", terminal: false }, { name: "checking", label: "Checking", terminal: false }, { name: "shipped", label: "Shipped", terminal: true }];
 const customDefinition = { initialState: "queued", states: customStates, transitions: [{ from: "queued", to: "working" }, { from: "working", to: "checking" }, { from: "checking", to: "shipped" }] };
+const pinnedDefinition = { initialState: "todo", states: [{ name: "todo", label: "Todo", terminal: false }, { name: "doing", label: "Doing", terminal: false }, { name: "released", label: "Released", terminal: true }], transitions: [{ from: "todo", to: "doing" }, { from: "doing", to: "released" }] };
 const unknownStatus = (path: (string | number)[], names: string) => ({ error: "validation_error", details: [expect.objectContaining({ code: "invalid_value", path, message: `Invalid option: expected one of ${names}` })] });
 const BUILTIN_NAMES = '"backlog"|"open"|"in_progress"|"review"|"done"'; const CUSTOM_NAMES = '"backlog"|"queued"|"working"|"checking"|"shipped"';
 async function createdRows() { return store.db.task.count({ where: { projectId: f.projectId } }); }
@@ -229,6 +230,35 @@ describe.each([["built-in workflow", false, BUILTIN_NAMES, "open"], ["custom wor
     const imported = await app(selected()).fetch(createRequest({ tasks: [{ title: "A", status: initial }, { title: "B", status: "backlog" }] }, true)); expect(imported.status).toBe(201);
     expect(await imported.json()).toMatchObject({ created: 2, failed: 0 });
   });
+  it("a create without a status starts in the initial state and fires task_available there", async () => {
+    const response = await app(selected()).fetch(createRequest({ title: "No status" })); expect(response.status, JSON.stringify(await response.clone().json())).toBe(201);
+    const task = (await response.json() as { task: { id: string; status: string } }).task;
+    expect(task.status).toBe(initial);
+    expect(await store.db.signal.count({ where: { taskId: task.id, type: "task_available" } })).toBe(1);
+  });
+  it("an import row without a status starts in the initial state and fires there, an explicit backlog creates silently", async () => {
+    const imported = await app(selected()).fetch(createRequest({ tasks: [{ title: "Imported" }] }, true)); expect(imported.status, JSON.stringify(await imported.clone().json())).toBe(201);
+    expect(await imported.json()).toMatchObject({ created: 1, failed: 0 });
+    const row = await store.db.task.findFirstOrThrow({ where: { projectId: f.projectId, title: "Imported" } });
+    expect(row.status).toBe(initial);
+    expect(await store.db.signal.count({ where: { taskId: row.id, type: "task_available" } })).toBe(1);
+    const draft = await app(selected()).fetch(createRequest({ title: "Draft", status: "backlog" })); expect(draft.status).toBe(201);
+    const draftTask = (await draft.json() as { task: { id: string; status: string } }).task;
+    expect(draftTask.status).toBe("backlog");
+    expect(await store.db.signal.count({ where: { taskId: draftTask.id, type: "task_available" } })).toBe(0);
+  });
+});
+it("selected creation without a status follows the pinned workflow's initial state, and an explicit state of it wins and signals nothing", async () => {
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Custom default", isDefault: true, definition: customDefinition } });
+  const pinned = await store.db.workflow.create({ data: { projectId: f.projectId, name: "Pinned", isDefault: false, definition: pinnedDefinition } });
+  const defaulted = await app(selected()).fetch(createRequest({ title: "Pinned default", workflowId: pinned.id })); expect(defaulted.status, JSON.stringify(await defaulted.clone().json())).toBe(201);
+  const defaultTask = (await defaulted.json() as { task: { id: string; status: string } }).task;
+  expect(defaultTask.status).toBe("todo");
+  expect(await store.db.signal.count({ where: { taskId: defaultTask.id, type: "task_available" } })).toBe(1);
+  const explicit = await app(selected()).fetch(createRequest({ title: "Pinned explicit", status: "doing", workflowId: pinned.id })); expect(explicit.status).toBe(201);
+  const explicitTask = (await explicit.json() as { task: { id: string; status: string } }).task;
+  expect(explicitTask.status).toBe("doing");
+  expect(await store.db.signal.count({ where: { taskId: explicitTask.id, type: "task_available" } })).toBe(0);
 });
 it("selected creation with an empty or over-long status gets the old invalid_value issue", async () => {
   for (const status of ["", "x".repeat(101)]) {
@@ -239,6 +269,7 @@ it("selected creation with an empty or over-long status gets the old invalid_val
 it("N-07 selected agent false creation is atomically protected with unchanged backlog routing", async () => {
   const response = await app(selected()).fetch(createRequest({ title: "No bug label", debugFlavor: false, labels: [] }, false, token)); expect(response.status).toBe(201);
   const body = await response.json() as { task: { id: string; status: string } }; expect(body.task.status).toBe("backlog");
+  expect(await store.db.signal.count({ where: { taskId: body.task.id, type: "task_available" } })).toBe(0);
   expect(await store.db.groundingBinding.findUnique({ where: { taskId: body.task.id } })).toMatchObject({ protected: true, subjectMode: "TASK_SPEC" });
   expect(await store.db.groundingCohort.findUnique({ where: { taskId: body.task.id } })).toMatchObject({ mode: "EXTERNAL_V1", protected: true });
   expect((await app(selected()).fetch(createRequest({ title: "Agent bypass", status: "done" }, false, token))).status).toBe(400);

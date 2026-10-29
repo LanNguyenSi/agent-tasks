@@ -9,7 +9,7 @@ import { hasProjectAccess } from "../services/team-access.js";
 import { forbidden } from "../middleware/error.js";
 import { GroundingAccessError, groundingAuthority, groundingWorkflow, unavailable } from "../services/grounding-context.js";
 import { groundingTransaction, lockGroundingProjects } from "../services/grounding-transaction.js";
-import { createStatusVocabulary, statusInputError } from "../services/task-status-input.js";
+import { createInitialStatus, createStatusVocabulary, statusInputError } from "../services/task-status-input.js";
 import type { GroundingAttemptsService } from "../services/grounding-attempts.js";
 import { isReviewState, isTerminalState } from "../services/default-workflow.js";
 import { groundingRouteTaskInclude } from "../services/grounding-route-effects.js";
@@ -71,8 +71,13 @@ export function createGroundingCreationRouter(db: PrismaClient, attempts?: Groun
           if (body.workflowId && !await tx.workflow.findFirst({ where: { id: body.workflowId, projectId: project.id } })) throw new GroundingAccessError("bad_state", 409);
           if (body.dependsOn?.length && await tx.task.count({ where: { id: { in: [...new Set(body.dependsOn)] }, projectId: project.id } }) !== new Set(body.dependsOn).size) throw new GroundingAccessError("bad_state", 409);
           if (body.externalRef && await tx.task.findUnique({ where: { projectId_externalRef: { projectId: project.id, externalRef: body.externalRef } } })) return null;
+          // No explicit status: the effective definition's initial state, read on the same
+          // transaction as the state check below, so a workflow that does not start at `open`
+          // is neither refused as bad_state nor left outside the workflow. Resolved after the
+          // workflowId ownership check, so a foreign pin never reads another project's row.
+          const initialStatus = await createInitialStatus(tx, project.id, body.workflowId);
           const task = await tx.task.create({ data: {
-            projectId: project.id, title: body.title, description: body.description, status: actor.type === "agent" ? "backlog" : body.status ?? "open", priority: body.priority,
+            projectId: project.id, title: body.title, description: body.description, status: actor.type === "agent" ? "backlog" : body.status ?? initialStatus, priority: body.priority,
             workflowId: body.workflowId, dueAt: body.dueAt ? new Date(body.dueAt) : null, templateData: body.templateData, externalRef: body.externalRef, labels: body.labels, deliverableRepo: body.deliverableRepo,
             ...(body.debugFlavor !== undefined ? { metadata: { debugFlavor: body.debugFlavor } } : {}),
             ...(body.dependsOn?.length ? { blockedBy: { connect: [...new Set(body.dependsOn)].map(id => ({ id })) } } : {}),
@@ -85,7 +90,9 @@ export function createGroundingCreationRouter(db: PrismaClient, attempts?: Groun
           await tx.auditLog.create({ data: { projectId: project.id, taskId: task.id, actorId: actor.type === "human" ? actor.userId : null, action: batch ? "task.imported" : "task.created", payload: { externalRef: body.externalRef ?? null, groundingCreationPolicy: "explicit_external_v1", subjectMode: selection.subjectMode, actorType: actor.type } } });
           if (body.deliverableRepo) await tx.auditLog.create({ data: { projectId: project.id, taskId: task.id, actorId: actor.type === "human" ? actor.userId : null, action: "task.deliverable_repo_set", payload: { deliverableRepo: body.deliverableRepo, actorType: actor.type, via: batch ? "batch_import" : "create" } } });
           const signals: Signal[] = [];
-          if (task.status === "open") {
+          // Claimable start = the workflow's initial state, not the literal `open`; an agent's
+          // forced `backlog` never equals it, so an agent create still signals nothing.
+          if (task.status === initialStatus) {
             const agents = await tx.agentToken.findMany({ where: { teamId: project.teamId, revokedAt: null, scopes: { has: "tasks:claim" }, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }, select: { id: true }, orderBy: { id: "asc" } });
             const actorName = actor.type === "agent" ? (await tx.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent" : (await tx.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
             const context = { taskTitle: task.title, taskStatus: task.status, projectSlug: project.slug, projectName: project.name, branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber, actor: { type: actor.type, name: actorName } };

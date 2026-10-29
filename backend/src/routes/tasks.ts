@@ -104,6 +104,7 @@ import {
 } from "../services/workflow-status-filter.js";
 import { clearAllClaims, clearReview } from "../services/task-claim-fields.js";
 import {
+  createInitialStatus,
   createStatusVocabulary,
   projectStatusFilterVocabulary,
   statusInputError,
@@ -1198,8 +1199,8 @@ taskRouter.post(
     // explicit non-backlog status outright instead of silently downgrading
     // it, so the caller learns about the rule and the promote path rather
     // than getting a task in a status it never asked for. Human callers are
-    // unaffected: their explicit status (or the "open" default) passes
-    // through unchanged below.
+    // unaffected: their explicit status (or the effective workflow's initial
+    // state default) passes through unchanged below.
     if (actor.type === "agent" && body.status !== undefined && body.status !== "backlog") {
       return c.json(
         {
@@ -1210,7 +1211,6 @@ taskRouter.post(
         400,
       );
     }
-    const createStatus = actor.type === "agent" ? "backlog" : (body.status ?? "open");
 
     // Validate dependsOn before create: every blocker must exist in the same
     // project. A new task has no incoming edges yet, so no cycle is possible.
@@ -1278,6 +1278,13 @@ taskRouter.post(
       }
     }
 
+    // No explicit status: start in the effective workflow's initial state
+    // (pinned row, else project default, else built-in `open`). Resolved below
+    // the workflowId check above, so a foreign pin is refused before this
+    // route reads any workflow for its own.
+    const initialStatus = await createInitialStatus(prisma, projectId, body.workflowId);
+    const createStatus = actor.type === "agent" ? "backlog" : (body.status ?? initialStatus);
+
     let task;
     try {
       task = await prisma.task.create({
@@ -1315,9 +1322,11 @@ taskRouter.post(
       throw e;
     }
 
-    // Emit task_available signal when task is open (claimable). A backlog
-    // task is not claimable yet — no signal until an operator promotes it.
-    if (createStatus === "open") {
+    // Emit task_available signal when the task starts in its workflow's
+    // initial state (claimable). A backlog task is not claimable yet — no
+    // signal until an operator promotes it. For the built-in workflow the
+    // initial state is `open`, so behaviour there is unchanged.
+    if (createStatus === initialStatus) {
       const actorName = actor.type === "agent"
         ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
         : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
@@ -1530,14 +1539,18 @@ taskRouter.post(
       ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
       : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
 
+    // The batch carries no workflowId, so rows without a status start in the
+    // project default workflow's initial state (built-in `open` when none).
+    const initialStatus = await createInitialStatus(prisma, projectId, undefined);
+
     for (let i = 0; i < dedupedItems.length; i++) {
       const item = dedupedItems[i];
 
       // Same actor-based routing as single-create: an agent's item is always
       // forced to backlog (the upfront check above already rejected any
       // explicit non-backlog status), a human's explicit status or the
-      // "open" default passes through unchanged.
-      const itemCreateStatus = actor.type === "agent" ? "backlog" : (item.status ?? "open");
+      // initial-state default passes through unchanged.
+      const itemCreateStatus = actor.type === "agent" ? "backlog" : (item.status ?? initialStatus);
 
       try {
         const task = await prisma.task.create({
@@ -1562,8 +1575,9 @@ taskRouter.post(
         created.push({ index: i, id: task.id });
 
         // Emit signal so agents discover imported tasks. A backlog task is
-        // not claimable yet — no signal until an operator promotes it.
-        if (itemCreateStatus === "open") {
+        // not claimable yet — no signal until an operator promotes it. The
+        // claimable start is the initial state resolved above.
+        if (itemCreateStatus === initialStatus) {
           void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
         }
 
