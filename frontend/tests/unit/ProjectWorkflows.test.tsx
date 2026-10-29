@@ -166,6 +166,20 @@ describe("useProjectWorkflows", () => {
     await waitFor(() => expect(result.current.size).toBe(0));
   });
 
+  it("ignores a late answer for the team that was left", async () => {
+    let release!: (w: Workflow[]) => void;
+    mockGetWorkflows.mockImplementation(() => new Promise<Workflow[]>((res) => { release = res; }));
+    const { result, rerender } = renderHook(
+      ({ team, projects }) => useProjectWorkflows(team, projects),
+      { initialProps: { team: "t1", projects: P("a") } },
+    );
+    await waitFor(() => expect(calls("a")).toBe(1));
+    rerender({ team: "t2", projects: [] });
+    release([WF("a")]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current.size).toBe(0);
+  });
+
   it("asks nothing without a team", async () => {
     const { result } = renderHook(() => useProjectWorkflows(null, P("a")));
     await new Promise((r) => setTimeout(r, 10));
