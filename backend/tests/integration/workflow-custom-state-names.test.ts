@@ -141,6 +141,21 @@ describe("POST /projects/:projectId/workflows", () => {
     expect((await issuesOf(res)).some((m) => /State name "abandoned" is reserved/.test(m))).toBe(true);
   });
 
+  it("bounds a state name at 64 characters: 64 is created, 65 answers 400 and stores nothing", async () => {
+    const withName = (name: string) => {
+      const def = sevenStage();
+      def.states[4]!.name = name;
+      def.transitions[4]!.to = name;
+      return def;
+    };
+    const ok = await call(`/projects/${projectId}/workflows`, "POST", { name: "Max", definition: withName("s".repeat(64)) });
+    expect(ok.status).toBe(201);
+    const before = await store.db.workflow.count({ where: { projectId } });
+    const res = await call(`/projects/${projectId}/workflows`, "POST", { name: "Over", definition: withName("s".repeat(65)) });
+    expect(res.status).toBe(400);
+    expect(await store.db.workflow.count({ where: { projectId } })).toBe(before);
+  });
+
   it("rejects a custom initialState", async () => {
     const def = sevenStage();
     def.initialState = "spec";

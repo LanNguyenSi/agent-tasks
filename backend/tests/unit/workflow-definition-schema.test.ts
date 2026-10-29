@@ -7,7 +7,7 @@
  * "accept anything" behavior that allowed corrupted workflow graphs.
  */
 import { describe, expect, it } from "vitest";
-import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
+import { STATE_NAME_MAX_LENGTH, workflowDefinitionSchema } from "../../src/routes/workflows.js";
 
 function validDef() {
   return {
@@ -30,6 +30,18 @@ describe("workflowDefinitionSchema", () => {
   it("accepts a well-formed definition", () => {
     const result = workflowDefinitionSchema.safeParse(validDef());
     expect(result.success).toBe(true);
+  });
+
+  it("bounds a state name at 64 characters: 64 is accepted, 65 is refused", () => {
+    expect(STATE_NAME_MAX_LENGTH).toBe(64);
+    const ok = validDef();
+    ok.states[3]!.name = "a".repeat(64);
+    ok.transitions[2]!.to = ok.states[3]!.name;
+    expect(workflowDefinitionSchema.safeParse(ok).success).toBe(true);
+    const tooLong = validDef();
+    tooLong.states[3]!.name = "a".repeat(65);
+    tooLong.transitions[2]!.to = tooLong.states[3]!.name;
+    expect(workflowDefinitionSchema.safeParse(tooLong).success).toBe(false);
   });
 
   it("rejects state names with uppercase letters", () => {

@@ -5,8 +5,9 @@
  * `open`, and tell the claim-eligible agents of the team about it
  * (`task_available`, with the created state in the context).
  *
- * The workflow API only accepts the four built-in state names, so the custom
- * definition is stored directly.
+ * The custom definition is stored directly in the database; the workflow API's
+ * own acceptance of custom names is covered by
+ * workflow-custom-state-names.test.ts.
  */
 import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";

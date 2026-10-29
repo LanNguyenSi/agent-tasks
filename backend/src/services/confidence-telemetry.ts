@@ -275,8 +275,16 @@ export async function recordTerminalSnapshot(params: {
   projectId: string;
   finalStatus: string;
   taskType: string | null;
+  /**
+   * `true` when the caller already established that `finalStatus` is a
+   * terminal state of the task's effective workflow (both task_finish
+   * callers do). The snapshot then writes the success disposition without a
+   * second lookup, so a transient lookup error cannot drop it. When absent
+   * (the grounding calibrate path), the terminal check runs here.
+   */
+  reachedTerminal?: boolean;
 }): Promise<void> {
-  const { taskId, projectId, finalStatus, taskType } = params;
+  const { taskId, projectId, finalStatus, taskType, reachedTerminal } = params;
   try {
     const claimFields = await resolveClaimSnapshotFields(taskId);
     // LOW-8 (batch 18 review): `claimFields.scoreAtClaim` / `effectiveThreshold`
@@ -295,7 +303,7 @@ export async function recordTerminalSnapshot(params: {
     // workflow is the "done" disposition, whatever that state is called.
     // Writing it in BOTH create and update lets a reclaimed-then-done task
     // overwrite an earlier "abandoned" disposition.
-    const dispositionFields = (await endedInSuccessState(taskId, finalStatus))
+    const dispositionFields = (reachedTerminal === true || (await endedInSuccessState(taskId, finalStatus)))
       ? { finalDisposition: DONE_STATUS }
       : {};
     await upsertConfidenceTelemetryWithRetry({

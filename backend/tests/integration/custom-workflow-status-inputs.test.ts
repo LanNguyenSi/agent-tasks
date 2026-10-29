@@ -2,8 +2,9 @@
  * DB-backed test: the API status inputs and filters accept the states of the
  * task's / project's own workflow, not a fixed list of four names.
  *
- * The workflow API still accepts only the four built-in state names, so the
- * custom definition is stored directly. It has no `open` / `in_progress` /
+ * The custom definition is stored directly in the database here; the workflow
+ * API's own acceptance of custom names is covered by
+ * workflow-custom-state-names.test.ts. It has no `open` / `in_progress` /
  * `review` / `done`: `queued` is the initial state, `working` the work state,
  * `checking` the review state and `shipped` the terminal one. A four-state
  * project next to it pins that the built-in behaviour (names, message shape)

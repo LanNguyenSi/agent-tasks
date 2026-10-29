@@ -87,8 +87,15 @@ export const workflowRouter = new Hono<{ Variables: AppVariables }>();
 // metacharacters, spaces, or null bytes).
 const STATE_NAME_RE = /^[a-z0-9_]+$/;
 
+/**
+ * Longest accepted state name. Mirrors `STATUS_NAME_MAX_LENGTH` in
+ * mcp-server/src/tools.ts (the MCP tools and the CLI cap status names at the
+ * same length); duplicated here because workspaces do not import each other.
+ */
+export const STATE_NAME_MAX_LENGTH = 64;
+
 const workflowStateSchema = z.object({
-  name: z.string().min(1).regex(STATE_NAME_RE, "State name must match [a-z0-9_]+"),
+  name: z.string().min(1).max(STATE_NAME_MAX_LENGTH).regex(STATE_NAME_RE, "State name must match [a-z0-9_]+"),
   label: z.string().min(1),
   terminal: z.boolean().default(false),
   agentInstructions: z.string().optional(),

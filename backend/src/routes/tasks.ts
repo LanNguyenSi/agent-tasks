@@ -3372,6 +3372,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         projectId: task.projectId,
         finalStatus: targetStatus,
         taskType: (task.templateData as TemplateData | null)?.taskType ?? null,
+        reachedTerminal: true,
       });
     }
 
@@ -3653,6 +3654,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         projectId: task.projectId,
         finalStatus: selfApprTargetStatus,
         taskType: (task.templateData as TemplateData | null)?.taskType ?? null,
+        reachedTerminal: true,
       });
     }
 

@@ -264,8 +264,9 @@ it("HOOK opened issues are created once per delivery and issue-reopen invents no
 });
 
 // ── Task states come from the task's own workflow ────────────────────────────
-// The workflow API still accepts only the four built-in names, so a custom
-// vocabulary is stored directly. `checking` is the review state (not the
+// A custom vocabulary is stored directly in the database here (the workflow
+// API's own acceptance of custom names is covered by
+// workflow-custom-state-names.test.ts). `checking` is the review state (not the
 // initial state's direct target, has an edge to the terminal `shipped`);
 // `working` is the work state, `shipped` the terminal one.
 type Edge = { from: string; to: string };

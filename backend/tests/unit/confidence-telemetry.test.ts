@@ -690,6 +690,35 @@ describe("recordTerminalSnapshot - done disposition follows the task's effective
     expect(lastUpsert().create.finalDisposition).toBe("done");
   });
 
+  describe("reachedTerminal: the caller's terminal check decides, the lookup runs only when it is absent", () => {
+    it("true + lookup would throw: the custom terminal state still writes done, no lookup, no warning", async () => {
+      prismaMocks.taskFindUnique.mockRejectedValue(new Error("task table unreachable"));
+      prismaMocks.workflowFindFirst.mockRejectedValue(new Error("workflow table unreachable"));
+
+      await recordTerminalSnapshot({ taskId: "t-r1", projectId: "proj-1", finalStatus: "shipped", taskType: null, reachedTerminal: true });
+
+      expect(lastUpsert().create).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+      expect(lastUpsert().update).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+      expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+      expect(loggerMocks.warn).not.toHaveBeenCalled();
+    });
+
+    it("absent + lookup ok: the definition decides (terminal writes done, non-terminal writes nothing)", async () => {
+      prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+      await recordTerminalSnapshot({ taskId: "t-r2", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect(lastUpsert().create.finalDisposition).toBe("done");
+      await recordTerminalSnapshot({ taskId: "t-r3", projectId: "proj-1", finalStatus: "review", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+    });
+
+    it("absent + lookup throws: the built-in fallback applies (shipped writes nothing, warning logged)", async () => {
+      prismaMocks.workflowFindFirst.mockRejectedValue(new Error("workflow table unreachable"));
+      await recordTerminalSnapshot({ taskId: "t-r4", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+      expect(loggerMocks.warn).toHaveBeenCalledWith(expect.objectContaining({ op: "endedInSuccessState", taskId: "t-r4" }), expect.any(String));
+    });
+  });
+
   describe("unreadable definition falls back to the literal built-in terminal status", () => {
     it("the workflow lookup throws: done still writes done, shipped writes nothing, and a warning is logged", async () => {
       prismaMocks.workflowFindFirst.mockRejectedValue(new Error("workflow table unreachable"));
