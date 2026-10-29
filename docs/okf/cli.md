@@ -3,7 +3,7 @@ type: module
 title: "cli: the agent-tasks REST command-line client"
 description: "@agent-tasks/cli wraps the REST API in commander verbs: v2 verbs plus deprecated v1 aliases, client-side task-id prefix resolution over the claimable search, Idempotency-Key handling, two tasks-list modes, env-over-file config with a permission warning, and no npm publish workflow."
 tags: [cli, client, rest, config, idempotency]
-timestamp: 2026-10-29T06:28:32Z
+timestamp: 2026-10-29T08:07:09Z
 sources:
   - cli/package.json
   - cli/src/index.ts
