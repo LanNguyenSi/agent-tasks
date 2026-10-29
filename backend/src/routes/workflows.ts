@@ -106,18 +106,26 @@ const workflowTransitionSchema = z.object({
   requires: z.array(z.string().min(1)).max(10).optional(),
 });
 
-// State vocabulary is fixed: open / in_progress / review / done. Transitions,
-// gates, role requirements, and per-state label/agentInstructions stay
-// configurable per project — the lock applies only to the state SET, not to
-// how projects move tasks through it. This is enforced server-side so a
-// direct API caller cannot persist a corrupted workflow graph (foreign
-// state names that no engine literal-status check would recognize, an
-// `initialState` other than `open`, transitions referencing made-up
-// states, etc).
-export const FIXED_STATE_NAMES = ["open", "in_progress", "review", "done"] as const;
-const FIXED_STATE_NAME_SET = new Set<string>(FIXED_STATE_NAMES);
-const FIXED_INITIAL_STATE = "open";
-const FIXED_TERMINAL_STATES = new Set<string>(["done"]);
+// State names are free (any `[a-z0-9_]+` name, any terminal flags, built-in
+// names optional). Transitions, gates, role requirements, and per-state
+// label/agentInstructions stay configurable per project as before. What the
+// engine still pins, and this schema therefore enforces server-side so a
+// direct API caller cannot persist a graph the engine mishandles:
+//   - `initialState` is "open". The engine keys pickup, the claimable pool,
+//     start, promote, demote and reopen on the literal status "open", so a
+//     different initial state would persist a workflow whose tasks are never
+//     picked up or started. This slice unlocks state NAMES only; lifting the
+//     initialState pin needs an engine change first.
+//   - `backlog` and `abandoned` are reserved. Both are written by dedicated
+//     routes (promote/demote/discard, creator-abandon, unabandon), never by a
+//     workflow edge, and the stored-definition sanitizer strips backlog; a
+//     state or an edge with either name would be dead or misleading config.
+//   - the definition has a terminal state (the engine's "task ends here"
+//     fallbacks assume one) and the initial state is not terminal (a task
+//     created in a terminal state could never be claimed).
+export const WORKFLOW_INITIAL_STATE = "open";
+export const RESERVED_STATE_NAMES = ["backlog", "abandoned"] as const;
+const RESERVED_STATE_NAME_SET = new Set<string>(RESERVED_STATE_NAMES);
 
 export const workflowDefinitionSchema = z
   .object({
@@ -137,50 +145,64 @@ export const workflowDefinitionSchema = z
       }
       names.add(s.name);
 
-      if (!FIXED_STATE_NAME_SET.has(s.name)) {
+      if (RESERVED_STATE_NAME_SET.has(s.name)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            `Unknown state name "${s.name}". The state vocabulary is fixed: ` +
-            `${FIXED_STATE_NAMES.join(", ")}. Add/rename/remove of states is not supported.`,
-          path: ["states"],
-        });
-      }
-      // Terminal flag must match the lock-in: only "done" is terminal.
-      const shouldBeTerminal = FIXED_TERMINAL_STATES.has(s.name);
-      if (s.terminal !== shouldBeTerminal) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `State "${s.name}" terminal flag must be ${shouldBeTerminal}`,
+            `State name "${s.name}" is reserved. ` +
+            `${RESERVED_STATE_NAMES.join(" and ")} are managed outside the workflow graph ` +
+            `and cannot be declared as workflow states.`,
           path: ["states"],
         });
       }
     }
 
-    // The state set must be exactly the fixed vocabulary — no missing names
-    // either, because the engine has hardcoded literal-status checks
-    // (merge gate, distinct-reviewer guard, dependency gating) that assume
-    // every workflow exposes "open", "in_progress", "review", "done".
-    for (const required of FIXED_STATE_NAMES) {
-      if (!names.has(required)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Required state "${required}" is missing from the workflow`,
-          path: ["states"],
-        });
-      }
-    }
-
-    if (def.initialState !== FIXED_INITIAL_STATE) {
+    if (def.initialState !== WORKFLOW_INITIAL_STATE) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `initialState must be "${FIXED_INITIAL_STATE}", got "${def.initialState}"`,
+        message: `initialState must be "${WORKFLOW_INITIAL_STATE}", got "${def.initialState}"`,
         path: ["initialState"],
+      });
+    } else if (!names.has(def.initialState)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `initialState "${def.initialState}" is not one of the workflow's states`,
+        path: ["initialState"],
+      });
+    }
+    if (def.states.some((s) => s.name === def.initialState && s.terminal)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `initialState "${def.initialState}" must not be a terminal state`,
+        path: ["states"],
+      });
+    }
+    if (!def.states.some((s) => s.terminal)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The workflow needs at least one terminal state",
+        path: ["states"],
       });
     }
     const seenPairs = new Set<string>();
     for (let i = 0; i < def.transitions.length; i++) {
       const t = def.transitions[i]!;
+      const reservedEnd = RESERVED_STATE_NAME_SET.has(t.from)
+        ? "from"
+        : RESERVED_STATE_NAME_SET.has(t.to)
+          ? "to"
+          : null;
+      if (reservedEnd !== null) {
+        const reserved = reservedEnd === "from" ? t.from : t.to;
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            `Transition ${reservedEnd === "from" ? "from" : "to"} reserved state "${reserved}" is not allowed: ` +
+            `${RESERVED_STATE_NAMES.join(" and ")} are managed outside the workflow graph`,
+          path: ["transitions", i, reservedEnd],
+        });
+        continue;
+      }
       if (!names.has(t.from)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

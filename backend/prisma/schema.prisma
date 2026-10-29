@@ -669,15 +669,16 @@ model AuditLog {
 //      force-overridden), not the week-bucketed signal itself.
 //   4. Low-score success / high-score failure -> `scoreAtClaim` cross-
 //      referenced with `finalStatus` by GET /projects/:id/telemetry/confidence.
-//      HIGH-2 (batch 18 review): `finalStatus` can only ever be `"done"` in
-//      production today — routes/workflows.ts's `FIXED_TERMINAL_STATES`
-//      locks the terminal-state set to `{"done"}`, and no verb writes any
-//      other terminal disposition (`task_abandon` resets `status` to the
-//      workflow's `initialState`, it does not write `"abandoned"`). Until a
-//      non-done terminal disposition exists, `highScoreFailures` is
-//      STRUCTURALLY 0 and `doneRateByScoreBand`'s `doneRate` is
-//      STRUCTURALLY 1.0 for every populated band — not evidence of a
-//      well-calibrated gate, just the only reachable outcome today.
+//      HIGH-2 (batch 18 review): with the built-in and template workflows
+//      `finalStatus` can only be `"done"` (their only terminal state; the
+//      workflow API now also accepts a custom terminal state name, and the
+//      score-vs-outcome reads compare against the literal `"done"` only), and
+//      no verb writes any other terminal disposition (`task_abandon` resets
+//      `status` to the workflow's `initialState`, it does not write
+//      `"abandoned"`). Until a non-done terminal disposition exists,
+//      `highScoreFailures` is STRUCTURALLY 0 and `doneRateByScoreBand`'s
+//      `doneRate` is STRUCTURALLY 1.0 for every populated band — not evidence
+//      of a well-calibrated gate, just the only reachable outcome there.
 // No column here feeds an automatic threshold/weight adjustment — that is
 // explicitly out of scope for this milestone (a separate, deliberately
 // decoupled follow-up reads this table once enough volume exists).
@@ -719,9 +720,10 @@ model ConfidenceTelemetry {
   clarificationCount Int      @default(0)
   overrideUsed       Boolean  @default(false)
   // Terminal `task.status` at the last review-approve snapshot write. LOW-9
-  // (batch 18 review): the state vocabulary is server-side LOCKED
-  // (routes/workflows.ts FIXED_STATE_NAMES / FIXED_TERMINAL_STATES), so the
-  // only value this column holds in production is `"done"`. Null until the
+  // (batch 18 review): the built-in and template workflows end in `"done"`,
+  // so that is the value this column holds for them (routes/workflows.ts
+  // accepts custom terminal state names, which this column would hold too).
+  // Null until the
   // task reaches a terminal review-approve transition; a task that is only
   // bounced back (request_changes) or only creator-abandoned keeps it null.
   // Non-done outcomes live in `finalDisposition` below, not here.

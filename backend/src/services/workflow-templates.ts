@@ -214,7 +214,7 @@ const branchPrMergeGatedDefinition: WorkflowDefinitionShape = {
 
 // ── Release / Ops, No PR Required ───────────────────────────────────────────
 //
-// Same four locked states and the same shape as the built-in default
+// Same four states and the same shape as the built-in default
 // workflow (see `default-workflow.ts` DEFAULT_TRANSITIONS) — with one
 // deliberate difference: `branchPresent`/`prPresent` are dropped from
 // `in_progress → review` and `in_progress → done`. The default workflow
