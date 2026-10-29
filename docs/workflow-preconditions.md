@@ -357,12 +357,13 @@ and the dashboard gear icon. Non-admins see a read-only view.
 2. Either click **Customize this workflow** to fork the built-in default,
    or click a **template button** (e.g. "Branch, PR & Merge Gated") to
    apply a predefined workflow with transitions and gates pre-configured.
-3. Edit states: the state set (`open`, `in_progress`, `review`,
-   `done`), the terminal flag (only `done`) and the initial state
-   (`open`) are fixed: the table shows them read-only and notes that
-   states cannot be added, renamed or removed. Edit each state's label
-   inline, and click "Add instructions…" to open a textarea for the
-   state's agent instructions.
+3. Edit states: the editor shows the state list read-only (the
+   four built-in states `open`, `in_progress`, `review` and `done`,
+   with `done` terminal and `open` initial) and notes that states
+   cannot be added, renamed or removed there. The backend does not
+   pin that list: see step 5 for what it accepts. Edit each state's
+   label inline, and click "Add instructions…" to open a textarea for
+   the state's agent instructions.
 4. Edit transitions: `from` / `to` are state dropdowns, label is
    inline, `required role` is a dropdown (`any`, `ADMIN`,
    `HUMAN_MEMBER`, `REVIEWER`), and the gates column shows one
@@ -373,10 +374,14 @@ and the dashboard gear icon. Non-admins see a read-only view.
    they come from an empty state label or a duplicate transition (same
    `from` and `to`); the client checks on state names, transition
    endpoints and `initialState` only fire for a stored definition
-   outside the fixed state set. The backend rejects a definition whose
-   states are not exactly `open`, `in_progress`, `review` and `done`,
-   whose `initialState` is not `open`, or in which `done` is not
-   terminal or another state is.
+   outside the four built-in states. The backend accepts any state
+   names matching `[a-z0-9_]+` and any terminal flags, and rejects a
+   definition that breaks one of four rules: `initialState` must be
+   `open` and one of the states, the names `backlog` and `abandoned`
+   are reserved (a state or an edge with either name is refused), the
+   initial state must not be terminal, and at least one state must be
+   terminal. Duplicate state names, an edge to or from a missing state
+   and duplicate `from` / `to` pairs are refused too.
 6. Reachability warnings (unreachable states, dead-end non-terminal
    states, orphan states with no incoming transition) show as a
    warning banner and do **not** block Save; Save asks for a
@@ -552,15 +557,15 @@ applied to a project in one click. Templates are defined in code at
 and are versioned with the backend.
 
 Applying a template replaces the project's custom workflow (or creates
-one if none exists). Existing tasks are not migrated, but because the
-state vocabulary is fixed (`open`, `in_progress`, `review`, `done`)
-their `status` values stay valid; only the transitions, gates, and
-labels change.
+one if none exists). Existing tasks are not migrated, and the registered
+templates use the four built-in states (`open`, `in_progress`, `review`,
+`done`), so their `status` values stay valid; only the transitions,
+gates, and labels change.
 
 ### Branch, PR & Merge Gated (`branch-pr-merge-gated`)
 
-The locked four-state workflow with stricter precondition gates than the
-built-in default. It enforces branch-first discipline and only lets a
+The four-state workflow (`open`, `in_progress`, `review`, `done`) with
+stricter precondition gates than the built-in default. It enforces branch-first discipline and only lets a
 task reach `done` once its pull request is actually merged.
 
 | From | To | Label | Requires |
