@@ -3,7 +3,7 @@ type: invariant
 title: "Claim model: task_pickup resolution order, backlog filtering, and single-active-claim"
 description: "Signals, then review, then open work, then idle; backlog is invisible to pickup; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String; backlog tasks require human promotion before agent claim."
 tags: [claim, pickup, status, dependencies, backlog]
-timestamp: 2026-10-29T08:07:09Z
+timestamp: 2026-10-29T12:42:56Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/workflow-status-filter.ts
@@ -86,4 +86,4 @@ Related: `workflow-gates.md`, `governance-merge.md`, `task-lifecycle.md`.
 
 An independent administrative hold is checked before cohort selection or unprovisioned fallback. It blocks fresh task completion and evidence use, including force/override paths; the database guard freezes all task-row updates and deletes. Existing claims and cohort history remain stored. See [migration and resume](../grounding-migration.md).
 
-Runtime-selected REST creation still puts agent-created tasks in backlog. The same explicit selection covers signed issue-open deliveries, which preserve `open` after validating it is an existing non-review, nonterminal workflow state. Enrollment and task creation commit together; webhook creation adds no claim or availability signal.
+Runtime-selected REST creation still puts agent-created tasks in backlog. The same explicit selection covers signed issue-open deliveries, which create the task in the initial state of the project's default workflow (`open` for the built-in one) after validating it is an existing, non-terminal workflow state (an initial state is never review-like). Enrollment, task creation and the `task_available` rows commit together; webhook creation adds no claim.

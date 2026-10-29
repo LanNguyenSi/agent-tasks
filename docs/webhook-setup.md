@@ -82,7 +82,7 @@ When `GROUNDING_RUNTIME_CONFIG` is set, the same URL and secret are served by th
 | `pull_request` (closed, no merge) | Task not `done` or `backlog` | None | "PR #N closed without merge" |
 | `pull_request` (opened) | No matching task | None, no task is created (an audit row `task.reviewed` with `event: pr_opened_unmatched` is written) | None |
 | `pull_request` (opened) | Matching task found | Backfills prNumber/prUrl/branchName where unset | "PR #N opened: {url}" |
-| `issues` (opened) | Project `githubRepo` equals the repo | Creates task `[GH #N] <title>` in `open` | None |
+| `issues` (opened) | Project `githubRepo` equals the repo | Creates task `[GH #N] <title>` in the initial state of the project's default workflow (`open` in the built-in one) and sends `task_available` to the team's claim-eligible agents | None |
 | `issues` (closed) | Task titled `[GH #N]`, not `done` or `backlog` | `* → done` | None |
 | `push` | — | None | Updates project sync timestamp |
 
