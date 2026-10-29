@@ -237,4 +237,29 @@ describe("GET /projects/:id/telemetry/confidence", () => {
     expect(body.aggregates.lowScoreSuccesses).toBe(0); // the score=59 row is a failure, not a success
     expect(body.aggregates.highScoreFailures).toBe(0);
   });
+
+  it("bands a custom terminal outcome by its disposition: a shipped task is a success, a creator-abandoned one a high-score failure", async () => {
+    prismaMocks.confidenceTelemetryFindMany.mockResolvedValue([
+      { scoreAtClaim: 55, finalStatus: "shipped", finalDisposition: "done", bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 95, finalStatus: "shipped", finalDisposition: "done", bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 96, finalStatus: null, finalDisposition: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
+    ]);
+
+    const res = await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}/telemetry/confidence?period=30d`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      aggregates: {
+        doneRateByScoreBand: Array<{ band: string; taskCount: number; doneRate: number }>;
+        lowScoreSuccesses: number;
+        highScoreFailures: number;
+      };
+    };
+
+    expect(body.aggregates.doneRateByScoreBand).toEqual([
+      { band: "50-60", taskCount: 1, doneRate: 1 },
+      { band: "90-100", taskCount: 2, doneRate: 0.5 },
+    ]);
+    expect(body.aggregates.lowScoreSuccesses).toBe(1);
+    expect(body.aggregates.highScoreFailures).toBe(1); // only the abandoned one; the shipped 95 is not a failure
+  });
 });

@@ -3372,6 +3372,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         projectId: task.projectId,
         finalStatus: targetStatus,
         taskType: (task.templateData as TemplateData | null)?.taskType ?? null,
+        reachedTerminal: true,
       });
     }
 
@@ -3653,6 +3654,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         projectId: task.projectId,
         finalStatus: selfApprTargetStatus,
         taskType: (task.templateData as TemplateData | null)?.taskType ?? null,
+        reachedTerminal: true,
       });
     }
 
@@ -4523,10 +4525,10 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 //     `taskRouter.delete` below, which rejects `actor.type !== "human"`).
 //     No human path is touched by this route.
 //
-// `abandoned` is not part of the workflow engine's fixed state vocabulary
-// (routes/workflows.ts FIXED_STATE_NAMES / FIXED_TERMINAL_STATES: a custom
-// workflow definition can only ever declare open/in_progress/review/done),
-// so this write bypasses the transition graph entirely, the same way the
+// `abandoned` is not a state of the workflow engine (routes/workflows.ts
+// RESERVED_STATE_NAMES: a workflow definition cannot declare a state or an
+// edge named `abandoned`), so this write bypasses the transition graph
+// entirely, the same way the
 // claim-abandon route above resets `status` to `effectiveDef.initialState`
 // without going through a transition. This is not new surface for the
 // `status` column either: the project-browse and claimable status filters
@@ -5499,9 +5501,9 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // write access performs, so it does not get the stricter admin bar.
       //
       // Bypasses the engine transition graph the same way unabandon does:
-      // "backlog" is outside the workflow engine's fixed state vocabulary
-      // (routes/workflows.ts FIXED_STATE_NAMES only ever allows
-      // open/in_progress/review/done in a custom definition), so
+      // "backlog" is not a state of the workflow engine
+      // (routes/workflows.ts RESERVED_STATE_NAMES rejects a `backlog` state
+      // or edge in a custom definition), so
       // effectiveDef.transitions can never contain a `from: "backlog"` edge
       // for the generic lookup below to match.
       isBacklogPromoteTransition = true;
@@ -5535,8 +5537,8 @@ taskRouter.patch("/tasks/:id", async (c) => {
       //
       // Same write-tier authz as promote (requireProjectWrite, enforced
       // above for the whole PATCH); the agent lane never reaches this block
-      // (forbiddenFields rejects `status`). "backlog" is outside the engine's
-      // fixed state vocabulary, so like promote/discard/unabandon this
+      // (forbiddenFields rejects `status`). "backlog" is a reserved name outside
+      // the workflow graph, so like promote/discard/unabandon this
       // bypasses the transition graph: no transition edge, no requiredRole.
       //
       // Unlike promote, demote must not strand a claim: a task that anyone

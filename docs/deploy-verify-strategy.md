@@ -27,7 +27,7 @@ Deploy and verify are modeled as **operational follow-ups**, not task workflow s
 
 3. **The webhook MVP already provides visibility.** PR merged events appear in the Activity timeline. Teams can see when code shipped without needing a workflow state for it.
 
-4. **The workflow state set is fixed.** The built-in default and every workflow created or updated through the workflow API have exactly the states `open`, `in_progress`, `review` and `done` (`FIXED_STATE_NAMES` in `backend/src/routes/workflows.ts`). A custom workflow can change transitions, `requires` gates, `requiredRole`, state labels and `agentInstructions`, but it cannot add a `merged`, `deployed` or `verified` state.
+4. **The built-in state set is not extended.** The built-in default workflow has exactly the states `open`, `in_progress`, `review` and `done`, and no registered template adds a `merged`, `deployed` or `verified` state. A workflow created or updated through the workflow API may name its own states (`workflowDefinitionSchema` in `backend/src/routes/workflows.ts`), within these limits: `initialState` is `open`, `backlog` and `abandoned` are reserved names, and at least one state is terminal. That is a capability of the API, not a recommendation: the default stance below stands, and deploy and verify stay operational follow-ups.
 
 ## Default behavior
 
@@ -40,7 +40,7 @@ Deploy and verify are modeled as **operational follow-ups**, not task workflow s
 
 ## Tracking deploy and verify today
 
-`POST /api/projects/:projectId/workflows` and `PUT /api/workflows/:id` reject any state name outside `open`, `in_progress`, `review` and `done` ("Add/rename/remove of states is not supported"), and a definition that leaves one of them out. `POST /api/projects/:projectId/workflow/customize` (which forks the four-state default) and `POST /api/projects/:projectId/workflow/apply-template/:slug` (every registered template uses the same four states) take no definition, so they cannot produce any other state set. A workflow such as `open → in_progress → review → merged → deployed → verified → done` cannot be created.
+`POST /api/projects/:projectId/workflows` and `PUT /api/workflows/:id` accept any state name matching `[a-z0-9_]+` and any terminal flags, so a workflow such as `open → in_progress → review → merged → deployed → verified → done` can be created through the API. They still reject a definition whose `initialState` is not `open`, one with a `backlog` or `abandoned` state or edge, and one without a terminal state. The project workflow editor does not offer this yet (its state list is read-only), `POST /api/projects/:projectId/workflow/customize` (which forks the four-state default) and `POST /api/projects/:projectId/workflow/apply-template/:slug` (every registered template uses the same four states) take no definition, and the engine's pickup, claimable and start paths key on the literal initial status `open`.
 
 Teams that need a record of deploy and verify steps track them outside the task status:
 
@@ -48,7 +48,7 @@ Teams that need a record of deploy and verify steps track them outside the task 
 - **Labels**: for example a `deployed` or `verified` label on the task.
 - **Follow-up tasks**: a separate task for the deploy or the verification, which can carry its own review.
 
-A custom workflow can still tighten the path to `done` within the fixed states, for example by requiring `prMerged` on every edge into `done` (the `branch-pr-merge-gated` template does this, see [workflow-preconditions.md](workflow-preconditions.md#workflow-templates)).
+A custom workflow can still tighten the path to `done` within the built-in states, for example by requiring `prMerged` on every edge into `done` (the `branch-pr-merge-gated` template does this, see [workflow-preconditions.md](workflow-preconditions.md#workflow-templates)).
 
 ## Future considerations
 
@@ -68,11 +68,11 @@ Adding `merged`, `deployed`, `verified` as default states would:
 - Create a false expectation that all tasks go through deployment
 - Duplicate what the Activity timeline already shows
 
-A workflow template cannot add them either: templates vary transitions and gates within the fixed state set (`backend/src/services/workflow-templates.ts`).
+A workflow template cannot add them either: every registered template varies transitions and gates within the four built-in states (`backend/src/services/workflow-templates.ts`).
 
 ## Summary
 
 - Default workflow: unchanged. `done` = review approved, or the PR merged via `task_merge` / `pull_requests_merge` (or a GitHub merge in `AUTONOMOUS`). The default workflow also keeps an `in_progress → done` edge that requires a branch and a PR.
 - Deploy/verify: visible via timeline, not modeled as states.
-- Teams with deploy gates: track deploy and verify with comments, labels or follow-up tasks; the workflow state set is fixed.
+- Teams with deploy gates: track deploy and verify with comments, labels or follow-up tasks; no workflow state models them by default.
 - Future deploy webhooks: additive, opt-in, no default workflow changes.

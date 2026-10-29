@@ -3211,6 +3211,73 @@ describe("POST /tasks/:id/finish — M5 confidence-telemetry snapshot hook", () 
     );
   });
 
+  // A custom terminal state that is not called "done": the disposition must
+  // come from the caller's own terminal check (reachedTerminal), not from the
+  // second lookup inside the telemetry service. The default findUnique mock
+  // resolves a task whose effective workflow is the built-in one, where
+  // "shipped" is not terminal, so without reachedTerminal the lookup answers
+  // false and the disposition is dropped.
+  const SHIPPED_WORKFLOW = {
+    definition: {
+      initialState: "open",
+      states: [
+        { name: "open" },
+        { name: "in_progress" },
+        { name: "review" },
+        { name: "shipped", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "review" },
+        { from: "review", to: "shipped" },
+        { from: "review", to: "in_progress" },
+      ],
+    },
+  };
+
+  it("review-finish approve into a custom terminal state: records the done disposition without the second lookup", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...REVIEW_FINISH_TASK,
+      workflowId: "wf-shipped",
+      workflow: SHIPPED_WORKFLOW,
+    });
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve" }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ finalStatus: "shipped", finalDisposition: "done" }),
+        update: expect.objectContaining({ finalStatus: "shipped", finalDisposition: "done" }),
+      }),
+    );
+  });
+
+  it("self-approve approve into a custom terminal state: records the done disposition without the second lookup", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...SELF_APPROVE_TASK,
+      workflowId: "wf-shipped",
+      workflow: SHIPPED_WORKFLOW,
+    });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve" }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ finalStatus: "shipped", finalDisposition: "done" }),
+        update: expect.objectContaining({ finalStatus: "shipped", finalDisposition: "done" }),
+      }),
+    );
+  });
+
   it("self-approve request_changes: increments bounceBackCount", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce(SELF_APPROVE_TASK);
 

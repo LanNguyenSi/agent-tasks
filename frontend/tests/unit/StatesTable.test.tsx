@@ -238,7 +238,7 @@ describe("StatesTable — edit mode", () => {
     // Initial-state combobox replaced with a code element (read-only)
     expect(screen.queryByRole("combobox")).toBeNull();
     // Lock notice present
-    expect(screen.getByText(/state vocabulary is fixed/i)).toBeInTheDocument();
+    expect(screen.getByText(/states cannot be added, renamed or removed in this editor/i)).toBeInTheDocument();
   });
 
   it("statesLocked=true keeps label + agentInstructions editable when canEdit is true", async () => {

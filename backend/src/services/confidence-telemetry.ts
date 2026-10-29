@@ -32,6 +32,18 @@
  *      `finalDisposition ?? finalStatus`:
  *        - `finalDisposition` "done" is written by `recordTerminalSnapshot`
  *          (review-approve at a terminal transition; create and update).
+ *          "done" is the success outcome label, not a status name: it is
+ *          written when `finalStatus` is a terminal state of the task's
+ *          effective workflow (pinned, else project default, else built-in,
+ *          via `resolveEffectiveDefinition`), so a task that ends in a custom
+ *          terminal state such as `shipped` is a success too, and the read
+ *          path (`doneRateByScoreBand`, `lowScoreSuccesses`,
+ *          `highScoreFailures`) compares the label, never the status name.
+ *          `abandoned` is a reserved name and never a workflow state, so a
+ *          terminal state the approve path reaches is always a success end;
+ *          the only failure outcome is the "abandoned" disposition below.
+ *          When the definition cannot be read, the literal `done` status is
+ *          the fallback (the built-in terminal state).
  *        - `finalDisposition` "abandoned" is written by
  *          `recordAbandonDisposition` after a successful creator-abandon
  *          (`POST /tasks/:id/creator-abandon`). The realistic failure path
@@ -49,9 +61,9 @@
  *          and write no disposition. A backlog discard is never hooked: a
  *          backlog task is never claimable, so it cannot have a score
  *          snapshot.
- *        - `finalStatus` stays "done"-only (the status vocabulary is fixed);
- *          rows that predate `finalDisposition` keep counting as done via the
- *          `??` fallback.
+ *        - `finalStatus` holds the terminal state name as it was (`done`,
+ *          or a custom terminal state); rows that predate `finalDisposition`
+ *          (finalStatus "done") keep counting as done via the `??` fallback.
  *      Only a task with a recorded scored claim can move `highScoreFailures`
  *      or the non-done share of `doneRateByScoreBand`; both start varying
  *      only as such tasks are creator-abandoned.
@@ -88,6 +100,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
+import { isTerminalState, resolveEffectiveDefinition } from "./default-workflow.js";
 
 /**
  * LOW-8 (batch 18 review): a single retry on P2002 (unique constraint
@@ -118,7 +131,13 @@ async function upsertConfidenceTelemetryWithRetry(
 export const LOW_SCORE_MAX = 60;
 /** Score-at-claim at/above this is "high" for `highScoreFailures` (inclusive lower bound). */
 export const HIGH_SCORE_MIN = 90;
-/** The outcome (`finalDisposition ?? finalStatus`) that counts as a success in `doneRateByScoreBand`. */
+/**
+ * The outcome label (`finalDisposition ?? finalStatus`) that counts as a
+ * success in `doneRateByScoreBand`. It is also the built-in terminal status,
+ * which is why it doubles as the fallback when a workflow definition cannot be
+ * read. A custom terminal state is recorded as this label in
+ * `finalDisposition`, see `endedInSuccessState`.
+ */
 export const DONE_STATUS = "done";
 /** The `finalDisposition` written for a creator-abandoned task (a failure outcome). */
 export const ABANDONED_DISPOSITION = "abandoned";
@@ -213,6 +232,34 @@ export async function recordClarification(taskId: string, projectId: string): Pr
 }
 
 /**
+ * Whether `finalStatus` is a terminal state of the task's effective workflow
+ * (task-pinned, else project default, else built-in: the engine's own
+ * `resolveEffectiveDefinition`). That is the rule for a successful end:
+ * `abandoned` is reserved and never a workflow state, so every terminal
+ * state a review-approve reaches is a success. A missing task row or an
+ * unreadable definition (the lookup throws, or the stored JSON has no states
+ * array) falls back to the built-in terminal status `done`, so the snapshot
+ * never loses its disposition to a malformed workflow.
+ */
+async function endedInSuccessState(taskId: string, finalStatus: string): Promise<boolean> {
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { workflowId: true, projectId: true },
+    });
+    if (!task) return finalStatus === DONE_STATUS;
+    const definition = await resolveEffectiveDefinition(task, prisma);
+    return isTerminalState(definition, finalStatus);
+  } catch (err) {
+    logger.warn(
+      { component: "confidence-telemetry", op: "endedInSuccessState", taskId, finalStatus, errMessage: (err as Error).message },
+      "workflow definition unreadable - falling back to the built-in terminal status for the disposition",
+    );
+    return finalStatus === DONE_STATUS;
+  }
+}
+
+/**
  * Best-effort, fail-open snapshot write for a `task_finish` review-approve
  * outcome that reached a terminal transition (`isTerminalState` at the
  * caller). Called from BOTH the review-finish and self-approve branches,
@@ -228,8 +275,16 @@ export async function recordTerminalSnapshot(params: {
   projectId: string;
   finalStatus: string;
   taskType: string | null;
+  /**
+   * `true` when the caller already established that `finalStatus` is a
+   * terminal state of the task's effective workflow (both task_finish
+   * callers do). The snapshot then writes the success disposition without a
+   * second lookup, so a transient lookup error cannot drop it. When absent
+   * (the grounding calibrate path), the terminal check runs here.
+   */
+  reachedTerminal?: boolean;
 }): Promise<void> {
-  const { taskId, projectId, finalStatus, taskType } = params;
+  const { taskId, projectId, finalStatus, taskType, reachedTerminal } = params;
   try {
     const claimFields = await resolveClaimSnapshotFields(taskId);
     // LOW-8 (batch 18 review): `claimFields.scoreAtClaim` / `effectiveThreshold`
@@ -244,10 +299,13 @@ export async function recordTerminalSnapshot(params: {
     // which can only go false -> true, never back) so it is always safe to
     // include as-is.
     const updateClaimFields = nonNullClaimFields(claimFields);
-    // A terminal review-approve at the done status is the "done" disposition.
+    // A terminal review-approve that ends in a terminal state of the task's
+    // workflow is the "done" disposition, whatever that state is called.
     // Writing it in BOTH create and update lets a reclaimed-then-done task
     // overwrite an earlier "abandoned" disposition.
-    const dispositionFields = finalStatus === DONE_STATUS ? { finalDisposition: DONE_STATUS } : {};
+    const dispositionFields = (reachedTerminal === true || (await endedInSuccessState(taskId, finalStatus)))
+      ? { finalDisposition: DONE_STATUS }
+      : {};
     await upsertConfidenceTelemetryWithRetry({
       where: { taskId },
       create: { taskId, projectId, finalStatus, taskType, ...dispositionFields, ...claimFields },
@@ -502,7 +560,10 @@ export function computeConfidenceTelemetryAggregates(
   // doneRateByScoreBand only counts rows that actually reached a terminal
   // outcome (finalDisposition ?? finalStatus set): a task still mid-rework
   // has no verdict yet. The outcome falls back to finalStatus so rows that
-  // predate finalDisposition (finalStatus "done") keep counting as done.
+  // predate finalDisposition (finalStatus "done") keep counting as done. A
+  // custom terminal state is already normalised to the "done" disposition at
+  // write time (`recordTerminalSnapshot`), so this read never needs the
+  // workflow definition.
   const outcomeOf = (r: ConfidenceTelemetryRow): string | null => r.finalDisposition ?? r.finalStatus;
   const terminal = scored.filter((r) => outcomeOf(r) !== null);
   const doneBuckets = new Map<string, { taskCount: number; doneCount: number }>();

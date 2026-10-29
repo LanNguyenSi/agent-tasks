@@ -669,15 +669,13 @@ model AuditLog {
 //      force-overridden), not the week-bucketed signal itself.
 //   4. Low-score success / high-score failure -> `scoreAtClaim` cross-
 //      referenced with `finalStatus` by GET /projects/:id/telemetry/confidence.
-//      HIGH-2 (batch 18 review): `finalStatus` can only ever be `"done"` in
-//      production today — routes/workflows.ts's `FIXED_TERMINAL_STATES`
-//      locks the terminal-state set to `{"done"}`, and no verb writes any
-//      other terminal disposition (`task_abandon` resets `status` to the
-//      workflow's `initialState`, it does not write `"abandoned"`). Until a
-//      non-done terminal disposition exists, `highScoreFailures` is
-//      STRUCTURALLY 0 and `doneRateByScoreBand`'s `doneRate` is
-//      STRUCTURALLY 1.0 for every populated band — not evidence of a
-//      well-calibrated gate, just the only reachable outcome today.
+//      The outcome is `finalDisposition ?? finalStatus`. A terminal review-
+//      approve writes the "done" disposition when `finalStatus` is a terminal
+//      state of the task's effective workflow (a custom terminal state such
+//      as `shipped` included; `abandoned` is a reserved name and never a
+//      workflow state); a creator-abandon writes "abandoned". The reads
+//      compare the disposition label, so a custom terminal state is a
+//      success there, not a high-score failure.
 // No column here feeds an automatic threshold/weight adjustment — that is
 // explicitly out of scope for this milestone (a separate, deliberately
 // decoupled follow-up reads this table once enough volume exists).
@@ -718,16 +716,17 @@ model ConfidenceTelemetry {
   // like the other counters; rows written before this column read as 0.
   clarificationCount Int      @default(0)
   overrideUsed       Boolean  @default(false)
-  // Terminal `task.status` at the last review-approve snapshot write. LOW-9
-  // (batch 18 review): the state vocabulary is server-side LOCKED
-  // (routes/workflows.ts FIXED_STATE_NAMES / FIXED_TERMINAL_STATES), so the
-  // only value this column holds in production is `"done"`. Null until the
+  // Terminal `task.status` at the last review-approve snapshot write. The
+  // built-in and template workflows end in `"done"`, so that is the value
+  // this column holds for them; a custom terminal state name
+  // (routes/workflows.ts) is stored as is, e.g. `"shipped"`. Null until the
   // task reaches a terminal review-approve transition; a task that is only
   // bounced back (request_changes) or only creator-abandoned keeps it null.
-  // Non-done outcomes live in `finalDisposition` below, not here.
+  // The success/failure verdict lives in `finalDisposition` below, not here.
   finalStatus        String?
   // Terminal disposition of the task: `"done"` (written with the terminal
-  // review-approve snapshot) or `"abandoned"` (written after a successful
+  // review-approve snapshot, for any terminal state of the task's effective
+  // workflow, so also for a custom one) or `"abandoned"` (written after a successful
   // creator-abandon of a task that had a gate-scored claim). Null means not
   // terminal, or reopened (a restore from abandoned back to the initial state
   // clears it). Read side: outcome = finalDisposition ?? finalStatus, so rows

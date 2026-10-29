@@ -10,6 +10,9 @@
  *   - The fail-open contract of `recordBounceBack` / `recordTerminalSnapshot`:
  *     a DB error must be swallowed (logged, not thrown) so a telemetry write
  *     failure can never block the task_finish transition it rides with.
+ *   - The "done" disposition for custom terminal states: one case per input
+ *     combination of (pinned workflow, project default, built-in, unreadable
+ *     definition, abandon) and the read-side bands for such an outcome.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Prisma } from "@prisma/client";
@@ -18,6 +21,9 @@ const prismaMocks = vi.hoisted(() => ({
   confidenceTelemetryUpsert: vi.fn(),
   confidenceTelemetryUpdateMany: vi.fn(),
   auditLogFindFirst: vi.fn(),
+  taskFindUnique: vi.fn(),
+  workflowFindUnique: vi.fn(),
+  workflowFindFirst: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -27,11 +33,13 @@ vi.mock("../../src/lib/prisma.js", () => ({
       updateMany: prismaMocks.confidenceTelemetryUpdateMany,
     },
     auditLog: { findFirst: prismaMocks.auditLogFindFirst },
+    task: { findUnique: prismaMocks.taskFindUnique },
+    workflow: { findUnique: prismaMocks.workflowFindUnique, findFirst: prismaMocks.workflowFindFirst },
   },
 }));
 
-const loggerMocks = vi.hoisted(() => ({ error: vi.fn() }));
-vi.mock("../../src/lib/logger.js", () => ({ logger: { error: loggerMocks.error } }));
+const loggerMocks = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn() }));
+vi.mock("../../src/lib/logger.js", () => ({ logger: { error: loggerMocks.error, warn: loggerMocks.warn } }));
 
 import {
   scoreBand,
@@ -50,6 +58,11 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: an unpinned task in a project without a custom default workflow,
+  // i.e. the built-in definition (done is its only terminal state).
+  prismaMocks.taskFindUnique.mockResolvedValue({ workflowId: null, projectId: "proj-1" });
+  prismaMocks.workflowFindUnique.mockResolvedValue(null);
+  prismaMocks.workflowFindFirst.mockResolvedValue(null);
 });
 
 describe("scoreBand — boundary pins (both edges of every named example band)", () => {
@@ -573,6 +586,245 @@ describe("finalDisposition sequence", () => {
       data: { finalDisposition: null },
     });
     expect((upserts[1]![0] as { update: Record<string, unknown> }).update.finalDisposition).toBe("done");
+  });
+});
+
+/** A workflow definition whose only terminal state is `terminal` (any name but open). */
+function definitionEndingIn(terminal: string, extra: { name: string; terminal: boolean }[] = []) {
+  return {
+    initialState: "open",
+    states: [
+      { name: "open", label: "Open", terminal: false },
+      { name: "review", label: "Review", terminal: false },
+      { name: terminal, label: terminal, terminal: true },
+      ...extra.map((e) => ({ ...e, label: e.name })),
+    ],
+    transitions: [
+      { from: "open", to: "review" },
+      { from: "review", to: terminal },
+    ],
+  };
+}
+
+type UpsertArg = { create: Record<string, unknown>; update: Record<string, unknown> };
+const lastUpsert = () =>
+  prismaMocks.confidenceTelemetryUpsert.mock.calls.at(-1)![0] as UpsertArg;
+
+describe("recordTerminalSnapshot - done disposition follows the task's effective workflow", () => {
+  beforeEach(() => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue({ payload: { score: 95, threshold: 70 } });
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+  });
+
+  it("built-in workflow (unpinned, no project default): done is terminal and writes the done disposition; no workflow row is read beyond the default lookup", async () => {
+    await recordTerminalSnapshot({ taskId: "t-b1", projectId: "proj-1", finalStatus: "done", taskType: null });
+    expect(lastUpsert().create.finalDisposition).toBe("done");
+    expect(lastUpsert().update.finalDisposition).toBe("done");
+    expect(prismaMocks.workflowFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("built-in workflow: a non-terminal status (review) writes no disposition, and shipped is not a state of it", async () => {
+    await recordTerminalSnapshot({ taskId: "t-b2", projectId: "proj-1", finalStatus: "review", taskType: null });
+    expect("finalDisposition" in lastUpsert().create).toBe(false);
+    expect("finalDisposition" in lastUpsert().update).toBe(false);
+    await recordTerminalSnapshot({ taskId: "t-b3", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+    expect("finalDisposition" in lastUpsert().create).toBe(false);
+  });
+
+  it("pinned workflow with a custom terminal state: shipped writes done in create and update, finalStatus keeps the state name", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ workflowId: "wf-1", projectId: "proj-1" });
+    prismaMocks.workflowFindUnique.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+
+    await recordTerminalSnapshot({ taskId: "t-p1", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+
+    expect(prismaMocks.workflowFindUnique).toHaveBeenCalledWith({ where: { id: "wf-1" } });
+    expect(lastUpsert().create).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+    expect(lastUpsert().update).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+  });
+
+  it("pinned workflow wins over the project default: pinned says shipped is terminal, the default does not", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ workflowId: "wf-1", projectId: "proj-1" });
+    prismaMocks.workflowFindUnique.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+    prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("done", [{ name: "shipped", terminal: false }]) });
+
+    await recordTerminalSnapshot({ taskId: "t-p2", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+    expect(lastUpsert().create.finalDisposition).toBe("done");
+  });
+
+  it("pinned workflow wins over the project default: pinned says shipped is not terminal, the default does", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ workflowId: "wf-1", projectId: "proj-1" });
+    prismaMocks.workflowFindUnique.mockResolvedValue({ definition: definitionEndingIn("done", [{ name: "shipped", terminal: false }]) });
+    prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+
+    await recordTerminalSnapshot({ taskId: "t-p3", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+    expect("finalDisposition" in lastUpsert().create).toBe(false);
+  });
+
+  it("project default workflow (unpinned task): a custom terminal state writes done, looked up for the task's project as the default row", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+
+    await recordTerminalSnapshot({ taskId: "t-d1", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { projectId: "proj-1", isDefault: true } }),
+    );
+    expect(lastUpsert().create).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+  });
+
+  it("the verdict comes from the definition, not the name: with a custom default that does not end in done, done is no success", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped", [{ name: "done", terminal: false }]) });
+
+    await recordTerminalSnapshot({ taskId: "t-d2", projectId: "proj-1", finalStatus: "done", taskType: null });
+    expect("finalDisposition" in lastUpsert().create).toBe(false);
+    expect("finalDisposition" in lastUpsert().update).toBe(false);
+  });
+
+  it("a definition with several terminal states: each of them is a success end", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValue({
+      definition: definitionEndingIn("shipped", [{ name: "released", terminal: true }]),
+    });
+    await recordTerminalSnapshot({ taskId: "t-d3", projectId: "proj-1", finalStatus: "released", taskType: null });
+    expect(lastUpsert().create.finalDisposition).toBe("done");
+    await recordTerminalSnapshot({ taskId: "t-d4", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+    expect(lastUpsert().create.finalDisposition).toBe("done");
+  });
+
+  describe("reachedTerminal: the caller's terminal check decides, the lookup runs only when it is absent", () => {
+    it("true + lookup would throw: the custom terminal state still writes done, no lookup, no warning", async () => {
+      prismaMocks.taskFindUnique.mockRejectedValue(new Error("task table unreachable"));
+      prismaMocks.workflowFindFirst.mockRejectedValue(new Error("workflow table unreachable"));
+
+      await recordTerminalSnapshot({ taskId: "t-r1", projectId: "proj-1", finalStatus: "shipped", taskType: null, reachedTerminal: true });
+
+      expect(lastUpsert().create).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+      expect(lastUpsert().update).toMatchObject({ finalStatus: "shipped", finalDisposition: "done" });
+      expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+      expect(loggerMocks.warn).not.toHaveBeenCalled();
+    });
+
+    it("absent + lookup ok: the definition decides (terminal writes done, non-terminal writes nothing)", async () => {
+      prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+      await recordTerminalSnapshot({ taskId: "t-r2", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect(lastUpsert().create.finalDisposition).toBe("done");
+      await recordTerminalSnapshot({ taskId: "t-r3", projectId: "proj-1", finalStatus: "review", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+    });
+
+    it("absent + lookup throws: the built-in fallback applies (shipped writes nothing, warning logged)", async () => {
+      prismaMocks.workflowFindFirst.mockRejectedValue(new Error("workflow table unreachable"));
+      await recordTerminalSnapshot({ taskId: "t-r4", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+      expect(loggerMocks.warn).toHaveBeenCalledWith(expect.objectContaining({ op: "endedInSuccessState", taskId: "t-r4" }), expect.any(String));
+    });
+  });
+
+  describe("unreadable definition falls back to the literal built-in terminal status", () => {
+    it("the workflow lookup throws: done still writes done, shipped writes nothing, and a warning is logged", async () => {
+      prismaMocks.workflowFindFirst.mockRejectedValue(new Error("workflow table unreachable"));
+
+      await recordTerminalSnapshot({ taskId: "t-u1", projectId: "proj-1", finalStatus: "done", taskType: null });
+      expect(lastUpsert().create.finalDisposition).toBe("done");
+      expect(loggerMocks.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ op: "endedInSuccessState", taskId: "t-u1" }),
+        expect.any(String),
+      );
+
+      await recordTerminalSnapshot({ taskId: "t-u2", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+      // the snapshot itself still lands (fail-open on the lookup, not on the write)
+      expect(lastUpsert().create).toMatchObject({ finalStatus: "shipped" });
+      expect(loggerMocks.error).not.toHaveBeenCalled();
+    });
+
+    it("the stored definition has no states array: same fallback for a pinned row", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValue({ workflowId: "wf-bad", projectId: "proj-1" });
+      prismaMocks.workflowFindUnique.mockResolvedValue({ definition: { initialState: "open" } });
+
+      await recordTerminalSnapshot({ taskId: "t-u3", projectId: "proj-1", finalStatus: "done", taskType: null });
+      expect(lastUpsert().create.finalDisposition).toBe("done");
+      await recordTerminalSnapshot({ taskId: "t-u4", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+      expect(loggerMocks.warn).toHaveBeenCalledTimes(2);
+    });
+
+    it("the stored definition is null: same fallback for the project default", async () => {
+      prismaMocks.workflowFindFirst.mockResolvedValue({ definition: null });
+
+      await recordTerminalSnapshot({ taskId: "t-u5", projectId: "proj-1", finalStatus: "done", taskType: null });
+      expect(lastUpsert().create.finalDisposition).toBe("done");
+    });
+
+    it("the task row is gone: same fallback, no workflow read", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValue(null);
+
+      await recordTerminalSnapshot({ taskId: "t-u6", projectId: "proj-1", finalStatus: "done", taskType: null });
+      expect(lastUpsert().create.finalDisposition).toBe("done");
+      await recordTerminalSnapshot({ taskId: "t-u7", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+      expect("finalDisposition" in lastUpsert().create).toBe(false);
+      expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+      expect(prismaMocks.workflowFindUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  it("abandon: recordAbandonDisposition writes abandoned without consulting any workflow, and a later shipped snapshot overwrites it with done", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+
+    await recordAbandonDisposition("t-a1", "proj-1");
+    expect(lastUpsert().update.finalDisposition).toBe("abandoned");
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+
+    await recordTerminalSnapshot({ taskId: "t-a1", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+    expect(lastUpsert().update.finalDisposition).toBe("done");
+  });
+
+  it("write and read agree: the row a shipped snapshot writes counts as a success in every score-vs-outcome aggregate", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValue({ definition: definitionEndingIn("shipped") });
+    prismaMocks.auditLogFindFirst.mockResolvedValue({ payload: { score: 95, threshold: 70 } });
+
+    await recordTerminalSnapshot({ taskId: "t-w1", projectId: "proj-1", finalStatus: "shipped", taskType: null });
+    const written = lastUpsert().create;
+    const aggregates = computeConfidenceTelemetryAggregates(
+      [
+        {
+          scoreAtClaim: written.scoreAtClaim as number,
+          finalStatus: written.finalStatus as string,
+          finalDisposition: written.finalDisposition as string,
+          bounceBackCount: 0,
+          clarificationCount: 0,
+        },
+      ],
+      [],
+    );
+    expect(aggregates.highScoreFailures).toBe(0);
+    expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 1, doneRate: 1 }]);
+  });
+});
+
+describe("computeConfidenceTelemetryAggregates - custom terminal outcome", () => {
+  it("a shipped status with the done disposition is a success: low-score success, no high-score failure, doneRate 1", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 55, finalStatus: "shipped", finalDisposition: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 95, finalStatus: "shipped", finalDisposition: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.lowScoreSuccesses).toBe(1);
+    expect(aggregates.highScoreFailures).toBe(0);
+    expect(aggregates.doneRateByScoreBand).toEqual([
+      { band: "50-60", taskCount: 1, doneRate: 1 },
+      { band: "90-100", taskCount: 1, doneRate: 1 },
+    ]);
+  });
+
+  it("a shipped status with the abandoned disposition is still a failure (disposition wins)", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 95, finalStatus: "shipped", finalDisposition: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 96, finalStatus: "shipped", finalDisposition: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.highScoreFailures).toBe(1);
+    expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 2, doneRate: 0.5 }]);
   });
 });
 

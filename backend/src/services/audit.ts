@@ -173,9 +173,9 @@ export type AuditAction =
   // allowNonCreatorRespec-style relaxation), open-OR-backlog (T-002/D6
   // extended this from open-only), fully unclaimed (mirrors task_respec's
   // CAS guard); see the route's block comment in routes/tasks.ts for why
-  // "abandoned" is safe to write directly even though it is outside the
-  // workflow engine's fixed state vocabulary. Payload carries { actorType:
-  // "agent", agentTokenId, previousStatus, fromStatus, reason } so operators
+  // "abandoned" is safe to write directly even though it is a reserved name
+  // outside the workflow graph (routes/workflows.ts RESERVED_STATE_NAMES).
+  // Payload carries { actorType: "agent", agentTokenId, previousStatus, fromStatus, reason } so operators
   // can see who gave up on the task, from which status, and why.
   | "task.creator_abandoned"
   // Backlog promote/discard (PATCH /tasks/:id, human write-tier, T-002/D4):

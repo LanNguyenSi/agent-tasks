@@ -201,8 +201,8 @@ export function StatesTable({
 
       {statesLocked && (
         <p className="wf-table-hint">
-          The state vocabulary is fixed system-wide ({def.states.map((s) => s.name).join(", ")}).
-          Add, rename, and remove are not available. Labels and agent instructions stay editable.
+          States cannot be added, renamed or removed in this editor ({def.states.map((s) => s.name).join(", ")}).
+          Labels and agent instructions stay editable.
         </p>
       )}
 
