@@ -69,7 +69,11 @@ function sanitizeBacklogEdges(transitions: Edge[], remapOutOfBacklog: boolean, s
   // Terminal and review-like are judged on the sanitized definition before any
   // remap: initial state open, no backlog state, only the edges that touch
   // backlog at neither end. When the states are not a list nothing can be
-  // judged and nothing is remapped.
+  // judged and nothing is remapped. Of the remap rules only the review skip
+  // can change which names qualify (a remapped edge into a review-like state
+  // would make it a direct target of the entry state); the others (terminal
+  // target, duplicate, self loop, the edge filters) only shape the edge list.
+  // They are kept so the port reads like the backend.
   const judge: Definition | null = Array.isArray(states)
     ? {
         initialState: SANITIZED_INITIAL_STATE,
