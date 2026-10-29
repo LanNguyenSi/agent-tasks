@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-10-29T08:07:09Z
+timestamp: 2026-10-29T12:42:56Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -170,4 +170,4 @@ contract](../grounding-receipt-contract.md).
 
 An independent administrative hold is checked before cohort selection or unprovisioned fallback. It blocks fresh task completion and evidence use, including force/override paths; the database guard freezes all task-row updates and deletes. Existing claims and cohort history remain stored. See [migration and resume](../grounding-migration.md).
 
-The runtime creation policy also covers signed issue-open deliveries. For selected projects, the existing `open` status must exist in the effective workflow and must not be review or terminal. Task creation and provisioning share the delivery transaction; this does not grant a completion decision or relax transition gates.
+The runtime creation policy also covers signed issue-open deliveries. Every delivery creates the task in the initial state of the project's default workflow; for selected projects that state must exist in the effective workflow and must not be terminal (an initial state is never review-like). Task creation, provisioning and the `task_available` rows share the delivery transaction; this does not grant a completion decision or relax transition gates.

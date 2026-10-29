@@ -1,6 +1,6 @@
 import { groundingTaskHeld } from "./grounding-hold.js";
 import { createHash } from "node:crypto";
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient, type Signal } from "@prisma/client";
 import { z } from "zod";
 import { canonicalGithubRepo } from "./grounding-github-fence.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
@@ -13,6 +13,9 @@ import { GroundingReceiptVerificationError } from "./grounding-receipt.js";
 import { GroundingDecisionError, groundingTransaction, lockGroundingProjects, lockGroundingTaskUnderProject } from "./grounding-transaction.js";
 import { applyGithubObservedContext, type GithubObservedContextChange } from "./grounding-github-observation-context.js";
 import { pickMergeTargetStatus } from "./github-webhook.js";
+import { createInitialStatus } from "./task-status-input.js";
+import { createTaskAvailableSignalsInTx } from "./task-signal.js";
+import { maybeDeliverSignalWebhook } from "./signal.js";
 
 export class GroundingGithubWebhookError extends Error {
   constructor(readonly code: "grounding_webhook_invalid" | "grounding_webhook_conflict", readonly status: 400 | 409) { super(code); }
@@ -90,7 +93,12 @@ export class GroundingGithubWebhookService {
   async handle(input: { deliveryId: string; event: string; rawBody: string }) {
     const event = parse(input);
     const fingerprint = createHash("sha256").update(input.rawBody).digest("hex");
-    return groundingTransaction(this.db, async tx => {
+    // task_available signals written by this delivery's transaction; delivered to the
+    // outbound notification webhooks only after it committed. A replayed delivery returns
+    // its stored result before applyEvent runs, so it adds nothing here.
+    const signals: Signal[] = [];
+    const result = await groundingTransaction(this.db, async tx => {
+      signals.length = 0; // the callback may be retried on a serialization failure
       const inserted = await tx.$queryRaw<{ deliveryId: string }[]>`
         INSERT INTO grounding_github_webhook_deliveries ("deliveryId", event, fingerprint)
         VALUES (${input.deliveryId}, ${input.event}, ${fingerprint})
@@ -102,11 +110,13 @@ export class GroundingGithubWebhookService {
         if (!delivery.completedAt || !delivery.result) conflict();
         return { ...(delivery.result as Record<string, unknown>), duplicate: true };
       }
-      const effects = await this.applyEvent(tx, event);
+      const effects = await this.applyEvent(tx, event, signals);
       const result = { received: true, event: input.event, ...effects };
       await tx.groundingGithubWebhookDelivery.update({ where: { deliveryId: input.deliveryId }, data: { result, completedAt: new Date() } });
       return result;
     });
+    for (const signal of signals) void maybeDeliverSignalWebhook(signal, this.db).catch(() => {});
+    return result;
   }
 
   private async projects(tx: Prisma.TransactionClient, event: Event) {
@@ -169,7 +179,7 @@ export class GroundingGithubWebhookService {
     return context.success && context.data.deliverable.headSha !== event.head;
   }
 
-  private async applyEvent(tx: Prisma.TransactionClient, event: Event): Promise<EffectResult> {
+  private async applyEvent(tx: Prisma.TransactionClient, event: Event, signals: Signal[]): Promise<EffectResult> {
     if (!event.repo || event.kind === "ignored") return { observed: 0, changed: 0 };
     const projects = await this.projects(tx, event);
     if (event.kind === "push") {
@@ -181,7 +191,10 @@ export class GroundingGithubWebhookService {
       for (const project of projects.filter(project => canonicalOrNull(project.githubRepo) === event.repo)) {
         const selected = this.creationPolicy.filter(entry => entry.projectId === project.id);
         if (selected.length > 1 || (selected.length && !this.attempts)) unavailable();
-        const task = await tx.task.create({ data: { projectId: project.id, title: `[GH #${event.number}] ${event.title}`, description: event.body, status: "open" }, include: { project: true } });
+        // The workflow's initial state, not the literal `open`. The webhook carries no workflowId,
+        // so this resolves the project default, read on the same transaction as the state check below.
+        const initialStatus = await createInitialStatus(tx, project.id, undefined);
+        const task = await tx.task.create({ data: { projectId: project.id, title: `[GH #${event.number}] ${event.title}`, description: event.body, status: initialStatus }, include: { project: true } });
         if (selected.length) {
           const { def } = await groundingWorkflow(tx, task);
           if (isReviewState(def, task.status) || isTerminalState(def, task.status)) throw new GroundingReceiptVerificationError("grounding_required");
@@ -189,6 +202,7 @@ export class GroundingGithubWebhookService {
           await this.attempts!.provisionInTransaction(tx, { taskId: task.id, projectId: project.id, subjectMode: selected[0]!.subjectMode });
         }
         await tx.auditLog.create({ data: { projectId: project.id, taskId: task.id, actorId: null, action: "task.created", payload: { source: "github_webhook", actorType: "system_observation", deliveryId: event.deliveryId, issue_number: event.number } } });
+        signals.push(...await createTaskAvailableSignalsInTx(tx, { task, project, actor: { type: "webhook", name: "GitHub" } }));
         changed++;
       }
       return { observed: 0, changed };

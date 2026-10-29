@@ -304,7 +304,11 @@ it("signed issue creation enrolls selected projects and preserves unselected beh
   expect(await store.db.groundingCohort.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ mode: "EXTERNAL_V1" });
   const unselected = await store.db.task.findFirstOrThrow({ where: { projectId: other.id } });
   expect(unselected.status).toBe("open"); expect(await store.db.groundingBinding.findUnique({ where: { taskId: unselected.id } })).toBeNull();
-  expect((await snapshot()).signals).toHaveLength(0);
+  // Both creators of this fan-out tell the team's claim-eligible agent about the new task, in the state it was created in.
+  const signals = (await snapshot()).signals;
+  expect(signals).toHaveLength(1);
+  expect(signals[0]).toMatchObject({ type: "task_available", taskId: task.id, recipientAgentId: ids.agent, context: { taskStatus: "open", actor: { type: "webhook", name: "GitHub" } } });
+  expect(await store.db.signal.count({ where: { projectId: other.id, taskId: unselected.id, type: "task_available" } })).toBe(1);
   const after = await snapshot();
   const duplicate = await target.request(webhook(delivery)); expect(await duplicate.json()).toMatchObject({ duplicate: true });
   expect(await snapshot()).toEqual(after);
@@ -316,10 +320,24 @@ it("signed issue creation enrolls selected projects and preserves unselected beh
   expect(await snapshot()).toEqual(after);
 });
 
-it.each(["missing open", "terminal open", "review open", "binding failure", "audit failure"])("issue creation %s rolls back delivery, task, cohort, binding and audit", async condition => {
-  if (condition === "missing open") await store.db.workflow.updateMany({ where: { projectId }, data: { definition: { initialState: "queued", states: [{ name: "queued", label: "queued", terminal: false }, { name: "done", label: "done", terminal: true }], transitions: [{ from: "queued", to: "done" }] } } });
+it("issue creation starts the task in a custom initial state, enrolled and signalled in that state", async () => {
+  // Neither `open` nor any built-in name: the old literal `open` was refused here (missing open / review open).
+  const custom = { initialState: "queued", states: [{ name: "queued", label: "queued", terminal: false }, { name: "working", label: "working", terminal: false }, { name: "open", label: "open", terminal: false }, { name: "done", label: "done", terminal: true }], transitions: [{ from: "queued", to: "working" }, { from: "working", to: "open" }, { from: "open", to: "done" }] };
+  await store.db.workflow.updateMany({ where: { projectId }, data: { definition: custom } });
+  const target = await app();
+  expect((await target.request(webhook())).status).toBe(200);
+  const task = await store.db.task.findFirstOrThrow({ where: { projectId } });
+  expect(task.status).toBe("queued");
+  expect(await store.db.groundingBinding.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ subjectMode: "TASK_SPEC" });
+  expect(await store.db.groundingCohort.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ mode: "EXTERNAL_V1" });
+  const signals = await store.db.signal.findMany({ where: { projectId } });
+  expect(signals).toHaveLength(1);
+  expect(signals[0]).toMatchObject({ type: "task_available", taskId: task.id, recipientAgentId: ids.agent, context: { taskStatus: "queued" } });
+});
+
+it.each(["terminal open", "unreadable definition", "binding failure", "audit failure"])("issue creation %s rolls back delivery, task, cohort, binding and audit", async condition => {
+  if (condition === "unreadable definition") await store.db.workflow.updateMany({ where: { projectId }, data: { definition: { unreadable: true } } });
   if (condition === "terminal open") await store.db.workflow.updateMany({ where: { projectId }, data: { definition: { ...workflow, states: workflow.states.map(state => ({ ...state, terminal: state.name === "open" || state.terminal })) } } });
-  if (condition === "review open") await store.db.workflow.updateMany({ where: { projectId }, data: { definition: { initialState: "queued", states: [{ name: "queued", label: "queued", terminal: false }, { name: "working", label: "working", terminal: false }, { name: "open", label: "open", terminal: false }, { name: "done", label: "done", terminal: true }], transitions: [{ from: "queued", to: "working" }, { from: "working", to: "open" }, { from: "open", to: "done" }] } } });
   const db = store.connect().$extends({ query: {
     groundingBinding: { async create({ args, query }) { if (condition === "binding failure") throw new Error("binding unavailable"); return query(args); } },
     auditLog: { async create({ args, query }) { if (condition === "audit failure") throw new Error("audit unavailable"); return query(args); } },
