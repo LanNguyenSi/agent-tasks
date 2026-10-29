@@ -158,13 +158,24 @@ interface FilterState<T> {
   source: FilterSource;
 }
 
-function parseCsv<T extends string>(value: string | null, allowed: readonly T[]): T[] {
+// `allowed` null keeps every name: the status filter does not know the team's
+// vocabulary until the workflows are read (and never does for a project whose
+// workflow list answers 403), and a custom name in the URL must reach the
+// first request and survive a chip click meanwhile. The backend checks the
+// names against the team's vocabulary, so an unknown one comes back as an
+// error instead of being dropped here.
+function parseCsv<T extends string>(value: string | null, allowed: readonly T[] | null): T[] {
   if (!value) return [];
-  const set = new Set(allowed as readonly string[]);
+  const set = allowed ? new Set(allowed as readonly string[]) : null;
+  const seen = new Set<string>();
   return value
     .split(",")
     .map((v) => v.trim())
-    .filter((v): v is T => set.has(v));
+    .filter((v): v is T => {
+      if (!v || v === EMPTY_SENTINEL || seen.has(v)) return false;
+      seen.add(v);
+      return set === null || set.has(v);
+    });
 }
 
 // Resolves a multi-value URL param with preset fallback. Supports the
@@ -173,7 +184,7 @@ function parseCsv<T extends string>(value: string | null, allowed: readonly T[])
 // without the preset snapping back on the next render.
 function resolveFilter<T extends string>(
   rawParam: string | null,
-  allowed: readonly T[],
+  allowed: readonly T[] | null,
   presetDefault: readonly T[],
 ): FilterState<T> {
   if (rawParam === EMPTY_SENTINEL) return { values: [], source: "url" };
@@ -364,10 +375,10 @@ function TasksPageInner() {
   const workflowsByProject = useProjectWorkflows(selectedTeamId, projects);
   const statusNames = useMemo(() => workflowStatusNames(workflowsByProject), [workflowsByProject]);
   const statusChips = useMemo(() => statusChipsFor(workflowsByProject), [workflowsByProject]);
-  const knownStatuses = useMemo(() => statusChips.map((c) => c.name), [statusChips]);
   const presetStatusList = useMemo(() => presetStatuses(scope, statusNames), [scope, statusNames]);
 
-  const statusState = resolveFilter(searchParams.get("status"), knownStatuses, presetStatusList);
+  // The names in the URL are not narrowed to the chips: see parseCsv.
+  const statusState = resolveFilter<string>(searchParams.get("status"), null, presetStatusList);
   const priorityState = resolveFilter(searchParams.get("priority"), PRIORITIES, preset.priorities ?? []);
   const statusFilter = statusState.values;
   const priorityFilter = priorityState.values;

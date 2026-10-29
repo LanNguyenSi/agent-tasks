@@ -4,6 +4,13 @@
 // page.
 
 import type { Task, Workflow } from "../../lib/api";
+import {
+  BUILT_IN_REVIEW_STATES,
+  BUILT_IN_TERMINAL_STATES,
+  storedReviewStates,
+  storedTerminalStates,
+  storedWorkStates,
+} from "../../lib/workflow-vocabulary";
 
 /** Agent-created draft awaiting operator promotion out of backlog. */
 export function isBacklogTask(t: Pick<Task, "status">): boolean {
@@ -15,9 +22,6 @@ const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["open", "in_progress",
 
 /** The two names outside every workflow definition (backend BACKLOG_STATE, ABANDONED_STATE). */
 const NON_ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["backlog", "abandoned"]);
-
-/** Terminal states of the built-in workflow (backend defaultWorkflowDefinition). */
-const BUILT_IN_TERMINAL_STATES: ReadonlySet<string> = new Set(["done"]);
 
 /** What a task row needs for its workflow to be found. */
 export type WorkflowTask = Pick<Task, "projectId"> & { workflowId?: string | null };
@@ -31,43 +35,17 @@ export type TerminalStatesOf = StatesOf;
 /** The review-like states of one task's own workflow. */
 export type ReviewStatesOf = StatesOf;
 
+/** Terminal states of the built-in workflow (backend defaultWorkflowDefinition). */
+const BUILT_IN_TERMINAL_SET: ReadonlySet<string> = new Set(BUILT_IN_TERMINAL_STATES);
+
 /** Review-like state of the built-in workflow (backend defaultWorkflowDefinition). */
-const BUILT_IN_REVIEW_STATES: ReadonlySet<string> = new Set(["review"]);
+const BUILT_IN_REVIEW_SET: ReadonlySet<string> = new Set(BUILT_IN_REVIEW_STATES);
 
-function terminalNames(workflow: Workflow): ReadonlySet<string> {
-  const states = workflow.definition?.states;
-  // An unreadable stored definition reads as the built-in workflow, as the
-  // backend's safeStates does when the definition does not sanitize.
-  if (!Array.isArray(states)) return BUILT_IN_TERMINAL_STATES;
-  return new Set(states.filter((s) => s.terminal).map((s) => s.name));
-}
-
-/**
- * The review-like states of one stored workflow: a port of the backend's
- * isReviewState (services/default-workflow.ts). A state qualifies when it is
- * not the initial state, not terminal, has an edge to a terminal state and is
- * not a direct target of an edge from the initial state. As there, a name is
- * terminal by its first state entry. `backlog` and `abandoned` live outside
- * every workflow and never qualify.
- */
-function reviewNames(workflow: Workflow): ReadonlySet<string> {
-  const def = workflow.definition;
-  const states = def?.states;
-  if (!Array.isArray(states)) return BUILT_IN_REVIEW_STATES;
-  const transitions = Array.isArray(def.transitions) ? def.transitions : [];
-  const terminalByName = new Map<string, boolean>();
-  for (const s of states) if (!terminalByName.has(s.name)) terminalByName.set(s.name, s.terminal === true);
-  const isTerminal = (name: string) => terminalByName.get(name) === true;
-  const names = new Set<string>();
-  for (const s of states) {
-    if (NON_ACTIONABLE_STATUSES.has(s.name)) continue;
-    if (s.name === def.initialState || isTerminal(s.name)) continue;
-    if (!transitions.some((t) => t.from === s.name && isTerminal(t.to))) continue;
-    if (transitions.some((t) => t.from === def.initialState && t.to === s.name)) continue;
-    names.add(s.name);
-  }
-  return names;
-}
+// The terminal and review-like names of a stored workflow are the backend's:
+// they are read from the sanitized definition, with the built-in names as the
+// fallback for one that cannot be read (see lib/workflow-vocabulary.ts).
+const terminalNames = (workflow: Workflow): ReadonlySet<string> => new Set(storedTerminalStates(workflow));
+const reviewNames = (workflow: Workflow): ReadonlySet<string> => new Set(storedReviewStates(workflow));
 
 /**
  * The workflow row a task follows, the way the backend's home count finds it
@@ -93,7 +71,7 @@ function workflowRowOf(
 export function terminalStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): TerminalStatesOf {
   return (task) => {
     const row = workflowRowOf(byProject, task);
-    return row ? terminalNames(row) : BUILT_IN_TERMINAL_STATES;
+    return row ? terminalNames(row) : BUILT_IN_TERMINAL_SET;
   };
 }
 
@@ -101,7 +79,7 @@ export function terminalStatesResolver(byProject: ReadonlyMap<string, readonly W
 export function reviewStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): ReviewStatesOf {
   return (task) => {
     const row = workflowRowOf(byProject, task);
-    return row ? reviewNames(row) : BUILT_IN_REVIEW_STATES;
+    return row ? reviewNames(row) : BUILT_IN_REVIEW_SET;
   };
 }
 
@@ -130,13 +108,9 @@ export function workflowStatusNames(byProject: ReadonlyMap<string, readonly Work
   const terminal = new Set<string>(BUILT_IN_TERMINAL_STATES);
   for (const rows of byProject.values()) {
     for (const w of rows) {
-      const states = w.definition?.states;
-      if (!Array.isArray(states)) continue;
-      for (const s of states) {
-        if (s.terminal) terminal.add(s.name);
-        else if (!NON_ACTIONABLE_STATUSES.has(s.name)) actionable.add(s.name);
-      }
-      for (const name of reviewNames(w)) review.add(name);
+      for (const name of storedTerminalStates(w)) terminal.add(name);
+      for (const name of storedWorkStates(w)) if (!NON_ACTIONABLE_STATUSES.has(name)) actionable.add(name);
+      for (const name of storedReviewStates(w)) review.add(name);
     }
   }
   return { actionable: [...actionable], review: [...review], terminal: [...terminal] };

@@ -418,6 +418,48 @@ describe("home page: Mine, In Review and Done widgets follow the project workflo
   });
 });
 
+// A project whose stored workflow is the legacy copy of the built-in default
+// (initial state backlog, backlog -> open): the backend reads it after
+// sanitizing, where in_progress is the entry's target and not review-like, so
+// neither In Review nor the review request may include in_progress.
+describe("home page: a legacy stored copy of the default workflow is read like the backend reads it", () => {
+  const LEGACY = {
+    ...flow(
+      "wf-legacy",
+      "p1",
+      [["backlog", false], ["open", false], ["in_progress", false], ["review", false], ["done", true]],
+      [["backlog", "open"], ["open", "in_progress"], ["in_progress", "review"], ["in_progress", "done"], ["review", "done"]],
+    ),
+  } as Workflow;
+  (LEGACY.definition as { initialState: string }).initialState = "backlog";
+
+  const dataset = () => [
+    makeTask({ title: "legacy progress", status: "in_progress", claimedByUserId: ME, projectId: "p1" }),
+    makeTask({ title: "legacy review", status: "review", projectId: "p1" }),
+    makeTask({ title: "legacy open", status: "open", claimedByUserId: ME, projectId: "p1" }),
+  ];
+
+  it("asks In Review for review only and lists no in_progress row, even when a response returns one", async () => {
+    const rows = dataset();
+    // The fake ignores the status filter: only the per-task rule can keep in_progress out.
+    mockGetTeamTasks.mockImplementation(async (_t, opts) => serveScoped(rows, { mine: opts?.mine }));
+    mockGetWorkflows.mockResolvedValue([LEGACY]);
+    await renderHome();
+    await vi.waitFor(() => {
+      expect(mockGetWorkflows).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(widgetTitles("In Review").some((t) => t.startsWith("legacy review"))).toBe(true);
+    });
+    expect(callsOf("review").every((status) => status === "review")).toBe(true);
+    const titles = widgetTitles("In Review");
+    expect(has(titles, "legacy progress")).toBe(false);
+    expect(has(titles, "legacy open")).toBe(false);
+    // My Tasks still lists the in_progress row: it is actionable.
+    expect(has(widgetTitles("My Tasks"), "legacy progress")).toBe(true);
+  });
+});
+
 // ── 403 on the workflow list is remembered across polls ───────────────────────
 
 describe("home page: a project whose workflows answer 403 is asked once", () => {

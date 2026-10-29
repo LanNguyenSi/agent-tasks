@@ -309,9 +309,9 @@ describe("reviewStatesResolver: parity with the backend isReviewState", () => {
     expect([...reviewStatesResolver(new Map([["p1", [legacy]]]))(taskIn("p1"))]).toEqual(["review"]);
   });
 
-  it("never lists backlog or abandoned", () => {
+  it("never lists backlog, and lists abandoned only where the stored definition makes it review-like like the backend does", () => {
     const odd = def("open", [["open", false], ["backlog", false], ["abandoned", false], ["done", true]], [["open", "backlog"], ["backlog", "done"], ["abandoned", "done"]], { id: "wf-odd" });
-    expect(reviewStatesResolver(new Map([["p1", [odd]]]))(taskIn("p1")).size).toBe(0);
+    expect([...reviewStatesResolver(new Map([["p1", [odd]]]))(taskIn("p1"))]).toEqual(["abandoned"]);
   });
 
   it("reads a project that is not loaded as the built-in workflow", () => {

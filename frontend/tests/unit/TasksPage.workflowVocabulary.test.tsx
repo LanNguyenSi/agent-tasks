@@ -2,8 +2,9 @@
 /**
  * /tasks page with stored custom workflows (src/app/tasks/page.tsx): the
  * Priority, My Tasks, In Review and Recently Done presets resolve their status
- * lists from the team's project workflows, the status filter accepts any state
- * name those workflows define, and a chip appears for each custom state.
+ * lists from the team's project workflows, the status filter keeps any state
+ * name of the URL (the backend checks the vocabulary), and a chip appears for
+ * each custom state the loaded workflows define.
  * Active stays the fixed open + in progress. With no workflow readable the
  * presets are the built-in lists. Mock/render pattern mirrors
  * TasksPageCustomFilter.test.tsx.
@@ -173,6 +174,21 @@ describe("/tasks presets follow the workflow vocabulary", () => {
     expect(vi.mocked(getTeamTasks).mock.calls.at(-1)![1]!.recency).toBe("recent");
   });
 
+  it("In Review reads a legacy stored copy of the default workflow like the backend: review, not in_progress", async () => {
+    const legacy = flow(
+      "wf-legacy",
+      "p1",
+      [["backlog", "Backlog", false], ["open", "Open", false], ["in_progress", "In Progress", false], ["review", "Review", false], ["done", "Done", true]],
+      [["backlog", "open"], ["open", "in_progress"], ["in_progress", "review"], ["in_progress", "done"], ["review", "done"]],
+    );
+    (legacy.definition as { initialState: string }).initialState = "backlog";
+    vi.mocked(getWorkflows).mockImplementation(async (projectId) => (projectId === "p1" ? [legacy] : []));
+    await renderAt("scope=review");
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
+    await lastStatusIs("review");
+    expect(new Set(statusRequests())).toEqual(new Set(["review"]));
+  });
+
   it("Active stays open and in progress", async () => {
     await renderAt("scope=open");
     await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
@@ -251,11 +267,31 @@ describe("/tasks status parameter", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tasks · custom filter");
   });
 
-  it("drops a name no workflow defines and falls back to the preset", async () => {
+  it("keeps a name no workflow defines and lets the backend check it", async () => {
     await renderAt("scope=review&status=nonsense");
     await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
-    await lastStatusIs("review,qa");
-    expect(statusRequests()).not.toContain("nonsense");
+    await lastStatusIs("nonsense");
+    expect(new Set(statusRequests())).toEqual(new Set(["nonsense"]));
+  });
+
+  it("keeps a custom name in the very first request, before the workflows are read", async () => {
+    await renderAt("status=qa,spec");
+    expect(statusRequests()[0]).toBe("qa,spec");
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
+    expect(new Set(statusRequests())).toEqual(new Set(["qa,spec"]));
+  });
+
+  it("a chip clicked while the workflows are still loading keeps the custom name from the URL", async () => {
+    vi.mocked(getWorkflows).mockReturnValue(new Promise(() => {}));
+    await renderAt("status=qa");
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(lastReplace().get("status")).toBe("qa,open");
+  });
+
+  it("drops an empty entry and a repeated name, and ignores the clear-all sentinel inside a list", async () => {
+    await renderAt("status=qa,,qa,__any__, spec ");
+    await lastStatusIs("qa,spec");
   });
 
   it("keeps the built-in names working when the workflows cannot be read", async () => {
@@ -265,10 +301,27 @@ describe("/tasks status parameter", () => {
     await lastStatusIs("review,done");
   });
 
-  it("a custom state name is not accepted while the workflows cannot be read", async () => {
+  it("a custom state name stays in the request while the workflows cannot be read", async () => {
     vi.mocked(getWorkflows).mockRejectedValue(new Error("boom"));
     await renderAt("status=qa");
     await waitFor(() => expect(getWorkflows).toHaveBeenCalled());
+    await lastStatusIs("qa");
+    expect(new Set(statusRequests())).toEqual(new Set(["qa"]));
+  });
+
+  it("a custom state name stays in the request when the project's workflows answer 403", async () => {
+    vi.mocked(getWorkflows).mockRejectedValue(Object.assign(new Error("Forbidden"), { status: 403 }));
+    await renderAt("status=qa,review");
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
+    await lastStatusIs("qa,review");
+    expect(new Set(statusRequests())).toEqual(new Set(["qa,review"]));
+    // The chip for the name does not exist (nothing was read), the filter still carries it.
+    expect(chipNames()).toEqual(["Backlog", "Open", "In Progress", "In Review", "Done"]);
+    expect(pressedStatusChips()).toEqual(["In Review"]);
+  });
+
+  it("the clear-all sentinel still clears the status filter", async () => {
+    await renderAt("scope=review&status=__any__");
     await lastStatusIs(undefined);
   });
 });
