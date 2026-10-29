@@ -176,6 +176,13 @@ describe("isPriorityTask with a custom workflow", () => {
     expect(isPriorityTask({ priority: "HIGH", status: "done", projectId: "other" }, resolver)).toBe(false);
   });
 
+  it("reads an unreadable stored definition as the built-in workflow, like the backend", () => {
+    const broken = { ...SEVEN, id: "wf-broken", definition: { states: "garbage" } } as unknown as Workflow;
+    const resolver = terminalStatesResolver(new Map([["p1", [broken]]]));
+    expect(isPriorityTask({ priority: "HIGH", status: "done", projectId: "p1" }, resolver)).toBe(false);
+    expect(isPriorityTask({ priority: "HIGH", status: "qa", projectId: "p1" }, resolver)).toBe(true);
+  });
+
   it("matches the four-state rule when the project has the built-in workflow", () => {
     const builtin = terminalStatesResolver(new Map());
     for (const status of ["open", "in_progress", "review"]) {

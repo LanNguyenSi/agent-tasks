@@ -25,9 +25,12 @@ export type WorkflowTask = Pick<Task, "projectId"> & { workflowId?: string | nul
 /** The terminal states of one task's own workflow. */
 export type TerminalStatesOf = (task: WorkflowTask) => ReadonlySet<string>;
 
-function terminalNames(workflow: Workflow): Set<string> {
+function terminalNames(workflow: Workflow): ReadonlySet<string> {
   const states = workflow.definition?.states;
-  return new Set(Array.isArray(states) ? states.filter((s) => s.terminal).map((s) => s.name) : []);
+  // An unreadable stored definition reads as the built-in workflow, as the
+  // backend's safeStates does when the definition does not sanitize.
+  if (!Array.isArray(states)) return BUILT_IN_TERMINAL_STATES;
+  return new Set(states.filter((s) => s.terminal).map((s) => s.name));
 }
 
 /**
