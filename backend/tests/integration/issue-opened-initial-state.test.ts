@@ -9,7 +9,7 @@
  * definition is stored directly.
  */
 import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
 
@@ -265,5 +265,37 @@ describe("issues.opened through the grounding webhook handler: replay", () => {
     vi.mocked(maybeDeliverSignalWebhook).mockClear();
     await service.handle(input);
     expect(vi.mocked(maybeDeliverSignalWebhook)).not.toHaveBeenCalled();
+  });
+
+  it("after a serialization failure retries the transaction, delivers only the signals the committed attempt wrote", async () => {
+    const projectId = await seedProject(queuedDefinition);
+    await seedAgent();
+    let failed = false;
+    // The first attempt writes its rows, then fails on the delivery-result update and rolls back; the retry commits.
+    const flaky = store.connect(2).$extends({
+      query: {
+        groundingGithubWebhookDelivery: {
+          async update({ args, query }) {
+            if (!failed) {
+              failed = true;
+              throw new Prisma.PrismaClientKnownRequestError("serialization failure", { code: "P2034", clientVersion: "test" });
+            }
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await new GroundingGithubWebhookService(flaky).handle({
+      deliveryId: `retry-${randomUUID()}`,
+      event: "issues",
+      rawBody: JSON.stringify({ action: "opened", repository: { full_name: repo }, issue: { number: 9, title: "Issue", body: null, html_url: `https://github.com/${repo}/issues/9`, state: "open" } }),
+    });
+
+    expect(failed).toBe(true);
+    const stored = await signalsOf(projectId);
+    expect(stored).toHaveLength(1);
+    // The rolled-back attempt's rows are never handed to the notification webhook.
+    expect(vi.mocked(maybeDeliverSignalWebhook).mock.calls.map(([signal]) => signal.id)).toEqual(stored.map((s) => s.id));
   });
 });
