@@ -354,6 +354,20 @@ describe("home page: Mine, In Review and Done widgets follow the project workflo
     expect(has(titles, "someone else's test")).toBe(false);
   });
 
+  it("My Tasks drops a custom terminal row a response returns anyway", async () => {
+    // A response that ignores the status filter must not put a finished task in the widget.
+    const dataset = SCOPED_DATASET();
+    mockGetTeamTasks.mockImplementation(async (_t, opts) => serveScoped(dataset, { mine: opts?.mine }));
+    mockGetWorkflows.mockImplementation(async (projectId) => FLOWS_BY_PROJECT(projectId));
+    await renderHome();
+    await vi.waitFor(() => {
+      expect(widgetTitles("My Tasks").some((t) => t.startsWith("my spec"))).toBe(true);
+    });
+    const titles = widgetTitles("My Tasks");
+    expect(has(titles, "my shipped")).toBe(false);
+    expect(has(titles, "my qa")).toBe(true);
+  });
+
   it("In Review lists the review-like state of each workflow, not a same-named state elsewhere", async () => {
     const dataset = SCOPED_DATASET();
     mockGetTeamTasks.mockImplementation(async (_t, opts) => serveScoped(dataset, opts ?? {}));
