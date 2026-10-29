@@ -382,10 +382,18 @@ describe("tasks list browse-mode argument validation", () => {
     expect(res.stderr).toContain("--unclaimed");
   });
 
-  it("rejects an invalid --status value in browse mode", () => {
-    const res = run(["tasks", "list", "--project", "agent-tasks", "--status", "banana"]);
+  it("rejects a --status value that cannot be a workflow state name in browse mode", () => {
+    for (const bad of ["Banana", "in-qa", "in qa", "a".repeat(65)]) {
+      const res = run(["tasks", "list", "--project", "agent-tasks", "--status", bad]);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain(`invalid status '${bad}'`);
+    }
+  });
+
+  it("rejects the bad member of a --status list before any network call", () => {
+    const res = run(["tasks", "list", "--project", "agent-tasks", "--status", "open,In QA"]);
     expect(res.status).toBe(1);
-    expect(res.stderr).toContain("invalid status 'banana'");
+    expect(res.stderr).toContain("invalid status 'In QA'");
   });
 
   it("accepts --status backlog in browse mode (D18 revision)", () => {
@@ -655,6 +663,57 @@ describe("wiring: tasks list --project backfills the PROJECT column via withProj
       // the raw taskList, the PROJECT column would render blank instead of
       // the slug and this assertion would go red.
       expect(res.stdout).toContain("my-project");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("wiring: tasks list --project --status takes a workflow state name the CLI has never heard of", () => {
+  const PROJECT_ID = "33333333-3333-3333-3333-333333333333";
+
+  it("sends a custom state in the request and prints the matching task", async () => {
+    let seen: string | undefined;
+    const { endpoint, close } = await startStubServer((req, res) => {
+      const url = req.url ?? "";
+      if (url === "/api/projects/by-slug/my-project") {
+        respondJson(res, 200, { project: { id: PROJECT_ID, name: "My Project", slug: "my-project" } });
+        return;
+      }
+      if (url.startsWith(`/api/projects/${PROJECT_ID}/tasks`)) {
+        seen = url;
+        respondJson(res, 200, {
+          tasks: [{ id: "44444444-4444-4444-4444-444444444444", title: "Task in QA", status: "in_qa", priority: "LOW" }],
+        });
+        return;
+      }
+      respondJson(res, 404, { error: "not_found" });
+    });
+    try {
+      const res = await runAgainst(endpoint, ["tasks", "list", "--project", "my-project", "--status", "in_qa,open"]);
+      expect(res.stderr).toBe("");
+      expect(res.status).toBe(0);
+      expect(seen).toBe(`/api/projects/${PROJECT_ID}/tasks?status=in_qa%2Copen&limit=50`);
+      expect(res.stdout).toContain("Task in QA");
+    } finally {
+      await close();
+    }
+  });
+
+  it("shows the backend's 400 for an unknown state unchanged", async () => {
+    const { endpoint, close } = await startStubServer((req, res) => {
+      const url = req.url ?? "";
+      if (url === "/api/projects/by-slug/my-project") {
+        respondJson(res, 200, { project: { id: PROJECT_ID, name: "My Project", slug: "my-project" } });
+        return;
+      }
+      respondJson(res, 400, { error: "bad_request", message: "Invalid status: nope; must be one of backlog, open, in_qa" });
+    });
+    try {
+      const res = await runAgainst(endpoint, ["tasks", "list", "--project", "my-project", "--status", "nope"]);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("API error (400)");
+      expect(res.stderr).toContain("Invalid status: nope; must be one of backlog, open, in_qa");
     } finally {
       await close();
     }

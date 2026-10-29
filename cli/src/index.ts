@@ -380,16 +380,20 @@ tasks
 
     const statuses = opts.status ? splitCsv(opts.status) : undefined;
     if (statuses) {
-      // "backlog" is allowed here (D18 revision): `tasks list --project` is
-      // browse/display, and the project-scoped tasks endpoint already accepts it (checked per
-      // workflow, backend/src/services/task-status-input.ts). Claim-oriented commands (start, claim, ...) don't take
-      // a --status filter at all, so this can't leak backlog into a claim
-      // path.
-      const validStatuses = ["backlog", "open", "in_progress", "review", "done", "abandoned"];
-      const bad = statuses.find((s) => !validStatuses.includes(s));
+      // A status is a workflow state name, and a project can store a workflow
+      // with other names than the four built-in ones (plus backlog and
+      // abandoned), so the CLI only checks the shape a stored name can have
+      // and lets the backend judge which names exist: an unknown one comes
+      // back as the backend's 400, shown unchanged. "backlog" is allowed here
+      // (D18 revision): `tasks list --project` is browse/display, and the
+      // project-scoped tasks endpoint already accepts it (checked per
+      // workflow, backend/src/services/task-status-input.ts). Claim-oriented
+      // commands (start, claim, ...) don't take a --status filter at all, so
+      // this can't leak backlog into a claim path.
+      const bad = statuses.find((s) => !api.isStatusName(s));
       if (bad) {
         console.error(
-          `Error: invalid status '${bad}'. Expected one of: ${validStatuses.join(", ")}`,
+          `Error: invalid status '${bad}'. A status is a workflow state name: lowercase letters, digits and underscores, at most ${api.STATUS_NAME_MAX_LENGTH} characters (for example backlog, open, in_progress, review, done, abandoned, or a state of the project's workflow)`,
         );
         process.exit(1);
       }

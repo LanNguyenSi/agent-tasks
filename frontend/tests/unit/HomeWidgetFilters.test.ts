@@ -18,7 +18,10 @@ import {
   isActiveTask,
   isBacklogTask,
   isPriorityTask,
+  actionableStatusParam,
+  terminalStatesResolver,
 } from "../../src/app/home/widgetFilters";
+import type { Workflow } from "../../src/lib/api";
 
 describe("isBacklogTask", () => {
   it("matches a backlog-status task", () => {
@@ -86,5 +89,118 @@ describe("isActiveTask (the one definition of active work)", () => {
   it("builds the status request value from the same list", () => {
     expect(ACTIVE_STATUSES).toEqual(["open", "in_progress"]);
     expect(ACTIVE_STATUS_PARAM).toBe("open,in_progress");
+  });
+});
+
+// ── Workflow-aware priority rule ──────────────────────────────────────────────
+//
+// The backend's home count (counts.priority, routes/tasks.ts) counts a HIGH or
+// CRITICAL task unless it is backlog, abandoned or in a terminal state of ITS
+// workflow (the pinned one, else the project default, else the built-in). The
+// widget rows go through the same rule once the workflows are known.
+
+function workflow(over: Partial<Workflow> & { id: string; states: [string, boolean][] }): Workflow {
+  return {
+    projectId: "p1",
+    name: over.id,
+    isDefault: false,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...over,
+    definition: {
+      states: over.states.map(([name, terminal]) => ({ name, label: name, terminal })),
+      transitions: [],
+      initialState: over.states[0]![0],
+    },
+  } as Workflow;
+}
+
+// A seven-stage style workflow: qa is open work, shipped and wontfix are finished.
+const SEVEN = workflow({
+  id: "wf-seven",
+  isDefault: true,
+  states: [["open", false], ["qa", false], ["shipped", true], ["wontfix", true]],
+});
+
+describe("isPriorityTask with a custom workflow", () => {
+  const byProject = new Map<string, Workflow[]>([["p1", [SEVEN]]]);
+  const of = terminalStatesResolver(byProject);
+  const hi = (status: string, extra: Record<string, unknown> = {}) =>
+    isPriorityTask({ priority: "HIGH", status, projectId: "p1", ...extra }, of);
+
+  it("counts a custom non-terminal state as open", () => {
+    expect(hi("qa")).toBe(true);
+  });
+
+  it("counts a custom terminal state as done", () => {
+    expect(hi("shipped")).toBe(false);
+    expect(hi("wontfix")).toBe(false);
+  });
+
+  it("keeps backlog and abandoned out, whatever the workflow says", () => {
+    expect(hi("backlog")).toBe(false);
+    expect(hi("abandoned")).toBe(false);
+  });
+
+  it("still needs HIGH or CRITICAL", () => {
+    expect(isPriorityTask({ priority: "MEDIUM", status: "qa", projectId: "p1" }, of)).toBe(false);
+    expect(isPriorityTask({ priority: "CRITICAL", status: "qa", projectId: "p1" }, of)).toBe(true);
+  });
+
+  it("reads `done` as open when the project's workflow does not make it terminal", () => {
+    // Same as the backend: terminal means terminal in the task's own workflow.
+    expect(hi("done")).toBe(true);
+  });
+
+  it("uses the pinned workflow of a task before the project default", () => {
+    const pinned = workflow({ id: "wf-pinned", states: [["open", false], ["qa", true]] });
+    const resolver = terminalStatesResolver(new Map([["p1", [SEVEN, pinned]]]));
+    const task = { priority: "HIGH" as const, status: "qa", projectId: "p1" };
+    expect(isPriorityTask(task, resolver)).toBe(true);
+    expect(isPriorityTask({ ...task, workflowId: "wf-pinned" }, resolver)).toBe(false);
+    // A pin that matches no loaded row falls back to the default, like the backend.
+    expect(isPriorityTask({ ...task, workflowId: "gone" }, resolver)).toBe(true);
+  });
+
+  it("takes the first default row of a project, as the backend does", () => {
+    const second = workflow({ id: "wf-second", isDefault: true, states: [["open", false], ["qa", true]] });
+    const resolver = terminalStatesResolver(new Map([["p1", [SEVEN, second]]]));
+    expect(isPriorityTask({ priority: "HIGH", status: "qa", projectId: "p1" }, resolver)).toBe(true);
+  });
+
+  it("falls back to the built-in workflow for a project with no stored default", () => {
+    const resolver = terminalStatesResolver(new Map([["p1", [workflow({ id: "wf-x", states: [["qa", true]] })]]]));
+    expect(isPriorityTask({ priority: "HIGH", status: "done", projectId: "p1" }, resolver)).toBe(false);
+    expect(isPriorityTask({ priority: "HIGH", status: "open", projectId: "p1" }, resolver)).toBe(true);
+    expect(isPriorityTask({ priority: "HIGH", status: "review", projectId: "other" }, resolver)).toBe(true);
+    expect(isPriorityTask({ priority: "HIGH", status: "done", projectId: "other" }, resolver)).toBe(false);
+  });
+
+  it("matches the four-state rule when the project has the built-in workflow", () => {
+    const builtin = terminalStatesResolver(new Map());
+    for (const status of ["open", "in_progress", "review"]) {
+      expect(isPriorityTask({ priority: "HIGH", status, projectId: "p1" }, builtin)).toBe(true);
+    }
+    for (const status of ["done", "backlog", "abandoned"]) {
+      expect(isPriorityTask({ priority: "HIGH", status, projectId: "p1" }, builtin)).toBe(false);
+    }
+  });
+});
+
+describe("actionableStatusParam", () => {
+  it("is the built-in actionable list while no workflow is known", () => {
+    expect(actionableStatusParam(new Map())).toBe("open,in_progress,review");
+  });
+
+  it("adds the non-terminal states of every stored workflow, once", () => {
+    const other = workflow({ id: "wf-o", projectId: "p2", states: [["open", false], ["triage", false], ["qa", false], ["closed", true]] });
+    expect(actionableStatusParam(new Map([["p1", [SEVEN]], ["p2", [other]]]))).toBe(
+      "open,in_progress,review,qa,triage",
+    );
+  });
+
+  it("never asks for backlog or abandoned, even if a stored definition names them", () => {
+    const odd = workflow({ id: "wf-b", states: [["backlog", false], ["abandoned", false], ["qa", false]] });
+    expect(actionableStatusParam(new Map([["p1", [odd]]]))).toBe("open,in_progress,review,qa");
   });
 });

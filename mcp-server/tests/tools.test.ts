@@ -685,6 +685,91 @@ describe("buildTools", () => {
     });
   });
 
+  // A project can store a workflow with state names other than the four
+  // built-in ones. The status arguments are bounded strings (no enum), so a
+  // custom name reaches the backend, which judges it; its 400 is surfaced as is.
+  describe("status arguments follow the workflow vocabulary", () => {
+    const CUSTOM = "in_qa";
+    const TASK_ID = "33333333-3333-3333-3333-333333333333";
+    const PROJECT_ID = "00000000-0000-0000-0000-000000000001";
+
+    function backend400(message: string): Response {
+      return new Response(JSON.stringify({ error: "bad_request", message }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    async function thrownDetail(run: () => Promise<unknown>) {
+      try {
+        await run();
+      } catch (e) {
+        return JSON.parse(e instanceof Error ? e.message : String(e));
+      }
+      throw new Error("expected a throw");
+    }
+
+    it("tasks_transition parses a custom state name and sends it unchanged", async () => {
+      fetchMock.mockResolvedValue(ok({ task: { status: CUSTOM } }));
+      const parsed = parseArgs("tasks_transition", { taskId: TASK_ID, status: CUSTOM });
+      await tool("tasks_transition").handler(parsed);
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body)).toEqual({ status: CUSTOM });
+    });
+
+    it("tasks_transition surfaces the backend 400 for an unknown (well-formed) state name unchanged", async () => {
+      fetchMock.mockResolvedValue(backend400("Invalid status 'nope'. Expected one of: open, in_progress, review, done"));
+      const parsed = parseArgs("tasks_transition", { taskId: TASK_ID, status: "nope" });
+      const detail = await thrownDetail(() => tool("tasks_transition").handler(parsed));
+      expect(detail.error.code).toBe("bad_request");
+      expect(detail.error.message).toBe("Invalid status 'nope'. Expected one of: open, in_progress, review, done");
+    });
+
+    it("tasks_transition still takes the four built-in names", () => {
+      for (const status of ["open", "in_progress", "review", "done"]) {
+        expect(parseArgs("tasks_transition", { taskId: TASK_ID, status }).status).toBe(status);
+      }
+    });
+
+    it.each(["project_tasks", "tasks_list"] as const)("%s status filter forwards a custom state, alone and in a list", async (name) => {
+      const base = name === "project_tasks" ? { project: PROJECT_ID } : {};
+      fetchMock.mockImplementation(async () => ok({ tasks: [], nextCursor: null }));
+      await tool(name).handler(parseArgs(name, { ...base, status: CUSTOM }));
+      expect(fetchMock.mock.calls[0][0] as string).toContain(`status=${CUSTOM}`);
+      fetchMock.mockClear();
+      await tool(name).handler(parseArgs(name, { ...base, status: ["open", CUSTOM, "backlog"] }));
+      expect(decodeURIComponent(fetchMock.mock.calls[0][0] as string)).toContain(`status=open,${CUSTOM},backlog`);
+    });
+
+    it.each(["project_tasks", "tasks_list"] as const)("%s surfaces the backend 400 for an unknown state name unchanged", async (name) => {
+      const base = name === "project_tasks" ? { project: PROJECT_ID } : {};
+      fetchMock.mockResolvedValue(backend400("Invalid status filter 'nope'"));
+      const detail = await thrownDetail(() => tool(name).handler(parseArgs(name, { ...base, status: "nope" })));
+      expect(detail.error.message).toBe("Invalid status filter 'nope'");
+    });
+
+    it.each(["tasks_transition", "project_tasks", "tasks_list"] as const)(
+      "%s bounds the status string to a stored state name's shape",
+      (name) => {
+        const base: Record<string, unknown> =
+          name === "tasks_transition" ? { taskId: TASK_ID } : name === "project_tasks" ? { project: PROJECT_ID } : {};
+        const parse = (status: unknown) => parseArgs(name, { ...base, status });
+        expect(() => parse("a".repeat(64))).not.toThrow();
+        expect(() => parse("a".repeat(65))).toThrow();
+        expect(() => parse("")).toThrow();
+        expect(() => parse("In QA")).toThrow();
+        expect(() => parse("in-qa")).toThrow();
+        expect(() => parse("done,open")).toThrow();
+        expect(() => parse(42)).toThrow();
+      },
+    );
+
+    it("the list filters reject an empty array and a malformed member", () => {
+      expect(() => parseArgs("tasks_list", { status: [] })).toThrow();
+      expect(() => parseArgs("tasks_list", { status: ["open", "Bad Name"] })).toThrow();
+    });
+  });
+
   // rc-v1-C005 review round 1, finding #6: tasks_update accepts `result`
   // (same free-text field task_finish has) but used to skip the
   // pre-network structured-wrapper guard entirely. This proves the guard is

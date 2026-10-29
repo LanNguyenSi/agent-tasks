@@ -11,6 +11,10 @@
  * than one match is a hard error listing the candidates: this never
  * silently guesses which task was meant.
  *
+ * The pool is the six built-in statuses first; a prefix that finds nothing there
+ * is searched again over the custom states of the projects' workflows (see
+ * `api.searchTaskPool`), so a task in such a state resolves too.
+ *
  * The search pool includes `backlog` tasks (D18 revision), so a backlog
  * task's id-prefix resolves the same as any other. Resolving the id is pure
  * discovery, not a claim grant -- a claim-oriented command (`start`,
@@ -42,14 +46,16 @@ export async function resolveTaskId(config: Config, idOrPrefix: string): Promise
     throw err;
   }
 
-  const { match, searched, capped } = result;
+  const { match, searched, capped, customStatesIncomplete } = result;
 
   if (match.kind === "unique") return match.id;
 
   if (match.kind === "none") {
     const detail = capped
       ? ` in the ${searched} tasks searched (capped; pass the full UUID)`
-      : "";
+      : customStatesIncomplete
+        ? " (the workflows of some projects could not be read, so a task in a state only they define was not searched; pass the full UUID)"
+        : "";
     console.error(`Error: no task found matching id prefix '${idOrPrefix}'${detail}.`);
     process.exit(1);
   }

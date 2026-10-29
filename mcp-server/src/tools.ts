@@ -51,12 +51,24 @@ export interface ToolDefinition<Shape extends ZodRawShape = ZodRawShape> {
   handler: (args: z.output<z.ZodObject<Shape>>) => Promise<unknown>;
 }
 
-const transitionStatusEnum = z.enum([
-  "open",
-  "in_progress",
-  "review",
-  "done",
-]);
+// A task status is a state name of the task's (or project's) workflow, plus the
+// two names outside every workflow definition (`backlog`, `abandoned`). The
+// built-in workflow has open, in_progress, review and done; a project can store
+// a workflow with other names, so the tools do not enumerate them: the backend
+// judges the name against the effective workflow and an unknown one comes back
+// as its 400. This only bounds the shape to what a stored state name can be
+// (the workflow API's [a-z0-9_]+ rule), so a value no backend could hold never
+// leaves the client.
+export const STATUS_NAME_MAX_LENGTH = 64;
+export const STATUS_NAME_PATTERN = /^[a-z0-9_]+$/;
+export function statusName() {
+  return z
+    .string()
+    .min(1)
+    .max(STATUS_NAME_MAX_LENGTH)
+    .regex(STATUS_NAME_PATTERN, "A status is a workflow state name: lowercase letters, digits and underscores");
+}
+const statusFilter = () => z.union([statusName(), z.array(statusName()).min(1)]);
 // The values templateData.taskType accepts. The backend owns the enum
 // (taskTypeSchema in backend/src/lib/confidence.ts); this package cannot
 // import it at runtime, so tests/task-type-parity.test.ts pins this list to
@@ -831,13 +843,11 @@ export function buildTools(
           .describe(
             "Slug or UUID; trimmed and length-capped (max 255), same input hygiene as task_create's project/projectSlug fields. A UUID-shaped value is routed straight to the id endpoint and never treated as a slug -- if this project's slug is itself UUID-shaped, it cannot be addressed via this field.",
           ),
-        status: z
-          .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"]),
-            z
-              .array(z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"]))
-              .min(1),
-          ])
+        status:
+          statusFilter()
+          .describe(
+            "A workflow state name or a list of them (the default workflow has open, in_progress, review, done; backlog and abandoned also exist). The backend judges the name against the project's workflows and answers an unknown one with a 400.",
+          )
           .optional(),
         priority: z
           .union([priorityEnum, z.array(priorityEnum).min(1)])
@@ -901,11 +911,11 @@ export function buildTools(
       inputShape: {
         limit: z.number().int().positive().max(200).optional(),
         projectId: uuid().optional(),
-        status: z
-          .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"]),
-            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"])).min(1),
-          ])
+        status:
+          statusFilter()
+          .describe(
+            "A workflow state name or a list of them (the default workflow has open, in_progress, review, done; backlog and abandoned also exist). The backend judges the name against the workflows in scope and answers an unknown one with a 400.",
+          )
           .optional(),
         priority: z
           .union([priorityEnum, z.array(priorityEnum).min(1)])
@@ -999,7 +1009,9 @@ export function buildTools(
         "Agents should not pick status values directly. Use task_start and task_finish; the system owns transitions under v2.",
       inputShape: {
         taskId: uuid(),
-        status: transitionStatusEnum,
+        status: statusName().describe(
+          "A state name of the task's workflow (the default workflow has open, in_progress, review, done). The backend judges it and answers an unknown name with a 400.",
+        ),
         force: z.boolean().optional(),
         forceReason: z.string().max(500).optional(),
       },

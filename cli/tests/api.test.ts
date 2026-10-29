@@ -15,6 +15,7 @@ import {
   listProjectTasks,
   respecTask,
   searchTaskPool,
+  isStatusName,
   matchTaskIdPrefix,
   withProject,
   type Task,
@@ -619,9 +620,177 @@ describe("searchTaskPool", () => {
         }),
       );
     }
+    // The second pass (custom workflow states) finds no project here.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ projects: [] }));
     const result = await searchTaskPool(config, "zzzzzzzz");
     expect(result).toEqual({ match: { kind: "none" }, searched: 10, capped: true });
-    expect(fetchMock).toHaveBeenCalledTimes(10);
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+    expect(fetchMock.mock.calls[10]![0] as string).toBe("http://api.test/api/projects/available");
+  });
+});
+
+describe("searchTaskPool: custom workflow states", () => {
+  const BUILT_IN_URL =
+    "http://api.test/api/tasks/claimable?status=backlog%2Copen%2Cin_progress%2Creview%2Cdone%2Cabandoned&limit=200&sort=createdAt%3Adesc";
+  const CUSTOM_ID = "abcdef12-0000-0000-0000-000000000000";
+  const customTask = { id: CUSTOM_ID, title: "In QA", status: "in_qa", priority: "LOW" };
+
+  const project = (id: string) => ({ id, name: id, slug: id });
+  const workflow = (...names: string[]) => ({
+    definition: { states: names.map((name) => ({ name, label: name, terminal: false })), transitions: [], initialState: names[0] },
+  });
+
+  // Routes by path so the order of the independent project lookups does not
+  // matter; claimable answers come from the queue in call order.
+  function route(opts: {
+    projects?: unknown[];
+    workflows?: Record<string, unknown[] | number>;
+    claimable: (Response | (() => Response))[];
+  }) {
+    const queue = [...opts.claimable];
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/api/projects/available")) return jsonResponse({ projects: opts.projects ?? [] });
+      const m = /\/api\/projects\/([^/]+)\/workflows$/.exec(url);
+      if (m) {
+        const w = opts.workflows?.[m[1]!];
+        return typeof w === "number" ? jsonResponse({ error: "boom" }, w) : jsonResponse({ workflows: w ?? [] });
+      }
+      const next = queue.shift();
+      if (!next) throw new Error(`unexpected request ${url}`);
+      return typeof next === "function" ? next() : next;
+    });
+  }
+
+  it("finds a task in a custom state by a second pass over that state after the built-in pool has no match", async () => {
+    route({
+      projects: [project("p1"), project("p2")],
+      workflows: { p1: [workflow("open", "in_progress", "in_qa", "done")], p2: [workflow("open", "review", "shipped")] },
+      claimable: [jsonResponse({ tasks: [], nextCursor: null }), jsonResponse({ tasks: [customTask], nextCursor: null })],
+    });
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({ match: { kind: "unique", id: CUSTOM_ID }, searched: 1, capped: false });
+    const claimable = fetchMock.mock.calls.map((c) => c[0] as string).filter((u) => u.includes("/tasks/claimable"));
+    expect(claimable).toEqual([
+      BUILT_IN_URL,
+      "http://api.test/api/tasks/claimable?status=in_qa%2Cshipped&limit=200&sort=createdAt%3Adesc",
+    ]);
+  });
+
+  it("pages the custom-state pass through nextCursor with its own page budget", async () => {
+    route({
+      projects: [project("p1")],
+      workflows: { p1: [workflow("open", "in_qa")] },
+      claimable: [
+        jsonResponse({ tasks: [], nextCursor: null }),
+        jsonResponse({ tasks: [{ id: "11111111-0000-0000-0000-000000000000", title: "x", status: "in_qa", priority: "LOW" }], nextCursor: "11111111-0000-0000-0000-000000000000" }),
+        jsonResponse({ tasks: [customTask], nextCursor: null }),
+      ],
+    });
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({ match: { kind: "unique", id: CUSTOM_ID }, searched: 2, capped: false });
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string).filter((u) => u.includes("/tasks/claimable"));
+    expect(urls[2]).toContain("cursor=11111111-0000-0000-0000-000000000000");
+    expect(urls[2]).toContain("status=in_qa");
+  });
+
+  it("reports the custom pass as capped when it hits the page cap", async () => {
+    const page = (i: number) =>
+      jsonResponse({ tasks: [{ id: `${i}0000000-0000-0000-0000-000000000000`, title: "x", status: "in_qa", priority: "LOW" }], nextCursor: `${i}0000000-0000-0000-0000-000000000000` });
+    route({
+      projects: [project("p1")],
+      workflows: { p1: [workflow("in_qa")] },
+      claimable: [jsonResponse({ tasks: [], nextCursor: null }), ...Array.from({ length: 10 }, (_, i) => page(i))],
+    });
+    const result = await searchTaskPool(config, "zzzzzzzz");
+    expect(result).toEqual({ match: { kind: "none" }, searched: 10, capped: true });
+  });
+
+  it("does not look up workflows when the built-in pool already resolves the prefix", async () => {
+    route({
+      projects: [project("p1")],
+      workflows: { p1: [workflow("in_qa")] },
+      claimable: [jsonResponse({ tasks: [{ id: CUSTOM_ID, title: "Open", status: "open", priority: "LOW" }], nextCursor: null })],
+    });
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result.match).toEqual({ kind: "unique", id: CUSTOM_ID });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("makes no custom-state request when the workflows only hold built-in names", async () => {
+    route({
+      projects: [project("p1")],
+      workflows: { p1: [workflow("open", "in_progress", "review", "done")] },
+      claimable: [jsonResponse({ tasks: [], nextCursor: null })],
+    });
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({ match: { kind: "none" }, searched: 0, capped: false });
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string).filter((u) => u.includes("/tasks/claimable"));
+    expect(urls).toEqual([BUILT_IN_URL]);
+  });
+
+  it("ignores state names a workflow API could not have stored", async () => {
+    route({
+      projects: [project("p1")],
+      workflows: { p1: [workflow("In QA", "in-qa", "x".repeat(65), "in_qa")] },
+      claimable: [jsonResponse({ tasks: [], nextCursor: null }), jsonResponse({ tasks: [], nextCursor: null })],
+    });
+    await searchTaskPool(config, "abcdef12");
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string).filter((u) => u.includes("/tasks/claimable"));
+    expect(urls[1]).toContain("status=in_qa&");
+  });
+
+  it("discloses an unreadable workflow list instead of reporting a plain miss", async () => {
+    route({
+      projects: [project("p1"), project("p2")],
+      workflows: { p1: [workflow("in_qa")], p2: 403 },
+      claimable: [jsonResponse({ tasks: [], nextCursor: null }), jsonResponse({ tasks: [], nextCursor: null })],
+    });
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({ match: { kind: "none" }, searched: 0, capped: false, customStatesIncomplete: true });
+  });
+
+  it("drops a candidate state the searched team rejects and retries with the rest", async () => {
+    route({
+      projects: [project("p1"), project("p2")],
+      workflows: { p1: [workflow("in_qa")], p2: [workflow("other_team_state")] },
+      claimable: [
+        jsonResponse({ tasks: [], nextCursor: null }),
+        jsonResponse({ error: "bad_request", message: "invalid status: other_team_state; must be one of backlog, open, in_qa" }, 400),
+        jsonResponse({ tasks: [customTask], nextCursor: null }),
+      ],
+    });
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result.match).toEqual({ kind: "unique", id: CUSTOM_ID });
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string).filter((u) => u.includes("/tasks/claimable"));
+    expect(urls[1]).toContain("status=in_qa%2Cother_team_state");
+    expect(urls[2]).toContain("status=in_qa&");
+  });
+
+  it("surfaces any other 400 of the custom pass", async () => {
+    route({
+      projects: [project("p1")],
+      workflows: { p1: [workflow("in_qa")] },
+      claimable: [
+        jsonResponse({ tasks: [], nextCursor: null }),
+        jsonResponse({ error: "bad_request", message: "something else" }, 400),
+      ],
+    });
+    await expect(searchTaskPool(config, "abcdef12")).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("isStatusName", () => {
+  it("accepts a stored state name's shape up to 64 characters and nothing else", () => {
+    for (const ok of ["open", "in_progress", "in_qa", "stage_7", "a".repeat(64)]) expect(isStatusName(ok)).toBe(true);
+    for (const bad of ["", "In QA", "in-qa", "Open", "a,b", "a".repeat(65), "in qa", "état"]) expect(isStatusName(bad)).toBe(false);
+  });
+});
+
+describe("listProjectTasks: status filter", () => {
+  it("joins a custom state with built-in ones in the request", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
+    await listProjectTasks(config, "p1", { status: ["in_qa", "open"] });
+    expect(fetchMock.mock.calls[0]![0] as string).toBe("http://api.test/api/projects/p1/tasks?status=in_qa%2Copen");
   });
 });
 
