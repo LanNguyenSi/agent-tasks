@@ -83,6 +83,7 @@ import {
   resolveEffectiveDefinition, withInReviewState,
   resolveProjectEffectiveDefinition,
   expectedFinishStateFromDefinition,
+  finishTargetFrom,
   isInitialState,
   isTerminalState,
   isReviewState,
@@ -2414,7 +2415,6 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   // Resolve the workflow definition once so both branches can compute the
   // expected finish state.
   const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
-  const expectedFinishState = expectedFinishStateFromDefinition(effectiveDefinition);
 
   // ── Branch: status=open → author-claim + transition ──────────────────────
   if (isInitialState(effectiveDefinition, task.status)) {
@@ -2465,6 +2465,12 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         409,
       );
     }
+
+    // The state a work-claim finish will move the task to from where this
+    // start leaves it: the review-like state `startTarget` has an edge to
+    // (same helper the finish itself uses, so preview and finish name one
+    // edge).
+    const expectedFinishState = finishTargetFrom(effectiveDefinition, startTarget);
 
     // If the caller supplied a branchName AND the task has none, fold it
     // into the gate input so a `branchPresent` precondition passes on the
@@ -3870,7 +3876,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
     targetStatus = terminalTargetFrom(effectiveDefinition, task.status);
   } else {
-    targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
+    targetStatus = finishTargetFrom(effectiveDefinition, task.status);
   }
 
   // Cross-repo validation on prUrl payload (ADR-0010 §5b/§5c). Shared gate —

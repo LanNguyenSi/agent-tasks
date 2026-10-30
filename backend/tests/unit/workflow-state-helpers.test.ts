@@ -11,6 +11,7 @@
  *     normalization), so the test pins that behaviour.
  */
 import { describe, it, expect } from "vitest";
+import { CUSTOM_VOCABULARY_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 import {
   defaultWorkflowDefinition,
   isInitialState,
@@ -23,6 +24,7 @@ import {
   approveTarget,
   requestChangesTarget,
   expectedFinishStateFromDefinition,
+  finishTargetFrom,
   type WorkflowDefinitionShape,
 } from "../../src/services/default-workflow.js";
 
@@ -231,5 +233,131 @@ describe("expectedFinishStateFromDefinition", () => {
   it("returns 'done' for null definition (falls back to built-in)", () => {
     // Built-in default has review → returns "review" actually
     expect(expectedFinishStateFromDefinition(null)).toBe("review");
+  });
+});
+
+// ── finishTargetFrom ────────────────────────────────────────────────────────
+
+/**
+ * Two review-like states, each reachable from a different work state:
+ * `spec_check` (first in state order) only from `plan`, `qa` only from
+ * `build`. A finish from `build` must land in `qa`; the workflow-wide first
+ * review-like state (`spec_check`) has no edge from there.
+ */
+const twoReviewDef: WorkflowDefinitionShape = {
+  initialState: "open",
+  states: [
+    { name: "open", label: "Open", terminal: false },
+    { name: "draft", label: "Draft", terminal: false },
+    { name: "plan", label: "Plan", terminal: false },
+    { name: "spec_check", label: "Spec check", terminal: false },
+    { name: "build", label: "Build", terminal: false },
+    { name: "qa", label: "QA", terminal: false },
+    { name: "shipped", label: "Shipped", terminal: true },
+  ],
+  transitions: [
+    { from: "open", to: "draft" },
+    { from: "draft", to: "plan" },
+    { from: "plan", to: "spec_check" },
+    { from: "plan", to: "build" },
+    { from: "spec_check", to: "shipped" },
+    { from: "build", to: "qa" },
+    { from: "qa", to: "shipped" },
+  ],
+};
+
+describe("finishTargetFrom", () => {
+  it("returns 'review' from every work state of the built-in four-state workflow", () => {
+    expect(finishTargetFrom(defaultDef, "in_progress")).toBe("review");
+    expect(finishTargetFrom(null, "in_progress")).toBe("review");
+  });
+
+  it("built-in workflow: a state with no edge into review (open, review, done) keeps the workflow-wide fallback", () => {
+    for (const from of ["open", "review", "done"]) {
+      expect(finishTargetFrom(defaultDef, from)).toBe(expectedFinishStateFromDefinition(defaultDef));
+    }
+  });
+
+  it("custom vocabulary: build reaches qa directly", () => {
+    expect(finishTargetFrom(CUSTOM_VOCABULARY_DEFINITION, "build")).toBe("qa");
+  });
+
+  it("custom vocabulary: plan has no direct review edge and falls back to the workflow-wide review state", () => {
+    expect(finishTargetFrom(CUSTOM_VOCABULARY_DEFINITION, "plan")).toBe("qa");
+  });
+
+  it("two review states: each work state finishes into the review state it has an edge to", () => {
+    // The pre-fix answer (reviewStates(def)[0]) is spec_check for both.
+    expect(reviewStates(twoReviewDef)).toEqual(["spec_check", "qa"]);
+    expect(finishTargetFrom(twoReviewDef, "plan")).toBe("spec_check");
+    expect(finishTargetFrom(twoReviewDef, "build")).toBe("qa");
+  });
+
+  it("two review states: a work state with no review edge falls back to the first review state (finish stays unreachable)", () => {
+    expect(finishTargetFrom(twoReviewDef, "draft")).toBe("spec_check");
+    expect(twoReviewDef.transitions.some((t) => t.from === "draft" && t.to === "spec_check")).toBe(false);
+  });
+
+  it("several reachable review states: the first in state order wins, not the first edge and not the last", () => {
+    const def: WorkflowDefinitionShape = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "work", label: "Work", terminal: false },
+        { name: "r1", label: "R1", terminal: false },
+        { name: "r2", label: "R2", terminal: false },
+        { name: "shipped", label: "Shipped", terminal: true },
+      ],
+      // The edge to r2 is declared first on purpose.
+      transitions: [
+        { from: "open", to: "work" },
+        { from: "work", to: "r2" },
+        { from: "work", to: "r1" },
+        { from: "r1", to: "shipped" },
+        { from: "r2", to: "shipped" },
+      ],
+    };
+    expect(finishTargetFrom(def, "work")).toBe("r1");
+  });
+
+  it("a review edge wins over a terminal edge from the same state", () => {
+    const def: WorkflowDefinitionShape = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "work", label: "Work", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "work" },
+        { from: "work", to: "done" },
+        { from: "work", to: "review" },
+        { from: "review", to: "done" },
+      ],
+    };
+    expect(finishTargetFrom(def, "work")).toBe("review");
+  });
+
+  it("no review-like state: finishes into the first terminal state from any state", () => {
+    const noReview: WorkflowDefinitionShape = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "work", label: "Work", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "work" },
+        { from: "work", to: "done" },
+      ],
+    };
+    expect(finishTargetFrom(noReview, "work")).toBe("done");
+    expect(finishTargetFrom(noReview, "open")).toBe("done");
+  });
+
+  it("a state that is not in the definition falls back to the workflow-wide answer", () => {
+    expect(finishTargetFrom(twoReviewDef, "nope")).toBe(expectedFinishStateFromDefinition(twoReviewDef));
+    expect(finishTargetFrom(defaultDef, "nope")).toBe("review");
   });
 });

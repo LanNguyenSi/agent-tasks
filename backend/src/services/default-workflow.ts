@@ -490,6 +490,30 @@ export function expectedFinishStateFromDefinition(
 }
 
 /**
+ * The state a work-claim `task_finish` (without autoMerge) moves a task to
+ * from `fromState`: the first review-like state, in the definition's state
+ * order, that has a DIRECT transition `fromState -> R`. A workflow with
+ * several work states therefore finishes into the review state its current
+ * state actually has an edge to, instead of the workflow-wide first one.
+ *
+ * When `fromState` has no direct edge into a review-like state, the result
+ * is the unchanged workflow-wide `expectedFinishStateFromDefinition`
+ * fallback, so an unreachable finish still answers `no_transition` at the
+ * gate lookup. No multi-hop search, and no shortcut from a work state past
+ * the review states into a terminal one.
+ */
+export function finishTargetFrom(
+  definition: WorkflowDefinitionShape | null,
+  fromState: string,
+): string {
+  const def = definition ?? defaultWorkflowDefinition();
+  const reachable = reviewStates(def).find((r) =>
+    def.transitions.some((t) => t.from === fromState && t.to === r),
+  );
+  return reachable ?? expectedFinishStateFromDefinition(def);
+}
+
+/**
  * Project-level workflow resolution (no task object needed).
  * Used by task creation where only projectId is known.
  */
