@@ -93,6 +93,29 @@ describe("sticky column heads", () => {
   });
 });
 
+describe("column count drives the grid", () => {
+  it("takes the wide-desktop column count from the inline --db-cols, never from a hard-coded repeat(5, ...)", () => {
+    const board = rule(".db-board");
+    expect(board).toMatch(/grid-template-columns:\s*repeat\(var\(--db-cols,\s*5\),\s*minmax\(0,\s*1fr\)\)/);
+    expect(board).not.toMatch(/repeat\(5,/);
+  });
+
+  it("keeps one scrollable row with a readable minimum column in the 761-1279px band", () => {
+    const band = inMedia(media("(max-width: 1279px) and (min-width: 761px)"), ".db-board");
+    expect(band).toMatch(/grid-auto-flow:\s*column/);
+    expect(band).toMatch(/grid-auto-columns:\s*minmax\(240px,\s*1fr\)/);
+    expect(band).toMatch(/overflow-x:\s*auto/);
+    // The count-driven template must not survive into the band: with
+    // grid-auto-flow the columns follow, never wrap 4+3.
+    expect(band).toMatch(/grid-template-columns:\s*none/);
+  });
+
+  it("stacks every column full-width at the mobile width", () => {
+    const mobile = inMedia(media("(max-width: 760px)"), ".db-board");
+    expect(mobile).toMatch(/grid-template-columns:\s*1fr/);
+  });
+});
+
 describe("equal column heads", () => {
   it("reserve a 24px slot for the + so heads with and without it are equally tall", () => {
     const add = rule(".db-col-add");

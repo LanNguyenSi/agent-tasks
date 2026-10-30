@@ -3491,18 +3491,22 @@ html[data-theme="light"] {
   flex-shrink: 0;
 }
 
-/* Board grid: 5 equal columns in one row on wide desktops */
+/* Board grid: one row of equal columns on wide desktops. The column count
+   comes from the inline --db-cols the board writes (the length of the
+   project's column list, buildBoardColumns); the 5 fallback is the built-in
+   workflow's count, which the board uses whenever no count is set. */
 .db-board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--db-cols, 5), minmax(0, 1fr));
   gap: var(--space-3);
   padding: var(--space-4) var(--page-gutter) var(--space-6);
   align-items: start;
 }
 
-/* Medium widths: 5 columns don't fit without squeezing cards unreadable,
-   and any partial wrap (e.g. 4+1) reads as broken. Scroll the board
-   horizontally instead, kanban-style, keeping one row of 5 columns. */
+/* Medium widths: that many columns don't fit without squeezing cards
+   unreadable, and any partial wrap (e.g. 4+1) reads as broken. Scroll the
+   board horizontally instead, kanban-style, keeping one row of columns as
+   wide as they can be without going below the readable 240px. */
 @media (max-width: 1279px) and (min-width: 761px) {
   .db-board {
     grid-template-columns: none;

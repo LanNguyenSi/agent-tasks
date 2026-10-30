@@ -32,13 +32,14 @@ vi.mock("../../src/lib/api", async () => {
     getTasks: vi.fn(),
     getTask: vi.fn(),
     getEffectiveWorkflow: vi.fn(),
+    getWorkflows: vi.fn(),
   };
 });
 
 import ProjectLayout from "../../src/app/projects/[id]/layout";
 import ProjectBoardPage from "../../src/app/projects/[id]/board/page";
 import { ToastProvider } from "../../src/components/ui/Toast";
-import { getCurrentUser, getTeams, getProject, getTasks, getTask } from "../../src/lib/api";
+import { getCurrentUser, getTeams, getProject, getTasks, getTask, getWorkflows } from "../../src/lib/api";
 
 const mockGetProject = vi.mocked(getProject);
 
@@ -193,5 +194,141 @@ describe("board route (hub layout + board page)", () => {
     expect(redirectTargets()).toEqual(["/projects"]);
     expect(nav.router.push).not.toHaveBeenCalled();
     expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
+  });
+});
+
+describe("board route columns from the project's workflows", () => {
+  function boardTask(id: string, status: string) {
+    return {
+      id,
+      projectId: "p-1",
+      title: `Task ${id}`,
+      status,
+      priority: "MEDIUM",
+      labels: [],
+      attachments: [],
+      artifacts: [],
+      comments: [],
+      blockedBy: [],
+      blocks: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    } as unknown as Task;
+  }
+
+  const CUSTOM_WORKFLOWS = [
+    {
+      id: "wf-1",
+      projectId: "p-1",
+      name: "Custom",
+      isDefault: true,
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "plan", label: "Plan", terminal: false },
+          { name: "build", label: "Build", terminal: false },
+          { name: "qa", label: "QA", terminal: false },
+          { name: "shipped", label: "Shipped", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "plan" },
+          { from: "plan", to: "build" },
+          { from: "build", to: "qa" },
+          { from: "qa", to: "shipped" },
+        ],
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    },
+  ] as unknown as Awaited<ReturnType<typeof getWorkflows>>;
+
+  const STATUSES = ["backlog", "open", "plan", "build", "qa", "shipped", "legacy_x"];
+
+  /** The board's column sections, in DOM order. */
+  function columnIds(): string[] {
+    return [...document.querySelectorAll("#board-region .db-board > .db-col")].map((el) => el.id);
+  }
+
+  it("renders the custom workflow's columns with the task in each of them", async () => {
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getTasks).mockResolvedValue(STATUSES.map((s, i) => boardTask(`t-${i}`, s)));
+    vi.mocked(getWorkflows).mockResolvedValue(CUSTOM_WORKFLOWS);
+    renderRoute();
+
+    await waitFor(() =>
+      expect(columnIds()).toEqual([
+        "db-col-backlog",
+        "db-col-open",
+        "db-col-plan",
+        "db-col-build",
+        "db-col-qa",
+        "db-col-shipped",
+        "db-col-legacy_x",
+      ]),
+    );
+    // The unknown-status task is visible in its extra column.
+    expect(screen.getByLabelText("legacy_x, 1 task")).toBeInTheDocument();
+    // And the list-view chip row follows the same column list.
+    await userEvent.click(screen.getByRole("tab", { name: "List" }));
+    const summary = await waitFor(() => {
+      const el = document.querySelector(".db-status-summary");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(summary.textContent).toContain("QA");
+    expect(summary.textContent).toContain("legacy_x");
+    expect(summary.textContent).not.toContain("In Progress");
+  });
+
+  it("shows the five built-in columns when the workflows answer 403", async () => {
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getTasks).mockResolvedValue([boardTask("t-1", "open"), boardTask("t-2", "plan")]);
+    vi.mocked(getWorkflows).mockRejectedValue(new ApiRequestError("forbidden", "nope", 403));
+    renderRoute();
+
+    await waitFor(() => expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument());
+    expect(columnIds()).toEqual([
+      "db-col-backlog",
+      "db-col-open",
+      "db-col-in_progress",
+      "db-col-review",
+      "db-col-done",
+      // The invariant holds even at 403: the plan task is not invisible.
+      "db-col-plan",
+    ]);
+  });
+
+  it("shows the five built-in columns when the workflow request fails on the network", async () => {
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getTasks).mockResolvedValue([boardTask("t-1", "open")]);
+    vi.mocked(getWorkflows).mockRejectedValue(new TypeError("Failed to fetch"));
+    renderRoute();
+
+    await waitFor(() => expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument());
+    expect(columnIds()).toEqual([
+      "db-col-backlog",
+      "db-col-open",
+      "db-col-in_progress",
+      "db-col-review",
+      "db-col-done",
+    ]);
+  });
+
+  it("keeps the built-in columns while the workflow list is on its way", async () => {
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getTasks).mockResolvedValue([boardTask("t-1", "open")]);
+    let release: (w: typeof CUSTOM_WORKFLOWS) => void = () => {};
+    vi.mocked(getWorkflows).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    renderRoute();
+
+    await waitFor(() => expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument());
+    expect(columnIds()).toHaveLength(5);
+    release(CUSTOM_WORKFLOWS);
+    await waitFor(() => expect(columnIds()).toContain("db-col-plan"));
   });
 });

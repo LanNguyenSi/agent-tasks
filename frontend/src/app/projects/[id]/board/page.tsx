@@ -12,9 +12,11 @@ import {
   projectCanAdmin,
   isProjectWriteRole,
   ApiRequestError,
+  getWorkflows,
   type User,
   type Project,
   type Task,
+  type Workflow,
   type WorkflowTransition,
 } from "../../../../lib/api";
 import {
@@ -44,15 +46,16 @@ import TaskListView from "../../../../components/dashboard/TaskListView";
 import NewTaskModal from "../../../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../../../lib/taskDisplay";
 import { DEFAULT_CREATE_STATUS } from "../../../../lib/status";
+import { buildBoardColumns } from "../../../../lib/boardColumns";
 import { recordRecentProject } from "../../../../lib/recentProjects";
 import { authHref, projectsHref } from "../../../../lib/routes";
 
 // ── Types ────────────────────────────────────────────────────────
 
-// Drives the list-view status chip row (~L645) and the board's + button
-// status cast; also includes "backlog" so the chip row shows it.
-const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
-type Status = (typeof STATUSES)[number];
+// The statuses the create modal's preset can carry: the board renders its +
+// only on Backlog and Open (the workflow initial state, locked to `open` by
+// P5A), so onAddTask only ever hands over one of the two.
+type Status = "backlog" | "open";
 // Supersedes D19 (operator decision 2026-08-20): human create no longer
 // always targets "open" -- backlog is now the default human create target
 // too, and NewTaskModal's Status dropdown offers backlog and open.
@@ -170,6 +173,35 @@ export default function ProjectBoardPage() {
       cancelled = true;
     };
   }, [selectedProjectId, isProjectAdmin]);
+
+  // The board's columns follow the project's stored workflows. Any project
+  // member may read the workflow list (unlike the admin-only effective
+  // workflow above). Failure-tolerant the same way: a project whose
+  // workflows cannot be read (403, network) keeps `null` and the board shows
+  // the built-in five columns.
+  const [projectWorkflows, setProjectWorkflows] = useState<readonly Workflow[] | null>(null);
+
+  useEffect(() => {
+    setProjectWorkflows(null);
+    if (!selectedProjectId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const workflows = await getWorkflows(selectedProjectId);
+        if (!cancelled) setProjectWorkflows(workflows);
+      } catch {
+        /* built-in columns */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId]);
+
+  const boardColumns = useMemo(
+    () => buildBoardColumns(projectWorkflows, tasks),
+    [projectWorkflows, tasks],
+  );
 
   const isProjectWrite = isProjectWriteRole(selectedProjectAccessRole);
   // Agent tokens are created by team admins only: a per-project share or a
@@ -562,6 +594,7 @@ export default function ProjectBoardPage() {
         {/* Status summary only in list view per spec; board columns are self-documenting */}
         <BoardView
           tasks={filteredTasks}
+          columns={boardColumns}
           activeTaskId={activeTaskId}
           templateFields={templateFields}
           confidenceThreshold={selectedProject?.confidenceThreshold ?? null}
@@ -583,8 +616,12 @@ export default function ProjectBoardPage() {
     content = (
       <>
         <div className="db-status-summary">
-          {STATUSES.map((s) => (
-            <StatusChip key={s} status={s.replace(/_/g, "-")} />
+          {boardColumns.map((column) => (
+            <StatusChip
+              key={column.status}
+              status={column.status.replace(/_/g, "-")}
+              label={column.label}
+            />
           ))}
           <span className="db-filter-label">
             {filteredTasks.length} / {tasks.length} tasks shown

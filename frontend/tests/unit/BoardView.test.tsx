@@ -10,7 +10,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import BoardView from "../../src/components/dashboard/BoardView";
-import type { Task } from "../../src/lib/api";
+import { buildBoardColumns } from "../../src/lib/boardColumns";
+import type { Task, Workflow } from "../../src/lib/api";
 
 function task(over: Partial<Task> & { id: string; title: string; status: string }): Task {
   return {
@@ -300,5 +301,165 @@ describe("BoardView -- card badge tier vs project threshold", () => {
       "title",
       "How complete the task spec is (0-100). Project threshold: 80.",
     );
+  });
+});
+
+// ── Custom workflow columns ───────────────────────────────────────
+
+const CUSTOM_WORKFLOW = {
+  id: "wf-custom",
+  projectId: "p-1",
+  name: "Custom",
+  isDefault: true,
+  definition: {
+    initialState: "open",
+    states: [
+      { name: "open", label: "Open", terminal: false },
+      { name: "plan", label: "Planning", terminal: false },
+      { name: "build", label: "Build", terminal: false },
+      { name: "qa", label: "QA", terminal: false },
+      { name: "shipped", label: "Shipped", terminal: true },
+    ],
+    transitions: [
+      { from: "open", to: "plan" },
+      { from: "plan", to: "build" },
+      { from: "build", to: "qa" },
+      { from: "qa", to: "shipped" },
+    ],
+  },
+} as unknown as Workflow;
+
+function customColumnTasks(): Task[] {
+  return [
+    task({ id: "b-1", title: "Queued", status: "backlog" }),
+    task({ id: "o-1", title: "Started", status: "open" }),
+    task({ id: "pl-1", title: "Planned", status: "plan" }),
+    task({ id: "pl-2", title: "Planned too", status: "plan" }),
+    task({ id: "bd-1", title: "Built", status: "build" }),
+    task({ id: "qa-1", title: "Checked", status: "qa" }),
+    task({ id: "sh-1", title: "Shipped", status: "shipped" }),
+    task({ id: "x-1", title: "Orphan", status: "legacy_x" }),
+  ];
+}
+
+describe("BoardView -- custom workflow columns", () => {
+  function renderCustom(tasks = customColumnTasks()) {
+    return render(
+      <BoardView
+        tasks={tasks}
+        columns={buildBoardColumns([CUSTOM_WORKFLOW], tasks)}
+        activeTaskId={null}
+        templateFields={null}
+        onSelectTask={() => {}}
+        onAddTask={() => {}}
+      />,
+    );
+  }
+
+  it("renders one column per entry of the column list, in order", () => {
+    renderCustom();
+    const board = screen.getByLabelText("Board");
+    const sections = board.querySelectorAll(":scope > section.db-col");
+    expect([...sections].map((s) => s.id)).toEqual([
+      "db-col-backlog",
+      "db-col-open",
+      "db-col-plan",
+      "db-col-build",
+      "db-col-qa",
+      "db-col-shipped",
+      "db-col-legacy_x",
+    ]);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+      "Backlog",
+      "Open",
+      "Planning",
+      "Build",
+      "QA",
+      "Shipped",
+      "legacy_x",
+    ]);
+  });
+
+  it("shows the unknown-status task in the extra last column", () => {
+    renderCustom();
+    const extra = screen.getByLabelText("legacy_x, 1 task");
+    expect(within(extra).getByText("Orphan")).toBeInTheDocument();
+  });
+
+  it("gives the board an inline --db-cols equal to the column count", () => {
+    renderCustom();
+    const board = screen.getByLabelText("Board");
+    expect(board).toHaveStyle({ "--db-cols": "7" });
+  });
+
+  it("gives custom columns the neutral fallback class and leaves the built-in classes alone", () => {
+    renderCustom();
+    expect(document.getElementById("db-col-plan")).toHaveClass("db-col", "db-col--plan", "db-col--custom");
+    expect(document.getElementById("db-col-legacy_x")).toHaveClass("db-col--custom");
+    expect(document.getElementById("db-col-open")).not.toHaveClass("db-col--custom");
+    expect(document.getElementById("db-col-backlog")).toHaveClass("db-col--backlog");
+    expect(document.getElementById("db-col-backlog")).not.toHaveClass("db-col--custom");
+  });
+
+  it("renders the + on Backlog and Open only, never on a custom column", () => {
+    renderCustom();
+    expect(screen.getByLabelText("Add task to Backlog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Add task to Open")).toBeInTheDocument();
+    for (const label of ["Planning", "Build", "QA", "Shipped", "legacy_x"]) {
+      expect(screen.queryByLabelText(`Add task to ${label}`)).not.toBeInTheDocument();
+    }
+  });
+
+  it("applies the Done cap to the terminal custom column and offers the expander", () => {
+    const many = Array.from({ length: 11 }, (_, i) =>
+      task({ id: `sh-${i}`, title: `Shipped ${i + 1}`, status: "shipped" }),
+    );
+    renderCustom(many);
+    const shipped = screen.getByLabelText("Shipped, 11 tasks");
+    expect(within(shipped).queryByText("Shipped 11")).not.toBeInTheDocument();
+    const expander = within(shipped).getByRole("button", { name: "… 1 more" });
+    fireEvent.click(expander);
+    expect(within(shipped).getByText("Shipped 11")).toBeInTheDocument();
+    fireEvent.click(within(shipped).getByRole("button", { name: "Show less" }));
+    expect(within(shipped).queryByText("Shipped 11")).not.toBeInTheDocument();
+  });
+
+  it("has one jump chip per column, with counts, in column order", () => {
+    renderCustom();
+    const nav = screen.getByRole("navigation", { name: "Jump to column" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((l) => l.getAttribute("aria-label"))).toEqual([
+      "Jump to Backlog, 1 task",
+      "Jump to Open, 1 task",
+      "Jump to Planning, 2 tasks",
+      "Jump to Build, 1 task",
+      "Jump to QA, 1 task",
+      "Jump to Shipped, 1 task",
+      "Jump to legacy_x, 1 task",
+    ]);
+    expect(links.map((l) => l.getAttribute("href"))).toEqual([
+      "#db-col-backlog",
+      "#db-col-open",
+      "#db-col-plan",
+      "#db-col-build",
+      "#db-col-qa",
+      "#db-col-shipped",
+      "#db-col-legacy_x",
+    ]);
+  });
+
+  it("keeps the built-in five columns with no columns prop whatever the tasks are", () => {
+    render(
+      <BoardView
+        tasks={[task({ id: "x-1", title: "Orphan", status: "legacy_x" })]}
+        activeTaskId={null}
+        templateFields={null}
+        onSelectTask={() => {}}
+      />,
+    );
+    const board = screen.getByLabelText("Board");
+    expect(board.querySelectorAll(":scope > section.db-col")).toHaveLength(5);
+    expect(board).toHaveStyle({ "--db-cols": "5" });
+    expect(screen.queryByLabelText("legacy_x, 1 task")).not.toBeInTheDocument();
   });
 });
