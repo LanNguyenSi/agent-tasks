@@ -165,6 +165,35 @@ it.each(["patch", "transition"] as const)("N-12 custom semantic %s success requi
   await evidence(endpoint, "checking", auth); expect((await app().fetch(request({ status: "checking" }, endpoint, auth))).status).toBe(200);
   await evidence(endpoint, "shipped", auth); expect((await app().fetch(request({ status: "shipped" }, endpoint, auth, "second"))).status).toBe(200);
 });
+/** `spec_check` is the first review-like state but only `plan` reaches it; the task sits in `build`, whose review state is `qa`. */
+async function multiWorkStateWorkflow(status: string) {
+  const states = ["queued", "plan", "spec_check", "build", "scratch", "qa", "shipped"];
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Multi", isDefault: true, definition: {
+    initialState: "queued", states: states.map(name => ({ name, label: name, terminal: name === "shipped" })),
+    transitions: [{ from: "queued", to: "plan" }, { from: "plan", to: "spec_check" }, { from: "plan", to: "build" }, { from: "build", to: "scratch" }, { from: "spec_check", to: "shipped" }, { from: "build", to: "qa" }, { from: "qa", to: "shipped" }],
+  } } });
+  await store.db.task.update({ where: { id: f.taskId }, data: { status } });
+}
+it("grounded work finish from a later work state issues and completes against the review state it reaches", async () => {
+  await multiWorkStateWorkflow("build");
+  const a = app();
+  const issued = await a.fetch(request({ intent: "finish" }, "grounding-attempts", token, null));
+  expect(issued.status, JSON.stringify(await issued.clone().json())).toBe(201);
+  const challenge = await issued.json() as GroundingChallenge;
+  const uploaded = await a.fetch(request({ session, receipt: f.issuer.receipt(challenge) }, `grounding-attempts/${challenge.attemptId}/receipt`, token, null));
+  expect(uploaded.status, JSON.stringify(await uploaded.clone().json())).toBe(200);
+  const finished = await a.fetch(request({ result: "Finished" }, "finish"));
+  expect(finished.status, JSON.stringify(await finished.clone().json())).toBe(200);
+  expect(await finished.json()).toMatchObject({ targetStatus: "qa" });
+  expect(await f.task()).toMatchObject({ status: "qa", claimedByAgentId: ids.agent });
+  expect((await f.snapshot()).attempts[0].state).toBe("CONSUMED");
+});
+it("grounded work finish from a work state with no review edge is refused before any attempt is issued", async () => {
+  await multiWorkStateWorkflow("scratch");
+  const response = await app().fetch(request({ intent: "finish" }, "grounding-attempts", token, null));
+  expect(response.status).toBe(409);
+  expect((await f.snapshot()).attempts).toHaveLength(0);
+});
 it("N-16 legacy request_changes and backlog discard are non-success dispositions", async () => {
   await store.db.task.update({ where: { id: f.taskId }, data: { status: "review" } }); await evidence("review", "done");
   expect((await app().fetch(request({ action: "request_changes", comment: "Needs work" }, "review", token, null))).status).toBe(200);

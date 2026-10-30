@@ -69,6 +69,27 @@ describe("authorized existing workflow intent", () => {
     const duplicate = defaultWorkflowDefinition(); duplicate.transitions.push({ from: "in_progress", to: "review" });
     await expect(resolveGroundingTarget(workflowDb(duplicate), taskFixture(), actor, "finish", authority)).rejects.toMatchObject({ code: "bad_state" });
   });
+  it("finish resolves to the review state reachable from the task's current work state, not the workflow's first review state", async () => {
+    // spec_check is the first review-like state but only plan reaches it; qa is reached from build.
+    const def = {
+      initialState: "open",
+      states: ["open", "plan", "spec_check", "build", "qa", "shipped"].map(name => ({ name, label: name, terminal: name === "shipped" })),
+      transitions: [{ from: "open", to: "plan" }, { from: "plan", to: "spec_check" }, { from: "plan", to: "build" }, { from: "spec_check", to: "shipped" }, { from: "build", to: "qa" }, { from: "qa", to: "shipped" }],
+    };
+    const fromBuild = { ...taskFixture(), status: "build" };
+    expect((await resolveGroundingTarget(workflowDb(def), fromBuild, actor, "finish", authority)).target).toMatchObject({ from: "build", to: "qa", action: "finish" });
+    const fromPlan = { ...taskFixture(), status: "plan" };
+    // plan has two outgoing edges but one review edge: still the first reachable review state.
+    expect((await resolveGroundingTarget(workflowDb(def), fromPlan, actor, "finish", authority)).target).toMatchObject({ from: "plan", to: "spec_check", action: "finish" });
+  });
+  it("finish from a work state with no edge into a review state is still refused with bad_state", async () => {
+    const def = {
+      initialState: "open",
+      states: ["open", "draft", "plan", "spec_check", "shipped"].map(name => ({ name, label: name, terminal: name === "shipped" })),
+      transitions: [{ from: "open", to: "draft" }, { from: "draft", to: "plan" }, { from: "plan", to: "spec_check" }, { from: "spec_check", to: "shipped" }],
+    };
+    await expect(resolveGroundingTarget(workflowDb(def), { ...taskFixture(), status: "draft" }, actor, "finish", authority)).rejects.toMatchObject({ code: "bad_state" });
+  });
   it("enforces review lock conflicts and distinct-reviewer rules, supports explicit approve and merge", async () => {
     const task = taskFixture(); task.status = "review";
     expect((await resolveGroundingTarget(workflowDb(), task, actor, "approve", authority)).target).toEqual({ ...target, from: "review", to: "done", action: "approve" });

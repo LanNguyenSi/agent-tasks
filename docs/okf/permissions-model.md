@@ -3,7 +3,7 @@ type: invariant
 title: "Permissions: team roles, project roles, write tier and token scopes"
 description: "Humans are authorized by a team role or a per-project share role, agents by their team and token scopes; hasProjectAccess, requireProjectWrite and hasProjectRole are the three tiers, approval needs only the write tier, and concrete workflow roles are human-only."
 tags: [permissions, roles, scopes, access, invites]
-timestamp: 2026-10-29T15:10:56Z
+timestamp: 2026-10-30T06:21:22Z
 sources:
   - backend/prisma/schema.prisma
   - backend/src/services/team-access.ts
