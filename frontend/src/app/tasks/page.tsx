@@ -477,7 +477,7 @@ function TasksPageInner() {
   // flow (its picker and form hold that team's projects) and a pending
   // discard confirmation.
   // Starts at null so a team that is already resolved on the first render
-  // closes them too, as the effect this replaces did on mount.
+  // closes them too.
   const [seenTeamId, setSeenTeamId] = useState<string | null>(null);
   if (seenTeamId !== selectedTeamId) {
     setSeenTeamId(selectedTeamId);
