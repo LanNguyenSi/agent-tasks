@@ -72,6 +72,15 @@ describe("sticky column heads", () => {
     expect(rule(".db-col-head")).not.toMatch(/position:\s*sticky/);
   });
 
+  it("stay in the flow inside a .db-board--scroll board at 1280px and above", () => {
+    // The board's overflow-x makes the board the sticky scrollport (overflow-y
+    // computes to auto), so the sticky top would be measured from the board's
+    // own top edge and push each head down into its column, over the first
+    // card. Static keeps the heads in the flow, as in the 761-1279px band.
+    const scrollHead = inMedia(media("(min-width: 1280px)"), ".db-board--scroll .db-col-head");
+    expect(scrollHead).toMatch(/position:\s*static/);
+  });
+
   it("paint over the cards that scroll under them", () => {
     expect(rule(".db-col-head")).toMatch(/background:\s*var\(--surface\)/);
     const head = inMedia(media("(min-width: 1280px)"), ".db-col-head");

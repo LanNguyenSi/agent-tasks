@@ -3546,10 +3546,12 @@ html[data-theme="light"] {
    .db-board--scroll in that case and takes exactly the band treatment above --
    the same readable 240px column and horizontal scroll. A board with five
    columns or fewer never carries the class and keeps the equal-column grid
-   untouched. Inside this scroll container the sticky column heads of this
-   width band (see the min-width: 1280px rule further down) stick to the board
-   instead of the page, so they scroll away with their columns; cards no one can
-   read are the worse trade. */
+   untouched. Inside this scroll container the column heads are static (see the
+   min-width: 1280px rule further down): the board's own overflow-x makes it
+   the sticky scrollport, so the heads could not pin to the page and a top
+   offset would only push each head down into its column, over the first card.
+   Static heads stay in the flow and scroll away with their columns, exactly
+   as they do in the 761-1279px band. */
 @media (min-width: 1280px) {
   .db-board--scroll {
     grid-template-columns: none;
@@ -8686,16 +8688,27 @@ a.proj-chip:hover {
  *  - up to 760px (stacked columns): the head sticks below the sticky jump bar
  *    (--board-jump-height), inside its own column.
  * From 761px to 1279px the heads stay in the flow: there the board is a
- * horizontal scroller, which sticky cannot pin against the page. The same
- * holds for the heads of a .db-board--scroll board (more columns than the
- * built-in five, see that rule just after the band): they scroll with the
- * board. */
+ * horizontal scroller, which sticky cannot pin against the page. The heads of
+ * a .db-board--scroll board at 1280px and above (more columns than the
+ * built-in five, see that rule just after the band) are made static right
+ * below: inside that board the sticky scrollport is the board itself (its
+ * overflow-x makes overflow-y compute to auto), so the top offset is measured
+ * from the board's own top edge and pushes every head down into its column,
+ * over the first card, instead of pinning it to the page. */
 @media (min-width: 1280px) {
   .db-col-head {
     position: sticky;
     top: calc(var(--app-header-height) + var(--board-toolbar-height));
     z-index: 2;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  /* More columns than the built-in five: the board is the sticky scrollport
+     here, not the page, so undo the stickiness (more specific than the rule
+     above). The heads stay in the flow and scroll with their columns, as they
+     already do in the 761-1279px band. */
+  .db-board--scroll .db-col-head {
+    position: static;
   }
 }
 

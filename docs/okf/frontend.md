@@ -9,6 +9,7 @@ sources:
   - frontend/src/app/tasks/page.tsx
   - frontend/src/app/projects/[id]/board/page.tsx
   - frontend/src/components/dashboard/BoardView.tsx
+  - frontend/src/lib/boardColumns.ts
   - frontend/src/lib/confidence.ts
   - frontend/src/lib/workflow-vocabulary.ts
   - frontend/src/components/dashboard/NewTaskModal.tsx
