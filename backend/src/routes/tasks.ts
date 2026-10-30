@@ -82,8 +82,7 @@ import {
   defaultWorkflowDefinition,
   resolveEffectiveDefinition, withInReviewState,
   resolveProjectEffectiveDefinition,
-  expectedFinishStateFromDefinition,
-  finishTargetFrom,
+  expectedFinishStateFromDefinition, finishTargetFrom,
   isInitialState,
   isTerminalState,
   isReviewState,
@@ -2412,8 +2411,8 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     );
   }
 
-  // Resolve the workflow definition once so both branches can compute the
-  // expected finish state.
+  // Resolve the workflow definition once so both branches can use it (the work
+  // branch derives the expected finish state from it, the review branch its own).
   const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
 
   // ── Branch: status=open → author-claim + transition ──────────────────────
@@ -2466,12 +2465,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       );
     }
 
-    // The state a work-claim finish will move the task to from where this
-    // start leaves it: the review-like state `startTarget` has an edge to
-    // (same helper the finish itself uses, so preview and finish name one
-    // edge).
-    const expectedFinishState = finishTargetFrom(effectiveDefinition, startTarget);
-
+    const expectedFinishState = finishTargetFrom(effectiveDefinition, startTarget); // same helper as the finish: preview and finish name one edge
     // If the caller supplied a branchName AND the task has none, fold it
     // into the gate input so a `branchPresent` precondition passes on the
     // same call that claims the task. The actual DB write happens in the

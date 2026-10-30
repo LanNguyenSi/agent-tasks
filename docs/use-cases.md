@@ -10,7 +10,7 @@ The canonical v2 agent flow.
 2. Agent calls `task_start { taskId }`. The task moves to `in_progress` (audit `task.claimed`); the response carries the task, `expectedFinishState` and the gates on the finish edge.
 3. Agent does the work (branch, code, commit, push) and opens the PR (`gh pr create`, or `pull_requests_create` through team delegation, which emits `github.pr_created`).
 4. Agent calls `task_submit_pr { taskId, branchName, prUrl, prNumber }`. Backend records the PR metadata on the task; no state transition. `task.pr_submitted`.
-5. Agent calls `task_finish { taskId, result }`. The task moves to the workflow's review state (`review` in the default workflow) and `review_needed` goes to eligible reviewers. In an `AUTONOMOUS` project the agent may pass `autoMerge: true` instead: the self-merge gate runs, the PR is merged and the task lands in `done`. Other modes reject `autoMerge` on a work claim with `403 autonomous_mode_required`; their merge follows review (case 3), and in `AWAITS_CONFIRMATION` a merge by the claimant sends `self_merge_notice` to every human team member.
+5. Agent calls `task_finish { taskId, result }`. The task moves to the review state its current state has an edge to (`review` in the default workflow) and `review_needed` goes to eligible reviewers. In an `AUTONOMOUS` project the agent may pass `autoMerge: true` instead: the self-merge gate runs, the PR is merged and the task lands in `done`. Other modes reject `autoMerge` on a work claim with `403 autonomous_mode_required`; their merge follows review (case 3), and in `AWAITS_CONFIRMATION` a merge by the claimant sends `self_merge_notice` to every human team member.
 
 ## 2. Human invites a collaborator into a single project
 
