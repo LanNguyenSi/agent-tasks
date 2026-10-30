@@ -95,7 +95,7 @@ export class GroundingCompletionService {
     const holdsReview = actor.type === "human" ? task.reviewClaimedByUserId === actor.userId : task.reviewClaimedByAgentId === actor.tokenId;
     const { definition, def, workflowId } = await groundingWorkflow(db, task);
     let target: GroundingTarget | null = null;
-    let data: GroundingDecision["data"] = { status: task.status };
+    let data: GroundingDecision["data"];
     let skippedRules: string[] = [];
     let ciHeadSha: string | null = null;
     if (direct && directResolved) {

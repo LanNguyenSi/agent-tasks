@@ -1,15 +1,62 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import { defineConfig } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({ baseDirectory: __dirname });
-
-const eslintConfig = [
+const eslintConfig = defineConfig([
   { ignores: [".next/**", "node_modules/**", "dist/**", "coverage/**", "next-env.d.ts"] },
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextVitals,
+  ...nextTs,
+  {
+    // eslint-plugin-react-hooks 7 (via eslint-config-next 16) added the React
+    // Compiler rules. Resets of local state on a prop change, portal mount
+    // guards and derivable loading decisions were rewritten (render-time
+    // adjustment, useSyncExternalStore). The effects still listed here set
+    // state synchronously for one of these reasons, and each is kept because
+    // the rewrite would change when or whether the state is set:
+    // - reading localStorage, the system theme or other browser-only state
+    //   after mount (a read during render would mismatch the server HTML),
+    // - a reset or a loading/error flag that is bundled with an async load or
+    //   a ref/storage side effect in the same effect, so it cannot be split
+    //   off without reordering the two,
+    // - resetting a form or a section when its key (project, team, task or the
+    //   modal opening) changes while the same effect starts the new load,
+    // - two larger per-key form resets without a load (TaskDetail on task.id,
+    //   NewTaskModal on open/initial status), left as warnings for a follow-up.
+    // The rule stays a visible warning backlog for these files only and is an
+    // error everywhere else, so new code cannot add the pattern unnoticed.
+    files: [
+      "src/app/dev/ui/page.tsx",
+      "src/app/home/page.tsx",
+      "src/app/projects/*/_components/ProjectHubLayout.tsx",
+      "src/app/projects/*/board/page.tsx",
+      "src/app/projects/*/members/page.tsx",
+      "src/app/projects/page.tsx",
+      "src/app/projects/workflow/page.tsx",
+      "src/app/settings/team/page.tsx",
+      "src/components/ConnectAgentModal.tsx",
+      "src/components/TaskArtifactsSection.tsx",
+      "src/components/TaskDetail.tsx",
+      "src/components/ThemePreferenceField.tsx",
+      "src/components/dashboard/NewTaskModal.tsx",
+      "src/components/tasks/NewTaskFlow.tsx",
+      "src/lib/teamList.tsx",
+    ],
+    rules: {
+      "react-hooks/set-state-in-effect": "warn",
+    },
+  },
+  {
+    // react-hooks/purity flags Date.now() inside useMemo. These three memos
+    // read the clock only when their own inputs change (the done list, the
+    // filters), not on every render. Moving the timestamp into the fetch state
+    // instead would shift the done-task hide window on recomputes that are not
+    // polls (a filter or visibility change), so the memos keep reading the
+    // clock. A warning for these two files only, an error everywhere else.
+    files: ["src/app/home/page.tsx", "src/app/projects/*/board/page.tsx"],
+    rules: {
+      "react-hooks/purity": "warn",
+    },
+  },
   {
     // Quiet Precision convention: geometry must live in CSS classes, not inline
     // style props. Per-line eslint-disable is required for the documented
@@ -48,6 +95,6 @@ const eslintConfig = [
       ],
     },
   },
-];
+]);
 
 export default eslintConfig;

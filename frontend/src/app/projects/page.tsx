@@ -322,12 +322,11 @@ export default function ProjectsPage() {
   // Access decision once the user and the shell's team list are known.
   // `error` (the list could not be loaded) keeps the page loading, as the
   // page's own failed lookup did.
+  if (user && teamsStatus === "ready" && teams.length > 0 && loading) setLoading(false);
+
   useEffect(() => {
     if (!user || teamsStatus !== "ready") return;
-    if (teams.length > 0) {
-      setLoading(false);
-      return;
-    }
+    if (teams.length > 0) return;
     let cancelled = false;
     void (async () => {
       const ctx = await accessContextForTeams(teams);
@@ -549,9 +548,19 @@ export default function ProjectsPage() {
     };
   }, [projects]);
 
-  useEffect(() => {
+  // Back to page 1 whenever the team, the filter or the sort changes.
+  const projectListKey = JSON.stringify([
+    selectedTeam?.id,
+    projectQuery,
+    sortColumn,
+    sortDirection,
+    githubOnly,
+  ]);
+  const [seenProjectListKey, setSeenProjectListKey] = useState(projectListKey);
+  if (seenProjectListKey !== projectListKey) {
+    setSeenProjectListKey(projectListKey);
     setProjectPage(1);
-  }, [selectedTeam?.id, projectQuery, sortColumn, sortDirection, githubOnly]);
+  }
 
   // Columns are built inside the component so render closures can close over
   // taskCounts and setDeleteTarget (component state, not module-level constants).

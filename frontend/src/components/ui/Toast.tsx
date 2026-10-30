@@ -24,6 +24,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
+import { useMounted } from "./useMounted";
 
 export type ToastTone = "success" | "error" | "info";
 
@@ -63,7 +64,9 @@ function ToastCard({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep stable refs so the timer callback captures the latest values
   const onDismissRef = useRef(onDismiss);
-  onDismissRef.current = onDismiss;
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
   const idRef = useRef(item.id);
 
   const startTimer = useCallback(() => {
@@ -108,11 +111,7 @@ function ToastCard({
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useMounted();
 
   const addToast = useCallback((message: string, tone: ToastTone = "info") => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;

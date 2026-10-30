@@ -53,15 +53,14 @@ export default function AppChrome({ children }: { children: ReactNode }) {
   const showHeader = !isShellSuppressed(pathname);
   const [user, setUser] = useState<User | null>(null);
 
+  // Shell suppressed (for example after logout to /): drop the previous
+  // account's identity so a later login on this mounted shell never shows it
+  // while its own lookup is in flight. The team list is dropped by its
+  // provider on the same condition.
+  if (!showHeader && user !== null) setUser(null);
+
   useEffect(() => {
-    if (!showHeader) {
-      // Shell suppressed (for example after logout to /): drop the previous
-      // account's identity so a later login on this mounted shell never
-      // shows it while its own lookup is in flight. The team list is dropped
-      // by its provider on the same condition.
-      setUser(null);
-      return;
-    }
+    if (!showHeader) return;
     // A response that arrives after the shell was suppressed again (or the
     // component unmounted) must not write state.
     let cancelled = false;

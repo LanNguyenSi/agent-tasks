@@ -60,9 +60,14 @@ export default function AppHeader({ user, teams, onMissingTeam }: AppHeaderProps
   // the browser's back/forward), so the label never lags behind the click.
   const urlTeamId = searchParams?.get("teamId") ?? null;
   const [switchedTeamId, setSwitchedTeamId] = useState<string | null>(null);
-  useEffect(() => {
+  // The pending switch is dropped in the render that sees a new location, so
+  // no frame shows the old pick with the new URL.
+  const locationKey = JSON.stringify([pathname, urlTeamId]);
+  const [seenLocationKey, setSeenLocationKey] = useState(locationKey);
+  if (seenLocationKey !== locationKey) {
+    setSeenLocationKey(locationKey);
     setSwitchedTeamId(null);
-  }, [pathname, urlTeamId]);
+  }
   const targetTeamId = switchedTeamId ?? urlTeamId;
   const currentTeam = useResolvedTeam(teams, targetTeamId);
   // The list may be older than the URL (a membership change since it was

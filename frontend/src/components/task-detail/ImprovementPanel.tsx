@@ -20,7 +20,7 @@
 // lives. Moved here deliberately; documented in the PR body as an intentional
 // spec deviation, not an oversight.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { deriveNextActions, type QualityFinding } from "@/lib/confidence";
 import {
   suggestTaskRewrite,
@@ -121,10 +121,13 @@ export default function ImprovementPanel({
   const { score, threshold, blocking, findings, triggeredRiskModifiers } = confidence;
   const passes = score >= threshold && !blocking;
   const [open, setOpen] = useState(!passes);
-
-  useEffect(() => {
+  // The panel re-opens or collapses when the score crosses the threshold; the
+  // reset happens in the render that sees the new verdict.
+  const [seenPasses, setSeenPasses] = useState(passes);
+  if (seenPasses !== passes) {
+    setSeenPasses(passes);
     setOpen(!passes);
-  }, [passes]);
+  }
 
   // ── M4: "Suggest improvement" (LLM rewrite, advisory only) ─────────────
   const [rewriteBusy, setRewriteBusy] = useState(false);

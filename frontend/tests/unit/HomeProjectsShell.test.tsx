@@ -7,7 +7,7 @@
  * same frame as the loaded page.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, within, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, cleanup, within, fireEvent, waitFor } from "@testing-library/react";
 import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -175,6 +175,10 @@ describe("/projects band summary", () => {
     vi.mocked(getProjects).mockImplementation(async (teamId?: string) => (teamId ? loaded : []));
     render(<ProjectsPage />);
     await screen.findByRole("heading", { level: 1, name: "Projects" });
+    // The header shows the team before its project list arrives, so wait for
+    // the team's getProjects call and let it settle before reading the count.
+    await waitFor(() => expect(getProjects).toHaveBeenCalledWith(team.id));
+    await act(async () => {});
     await waitFor(() => expect(document.querySelector(".page-header-summary")).toHaveTextContent(/Pandora · /));
     return document.querySelector(".page-header-summary")!.textContent ?? "";
   }

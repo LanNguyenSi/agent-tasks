@@ -718,6 +718,27 @@ describe("ConnectAgentModal: a result the dialog cannot show", () => {
     expect(unseen).not.toHaveBeenCalled();
   });
 
+  it("a failure after the dialog was closed goes to the handler of the latest render", async () => {
+    const pending = deferred<CreateResult>();
+    mockCreate.mockReturnValue(pending.promise);
+    const stale = vi.fn();
+    const latest = vi.fn();
+    const { rerender } = render(dialog({ onCreateFailedUnseen: stale }));
+    await userEvent.setup().click(screen.getByTestId("connect-generate-btn"));
+    // The parent hands in a new handler while the create is still in flight,
+    // then the dialog closes before the failure arrives.
+    rerender(dialog({ onCreateFailedUnseen: latest }));
+    rerender(dialog({ open: false, onCreateFailedUnseen: latest }));
+
+    await act(async () => {
+      pending.reject(new Error("Token service unavailable"));
+    });
+
+    expect(latest).toHaveBeenCalledTimes(1);
+    expect(latest).toHaveBeenCalledWith("team-1", "Token service unavailable");
+    expect(stale).not.toHaveBeenCalled();
+  });
+
   it("without handlers a result the dialog cannot show is dropped without throwing", async () => {
     const ok = deferred<CreateResult>();
     mockCreate.mockReturnValueOnce(ok.promise);
