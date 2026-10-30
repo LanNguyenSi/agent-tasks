@@ -48,3 +48,30 @@ export const OPEN_TO_REVIEW_DEFINITION: WorkflowDefinitionShape = {
     { from: "review", to: "done" },
   ],
 };
+
+/**
+ * Two work states, each with its own review-like state: `a -> r1` and
+ * `b -> r2`, both review states leading to the terminal `shipped`. `r1` is
+ * the workflow-wide first review-like state, so the old webhook pick
+ * (`reviewStates(def)[0]`) answered `r1` for a task in `b`, a state with no
+ * edge to it. `open` has an edge to neither review state (the fallback case).
+ */
+export const TWO_REVIEW_DEFINITION: WorkflowDefinitionShape = {
+  initialState: "open",
+  states: [
+    { name: "open", label: "Open", terminal: false },
+    { name: "a", label: "A", terminal: false },
+    { name: "b", label: "B", terminal: false },
+    { name: "r1", label: "R1", terminal: false },
+    { name: "r2", label: "R2", terminal: false },
+    { name: "shipped", label: "Shipped", terminal: true },
+  ],
+  transitions: [
+    { from: "open", to: "a" },
+    { from: "open", to: "b" },
+    { from: "a", to: "r1" },
+    { from: "b", to: "r2" },
+    { from: "r1", to: "shipped" },
+    { from: "r2", to: "shipped" },
+  ],
+};

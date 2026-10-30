@@ -57,7 +57,7 @@ vi.mock("../../src/services/audit.js", () => ({
 }));
 
 import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
-import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION, TWO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 /** A webhook write into a terminal state also clears the work claim and the review claim. */
 const CLEARED_CLAIMS = {
@@ -874,5 +874,75 @@ describe("webhook handlers on a four-state workflow with a free open -> review e
     expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     const audit = mockLogAuditEvent.mock.calls.find(([event]) => event.payload?.event === "changes_requested")![0];
     expect(audit.payload).not.toHaveProperty("from");
+  });
+});
+
+// Handler level: a merged PR hands a task to the review-like state its current
+// state has an edge to (the state a task_finish from there would target), and
+// the compare-and-swap write and the audit payload carry that state.
+describe("webhook PR merge on a workflow with several review-like states", () => {
+  const prPayload = {
+    action: "closed" as const,
+    repository: { full_name: "test/repo" },
+    pull_request: {
+      number: 42,
+      title: "Fix bug",
+      body: null,
+      html_url: "https://github.com/test/repo/pull/42",
+      state: "closed" as const,
+      merged: true,
+      merged_by: { login: "merger" },
+    },
+  };
+  const twoReviewTask = (status: string) => makeTask({ status, workflowId: "wf-two-review" });
+
+  beforeEach(() => {
+    mockWorkflowFindUnique.mockResolvedValue({ definition: TWO_REVIEW_DEFINITION });
+  });
+
+  it.each([
+    ["a", "r1"],
+    ["b", "r2"],
+    ["open", "r1"],
+  ])("a task in %s is handed to %s: CAS write and audit payload agree", async (from, to) => {
+    mockTaskFindMany.mockResolvedValue([twoReviewTask(from)]);
+
+    await handlePullRequestEvent(prPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: from, statusVersion: 0 },
+      data: { status: to, statusVersion: { increment: 1 } },
+    });
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        payload: expect.objectContaining({ event: "pr_merged", from, to }),
+      }),
+    );
+  });
+
+  it("a task already in a review-like state of the workflow is left alone", async () => {
+    mockTaskFindMany.mockResolvedValue([twoReviewTask("r2")]);
+
+    await handlePullRequestEvent(prPayload);
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ event: "pr_merged", from: "r2", to: "r2" }) }),
+    );
+  });
+
+  it("solo project (AUTONOMOUS): the terminal state wins over the reachable review state", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([twoReviewTask("b")]);
+
+    await handlePullRequestEvent(prPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "b", statusVersion: 0 },
+      data: { status: "shipped", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
+    });
   });
 });

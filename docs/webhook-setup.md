@@ -105,7 +105,7 @@ sequenceDiagram
     R-)S: dispatch by X-GitHub-Event (not awaited)
     R-->>GH: 200 received
     S->>DB: findTasksByPr (not done, not backlog)
-    S->>S: pickMergeTargetStatus on a merged PR<br/>(AUTONOMOUS: done, review: unchanged, else review)
+    S->>S: pickMergeTargetStatus on a merged PR<br/>(AUTONOMOUS: done, review-like: unchanged,<br/>else the review state reachable from the current one)
     S->>DB: compare-and-swap status write
     S->>DB: acknowledge signals when moved to done
   end

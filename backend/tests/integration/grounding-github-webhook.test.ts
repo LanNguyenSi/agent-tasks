@@ -378,3 +378,15 @@ it.each(["issue_closed", "merged"] as const)("HOOK a stored definition without a
   expect(await reload(legacy.id)).toEqual(before);
   expect((await store.db.signal.findFirstOrThrow({ where: { taskId: legacy.id } })).acknowledgedAt).toBeNull();
 });
+
+// Two work states, each with its own review state. The Grounding path hands a
+// merged PR over to the review state the task's current state has an edge to,
+// the same pick as the legacy webhook and a work-claim task_finish.
+const TWO_REVIEW_STATES = [{ name: "queued", label: "Queued", terminal: false }, { name: "work_a", label: "A", terminal: false }, { name: "work_b", label: "B", terminal: false }, { name: "check_a", label: "Check A", terminal: false }, { name: "check_b", label: "Check B", terminal: false }, { name: "shipped", label: "Shipped", terminal: true }];
+const TWO_REVIEW_EDGES: Edge[] = [{ from: "queued", to: "work_a" }, { from: "queued", to: "work_b" }, { from: "work_a", to: "check_a" }, { from: "work_b", to: "check_b" }, { from: "check_a", to: "shipped" }, { from: "check_b", to: "shipped" }];
+it.each([["work_a", "check_a"], ["work_b", "check_b"], ["queued", "check_a"]])("HOOK a confirmation-required merge hands a task in %s to %s, the review state it has an edge to", async (from, to) => {
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Two review", isDefault: true, definition: { initialState: "queued", states: TWO_REVIEW_STATES, transitions: TWO_REVIEW_EDGES } } });
+  const legacy = await bothClaims(from);
+  expect((await request()).status).toBe(200);
+  expect(await reload(legacy.id)).toMatchObject({ status: to, claimedByAgentId: ids.agent, reviewClaimedByUserId: ids.user });
+});
