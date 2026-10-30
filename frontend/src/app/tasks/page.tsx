@@ -432,18 +432,17 @@ function TasksPageInner() {
 
   // Access decision once the user and the shell's team list are known; a
   // failed list lookup is the boot error.
+  const teamsErrorMessage = teamsError?.message ?? "Failed to load. Please retry.";
+  if (userReady && teamsStatus === "error" && (bootError !== teamsErrorMessage || loading)) {
+    setBootError(teamsErrorMessage);
+    setLoading(false);
+  }
+  if (userReady && teamsStatus === "ready" && teams.length > 0 && loading) setLoading(false);
+
   useEffect(() => {
     if (!userReady) return;
-    if (teamsStatus === "error") {
-      setBootError(teamsError?.message ?? "Failed to load. Please retry.");
-      setLoading(false);
-      return;
-    }
     if (teamsStatus !== "ready") return;
-    if (teams.length > 0) {
-      setLoading(false);
-      return;
-    }
+    if (teams.length > 0) return;
     let cancelled = false;
     void (async () => {
       const ctx = await accessContextForTeams(teams);
@@ -456,9 +455,11 @@ function TasksPageInner() {
   }, [userReady, teamsStatus, teamsError, teams, router]);
 
   // Re-sync the search box when the URL query changes from outside.
-  useEffect(() => {
+  const [syncedSearchQuery, setSyncedSearchQuery] = useState(searchQuery);
+  if (syncedSearchQuery !== searchQuery) {
+    setSyncedSearchQuery(searchQuery);
     setSearchInput(searchQuery);
-  }, [searchQuery]);
+  }
 
   // Debounce search writes: wait ~250ms after last keystroke before pushing
   // to URL. Deps are [searchInput] only — searchQuery is a no-op guard, and
@@ -475,11 +476,16 @@ function TasksPageInner() {
   // A team change closes what belongs to the team that was left: the create
   // flow (its picker and form hold that team's projects) and a pending
   // discard confirmation.
-  useEffect(() => {
-    if (!selectedTeamId) return;
-    setNewTaskOpen(false);
-    setDiscardTarget(null);
-  }, [selectedTeamId]);
+  // Starts at null so a team that is already resolved on the first render
+  // closes them too, as the effect this replaces did on mount.
+  const [seenTeamId, setSeenTeamId] = useState<string | null>(null);
+  if (seenTeamId !== selectedTeamId) {
+    setSeenTeamId(selectedTeamId);
+    if (selectedTeamId) {
+      setNewTaskOpen(false);
+      setDiscardTarget(null);
+    }
+  }
 
   useEffect(() => {
     if (!selectedTeam) return;

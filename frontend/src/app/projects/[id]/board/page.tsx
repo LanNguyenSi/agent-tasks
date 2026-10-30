@@ -266,11 +266,11 @@ export default function ProjectBoardPage() {
     );
   }, [activeTaskId, loading, bootSucceeded]);
 
+  // Closing the modal drops the detail in the render that sees the cleared id.
+  if (!activeTaskId && activeTaskDetail !== null) setActiveTaskDetail(null);
+
   useEffect(() => {
-    if (!activeTaskId) {
-      setActiveTaskDetail(null);
-      return;
-    }
+    if (!activeTaskId) return;
     let cancelled = false;
     void getTask(activeTaskId).then((task) => {
       if (!cancelled) setActiveTaskDetail(task);
@@ -317,9 +317,12 @@ export default function ProjectBoardPage() {
     labelFilter !== null;
 
   // Reset list page when filters or view mode change
-  useEffect(() => {
+  const listFilterKey = JSON.stringify([selectedProjectId, taskQuery, taskScope, doneVisibility, viewMode]);
+  const [seenListFilterKey, setSeenListFilterKey] = useState(listFilterKey);
+  if (seenListFilterKey !== listFilterKey) {
+    setSeenListFilterKey(listFilterKey);
     setListPage(1);
-  }, [selectedProjectId, taskQuery, taskScope, doneVisibility, viewMode]);
+  }
 
   // ── Bootstrap ────────────────────────────────────────────────
 

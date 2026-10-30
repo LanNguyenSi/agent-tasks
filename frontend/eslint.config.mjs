@@ -8,18 +8,20 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     // eslint-plugin-react-hooks 7 (via eslint-config-next 16) added the React
-    // Compiler rules. Every effect listed here sets state synchronously on
-    // purpose, and none of them can be rewritten without changing behaviour:
-    // - reading localStorage, the system theme or the URL after mount (a read
-    //   during render would mismatch the server HTML, so it has to wait for the
-    //   first effect),
-    // - toggling a loading flag or resetting dependent state before an async
-    //   load starts, or when the team, project, task or modal key changes,
-    // - clearing a page, search or form state when its filters change.
-    // Moving them to event handlers, keys or render-time derivation is a
-    // refactor of each screen, not a lint fix, so the rule stays a visible
-    // warning backlog for these files only. The rule remains an error for every
-    // other file, so new code cannot add the pattern unnoticed.
+    // Compiler rules. Resets of local state on a prop change, portal mount
+    // guards and derivable loading decisions were rewritten (render-time
+    // adjustment, useSyncExternalStore). The effects still listed here set
+    // state synchronously for one of these reasons, and each is kept because
+    // the rewrite would change when or whether the state is set:
+    // - reading localStorage, the system theme or other browser-only state
+    //   after mount (a read during render would mismatch the server HTML),
+    // - a reset or a loading/error flag that is bundled with an async load or
+    //   a ref/storage side effect in the same effect, so it cannot be split
+    //   off without reordering the two,
+    // - resetting a form or a section when its key (project, team, task or the
+    //   modal opening) changes while the same effect starts the new load.
+    // The rule stays a visible warning backlog for these files only and is an
+    // error everywhere else, so new code cannot add the pattern unnoticed.
     files: [
       "src/app/dev/ui/page.tsx",
       "src/app/home/page.tsx",
@@ -29,18 +31,12 @@ const eslintConfig = defineConfig([
       "src/app/projects/page.tsx",
       "src/app/projects/workflow/page.tsx",
       "src/app/settings/team/page.tsx",
-      "src/app/tasks/page.tsx",
-      "src/components/AppChrome.tsx",
-      "src/components/AppHeader.tsx",
       "src/components/ConnectAgentModal.tsx",
       "src/components/TaskArtifactsSection.tsx",
       "src/components/TaskDetail.tsx",
       "src/components/ThemePreferenceField.tsx",
       "src/components/dashboard/NewTaskModal.tsx",
-      "src/components/task-detail/ImprovementPanel.tsx",
       "src/components/tasks/NewTaskFlow.tsx",
-      "src/components/ui/Toast.tsx",
-      "src/components/ui/usePopover.ts",
       "src/lib/teamList.tsx",
     ],
     rules: {
@@ -49,10 +45,11 @@ const eslintConfig = defineConfig([
   },
   {
     // react-hooks/purity flags Date.now() inside useMemo. These three memos
-    // filter done tasks against the current time (the hide-older-than window)
-    // and must read the clock when the list is recomputed. Freezing the time in
-    // state or a ref would let the window go stale between polls, so it is a
-    // warning for these two files only and an error everywhere else.
+    // read the clock only when their own inputs change (the done list, the
+    // filters), not on every render. Moving the timestamp into the fetch state
+    // instead would shift the done-task hide window on recomputes that are not
+    // polls (a filter or visibility change), so the memos keep reading the
+    // clock. A warning for these two files only, an error everywhere else.
     files: ["src/app/home/page.tsx", "src/app/projects/*/board/page.tsx"],
     rules: {
       "react-hooks/purity": "warn",

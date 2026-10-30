@@ -21,6 +21,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
+import { useMounted } from "./useMounted";
 
 export interface UsePopoverOptions {
   anchorRef: RefObject<HTMLElement | null>;
@@ -56,18 +57,13 @@ export function usePopover({
   offset = 8,
 }: UsePopoverOptions): UsePopoverResult {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted();
   const [positionReady, setPositionReady] = useState(false);
   const [positionStyle, setPositionStyle] = useState<CSSProperties>({
     position: "fixed",
     top: -9999,
     left: -9999,
   });
-
-  // Portal mount guard: createPortal needs the browser DOM.
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const computePosition = useCallback(() => {
     const anchor = anchorRef.current;
@@ -109,12 +105,13 @@ export function usePopover({
     setPositionReady(true);
   }, [align, anchorRef, matchAnchorWidth, minWidth, offset]);
 
+  // A closed popover has no position: drop it in the render that sees `open`
+  // go false, so the next open starts unpositioned.
+  if (!open && positionReady) setPositionReady(false);
+
   // Recompute when open changes or on scroll/resize
   useLayoutEffect(() => {
-    if (!open) {
-      setPositionReady(false);
-      return;
-    }
+    if (!open) return;
     computePosition();
     const rafId = window.requestAnimationFrame(computePosition);
     window.addEventListener("resize", computePosition);

@@ -173,6 +173,19 @@ describe("/tasks — header team switch", () => {
     expect(window.localStorage.getItem("agent-tasks:lastTeamId")).toBe("t2");
   });
 
+  it("the search box follows a query the URL gets from outside", async () => {
+    render(<TasksPage />);
+    await waitFor(() => expect(getTeamTasks).toHaveBeenCalledWith("t1", expect.anything()));
+    const box = screen.getByRole("searchbox", { name: "Search tasks" });
+    expect(box).toHaveValue("");
+
+    act(() => nav.push("/tasks?teamId=t1&q=gamma"));
+
+    await waitFor(() => expect(box).toHaveValue("gamma"));
+    act(() => nav.push("/tasks?teamId=t1"));
+    await waitFor(() => expect(box).toHaveValue(""));
+  });
+
   it("a fast B then A switch ends on A, and B's late response is ignored", async () => {
     renderBoth();
     expect((await screen.findAllByText("Alpha only task")).length).toBeGreaterThan(0);

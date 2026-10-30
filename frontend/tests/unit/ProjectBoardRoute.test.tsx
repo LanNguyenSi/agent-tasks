@@ -389,3 +389,41 @@ describe("board route columns from the project's workflows", () => {
     await waitFor(() => expect(columnIds()).toContain("db-col-plan"));
   });
 });
+
+describe("board route list view paging", () => {
+  function listTask(n: number) {
+    const id = `l-${String(n).padStart(2, "0")}`;
+    return {
+      id,
+      projectId: "p-1",
+      title: `List task ${String(n).padStart(2, "0")}`,
+      status: "open",
+      priority: "MEDIUM",
+      labels: [],
+      attachments: [],
+      artifacts: [],
+      comments: [],
+      blockedBy: [],
+      blocks: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    } as unknown as Task;
+  }
+
+  it("goes back to page 1 when the search changes and the list still spans pages", async () => {
+    window.localStorage.setItem("agent-tasks:dashboard:viewMode", "list");
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getWorkflows).mockResolvedValue([]);
+    // 30 tasks, 12 per page: three pages.
+    vi.mocked(getTasks).mockResolvedValue(Array.from({ length: 30 }, (_, i) => listTask(i + 1)));
+    renderRoute();
+
+    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Page 2 of 3")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search tasks" }), "List task");
+
+    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+  });
+});
