@@ -490,6 +490,23 @@ export function expectedFinishStateFromDefinition(
 }
 
 /**
+ * The first review-like state, in the definition's state order, that has a
+ * DIRECT transition `fromState -> R`; undefined when `fromState` has no edge
+ * into a review-like state. The one predicate behind both the work-claim
+ * `task_finish` target (`finishTargetFrom`) and the GitHub webhook merge
+ * hand-off (`pickMergeTargetStatus`), so the two cannot pick different
+ * review states for the same task. No multi-hop search.
+ */
+export function reachableReviewState(
+  def: WorkflowDefinitionShape,
+  fromState: string,
+): string | undefined {
+  return reviewStates(def).find((r) =>
+    def.transitions.some((t) => t.from === fromState && t.to === r),
+  );
+}
+
+/**
  * The state a work-claim `task_finish` (without autoMerge) moves a task to
  * from `fromState`: the first review-like state, in the definition's state
  * order, that has a DIRECT transition `fromState -> R`. A workflow with
@@ -507,10 +524,7 @@ export function finishTargetFrom(
   fromState: string,
 ): string {
   const def = definition ?? defaultWorkflowDefinition();
-  const reachable = reviewStates(def).find((r) =>
-    def.transitions.some((t) => t.from === fromState && t.to === r),
-  );
-  return reachable ?? expectedFinishStateFromDefinition(def);
+  return reachableReviewState(def, fromState) ?? expectedFinishStateFromDefinition(def);
 }
 
 /**

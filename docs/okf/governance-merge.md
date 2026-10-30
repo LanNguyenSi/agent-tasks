@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-30T06:21:22Z
+timestamp: 2026-10-30T11:17:32Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -219,8 +219,11 @@ unconfigured application. `pickMergeTargetStatus` reads the review-like and term
 states from the task's effective workflow definition (the names below are the
 built-in workflow's) and leaves a terminal state and `backlog` alone; otherwise
 a merged PR moves an AUTONOMOUS task to the first terminal state (`done`), or a
-task in either confirmation mode to the first review-like state (`review`) unless
-it is already in a review-like state. Legacy webhook
+task in either confirmation mode to the first review-like state with a direct
+edge from its current state (`reachableReviewState`, the pick a work-claim
+`task_finish` makes; with no such edge the workflow's first review-like state,
+`review` in the built-in workflow) unless it is already in a review-like state.
+Legacy webhook
 lookups exclude tasks in a terminal state of their own workflow and `backlog`
 tasks. Each legacy webhook status write is a
 compare-and-swap on the status and status version it read; a write that lost

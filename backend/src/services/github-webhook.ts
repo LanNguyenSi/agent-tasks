@@ -26,6 +26,7 @@ import {
   defaultWorkflowDefinition,
   isReviewState,
   isTerminalState,
+  reachableReviewState,
   requestChangesTarget,
   resolveEffectiveDefinition,
   reviewStates,
@@ -363,8 +364,11 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
  * - AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER (any workflow):
  *     - a review-like or terminal state → no transition (explicit approval
  *       required).
- *     - anything else (open/in_progress) → the first review-like state to
- *       hand off for review; null when the workflow has none.
+ *     - anything else (open/in_progress) → the first review-like state with
+ *       a direct edge from the current state (the same pick as a work-claim
+ *       `task_finish`, `reachableReviewState`); with no such edge the
+ *       workflow-wide first review-like state; null when the workflow has
+ *       none.
  *
  * Custom workflows get no terminal carve-out here. A confirmation-required
  * project must keep its review gate on a webhook merge regardless of
@@ -392,7 +396,10 @@ export function pickMergeTargetStatus(input: {
     return terminalStates(definition)[0] ?? null;
   }
   if (isReviewState(definition, currentStatus)) return null;
-  return reviewStates(definition)[0] ?? null;
+  // The first review-like state the task's current state has a direct edge
+  // to (the state a task_finish from here would target); with no such edge
+  // the workflow-wide first review-like state, as before.
+  return reachableReviewState(definition, currentStatus) ?? reviewStates(definition)[0] ?? null;
 }
 
 /** Process a GitHub pull_request event — per review-automation-policy.md */

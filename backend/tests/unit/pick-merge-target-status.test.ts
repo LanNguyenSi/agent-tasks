@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pickMergeTargetStatus } from "../../src/services/github-webhook.js";
+import { reachableReviewState, type WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
+import { CUSTOM_VOCABULARY_DEFINITION, TWO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 // Direct unit tests for the webhook's post-merge target selection. The
 // function is small and pure, so every governance-mode × current-status
@@ -39,7 +41,7 @@ describe("pickMergeTargetStatus", () => {
     }
   });
 
-  it("M3: confirmation-required modes hand off to review, NOT done", () => {
+  it("confirmation-required modes hand off to review, NOT done", () => {
     // Regression: the old carve-out returned "done" for custom-workflow
     // projects here, bypassing the review gate that default-workflow non-solo
     // projects get. The webhook no longer special-cases custom workflows, so a
@@ -58,5 +60,70 @@ describe("pickMergeTargetStatus", () => {
   it("legacy flags are accepted and derive the same behavior", () => {
     expect(pickMergeTargetStatus({ project: LEGACY_SOLO, currentStatus: "in_progress" })).toBe("done");
     expect(pickMergeTargetStatus({ project: LEGACY_DR, currentStatus: "in_progress" })).toBe("review");
+  });
+});
+
+// The merge hand-off picks like a work-claim task_finish: the first review-like
+// state with a DIRECT edge from the task's current state; with no such edge the
+// workflow-wide first review-like state (the unchanged fallback).
+describe("pickMergeTargetStatus: review state reachable from the current state", () => {
+  const pick = (project: Parameters<typeof pickMergeTargetStatus>[0]["project"], currentStatus: string, definition: WorkflowDefinitionShape) =>
+    pickMergeTargetStatus({ project, currentStatus, definition });
+
+  it.each(["AWAITS", "DR"] as const)("%s: a task in b is handed to r2, the review state b has an edge to", (mode) => {
+    const project = mode === "AWAITS" ? AWAITS : DR;
+    expect(pick(project, "b", TWO_REVIEW_DEFINITION)).toBe("r2");
+  });
+
+  it.each(["AWAITS", "DR"] as const)("%s: a task in a is handed to r1", (mode) => {
+    const project = mode === "AWAITS" ? AWAITS : DR;
+    expect(pick(project, "a", TWO_REVIEW_DEFINITION)).toBe("r1");
+  });
+
+  it("no edge from the current state into a review-like state: the workflow-wide first review state (fallback, unchanged)", () => {
+    expect(TWO_REVIEW_DEFINITION.transitions.some((t) => t.from === "open" && (t.to === "r1" || t.to === "r2"))).toBe(false);
+    expect(pick(AWAITS, "open", TWO_REVIEW_DEFINITION)).toBe("r1");
+    expect(pick(AWAITS, "not_a_state", TWO_REVIEW_DEFINITION)).toBe("r1");
+  });
+
+  it("custom vocabulary: build reaches qa directly, plan falls back to the workflow-wide qa", () => {
+    expect(pick(AWAITS, "build", CUSTOM_VOCABULARY_DEFINITION)).toBe("qa");
+    expect(pick(AWAITS, "plan", CUSTOM_VOCABULARY_DEFINITION)).toBe("qa");
+  });
+
+  it("unchanged branches on a multi-review workflow: review-like and terminal stay put, AUTONOMOUS goes to the terminal state", () => {
+    expect(pick(AWAITS, "r1", TWO_REVIEW_DEFINITION)).toBeNull();
+    expect(pick(AWAITS, "r2", TWO_REVIEW_DEFINITION)).toBeNull();
+    expect(pick(DR, "shipped", TWO_REVIEW_DEFINITION)).toBeNull();
+    expect(pick(AWAITS, "backlog", TWO_REVIEW_DEFINITION)).toBeNull();
+    expect(pick(AUTONOMOUS, "b", TWO_REVIEW_DEFINITION)).toBe("shipped");
+    expect(pick(AUTONOMOUS, "open", TWO_REVIEW_DEFINITION)).toBe("shipped");
+  });
+
+  it("a workflow without a review-like state still answers null", () => {
+    const noReview: WorkflowDefinitionShape = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "work", label: "Work", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [{ from: "open", to: "work" }, { from: "work", to: "done" }],
+    };
+    expect(pick(AWAITS, "work", noReview)).toBeNull();
+  });
+
+  it("built-in workflow: in_progress -> review (edge), open -> review (fallback)", () => {
+    expect(pickMergeTargetStatus({ project: AWAITS, currentStatus: "in_progress" })).toBe("review");
+    expect(pickMergeTargetStatus({ project: AWAITS, currentStatus: "open" })).toBe("review");
+  });
+});
+
+describe("reachableReviewState", () => {
+  it("is the first review-like state, in state order, with a direct edge; undefined with none", () => {
+    expect(reachableReviewState(TWO_REVIEW_DEFINITION, "a")).toBe("r1");
+    expect(reachableReviewState(TWO_REVIEW_DEFINITION, "b")).toBe("r2");
+    expect(reachableReviewState(TWO_REVIEW_DEFINITION, "open")).toBeUndefined();
+    expect(reachableReviewState(TWO_REVIEW_DEFINITION, "shipped")).toBeUndefined();
   });
 });
