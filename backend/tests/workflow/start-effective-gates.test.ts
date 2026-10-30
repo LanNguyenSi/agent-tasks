@@ -685,3 +685,120 @@ describe("POST /tasks/:id/start — effectiveGates + previousStatus (task 656ccb
     });
   });
 });
+
+// ── Multi-work-state workflow: finish target follows the current state ─────
+//
+// `spec_check` is the workflow's first review-like state but only `other`
+// reaches it; `work` (what /start moves the task to) reaches `qa` directly,
+// and only that edge carries a gate. `scratch` is a work state without any
+// edge into a review-like state.
+const MULTI_WORK_DEFINITION: WorkflowDefinitionShape = {
+  initialState: "open",
+  states: [
+    { name: "open", label: "Open", terminal: false },
+    { name: "work", label: "Work", terminal: false },
+    { name: "scratch", label: "Scratch", terminal: false },
+    { name: "other", label: "Other", terminal: false },
+    { name: "spec_check", label: "Spec check", terminal: false },
+    { name: "qa", label: "QA", terminal: false },
+    { name: "shipped", label: "Shipped", terminal: true },
+  ],
+  transitions: [
+    { from: "open", to: "work" },
+    { from: "work", to: "scratch" },
+    { from: "scratch", to: "other" },
+    { from: "work", to: "qa", requires: ["branchPresent"] },
+    { from: "other", to: "spec_check" },
+    { from: "spec_check", to: "shipped" },
+    { from: "qa", to: "shipped" },
+  ],
+};
+
+describe("multi-work-state workflow: work-claim finish target is reachable from the current state", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.taskFindFirst.mockResolvedValue(null);
+    prismaMocks.taskFindMany.mockResolvedValue([]);
+    prismaMocks.workflowFindFirst.mockResolvedValue(null);
+  });
+
+  const jsonPost = (path: string, body: unknown = {}) =>
+    makeApp(AGENT).request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const multiTask = (overrides: Record<string, unknown> = {}) =>
+    baseTaskRow({
+      workflowId: "wf-multi",
+      workflow: { id: "wf-multi", definition: MULTI_WORK_DEFINITION },
+      ...overrides,
+    });
+
+  const claimedIn = (status: string, overrides: Record<string, unknown> = {}) =>
+    multiTask({ status, claimedByAgentId: AGENT.tokenId, claimedAt: new Date(), ...overrides });
+
+  it("task_start previews the review state the start target reaches and the gates of THAT edge", async () => {
+    const box = wireTask(multiTask());
+    const res = await measure<{
+      expectedFinishState: string;
+      effectiveGates: { finish: string[] | null };
+    }>(jsonPost(`/tasks/${TASK_ID}/start`));
+
+    expect(res.status).toBe(200);
+    expect(box.current.status).toBe("work");
+    // The workflow-wide first review-like state would be spec_check, with no
+    // edge from `work` (gates null).
+    expect(res.body.expectedFinishState).toBe("qa");
+    expect(res.body.effectiveGates).toEqual({ finish: ["branchPresent"] });
+  });
+
+  it("round trip: the finish moves the task along the previewed edge and enforces that edge's gate", async () => {
+    const box = wireTask(multiTask({ branchName: "feat/x" }));
+    const start = await measure<{ expectedFinishState: string }>(jsonPost(`/tasks/${TASK_ID}/start`));
+    expect(start.status).toBe(200);
+
+    const finish = await measure<{ kind: string; targetStatus: string }>(
+      jsonPost(`/tasks/${TASK_ID}/finish`, { result: "done" }),
+    );
+    expect(finish.status).toBe(200);
+    expect(finish.body.targetStatus).toBe(start.body.expectedFinishState);
+    expect(finish.body.targetStatus).toBe("qa");
+    expect(box.current.status).toBe("qa");
+    // A review-like target keeps the work claim, as for the built-in review.
+    expect(box.current.claimedByAgentId).toBe(AGENT.tokenId);
+  });
+
+  it("finish enforces the gate configured on the reachable edge (branchPresent on work -> qa)", async () => {
+    const box = wireTask(claimedIn("work", { branchName: null }));
+    const res = await measure<{ error: string; failed: Array<{ rule: string }> }>(
+      jsonPost(`/tasks/${TASK_ID}/finish`, { result: "done" }),
+    );
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("precondition_failed");
+    expect(res.body.failed.map((f) => f.rule)).toEqual(["branchPresent"]);
+    expect(box.current.status).toBe("work");
+  });
+
+  it("a task in the later work state `other` finishes into spec_check, the edge it has", async () => {
+    const box = wireTask(claimedIn("other"));
+    const res = await measure<{ targetStatus: string }>(
+      jsonPost(`/tasks/${TASK_ID}/finish`, { result: "done" }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.targetStatus).toBe("spec_check");
+    expect(box.current.status).toBe("spec_check");
+  });
+
+  it("a work state without an edge into any review state keeps the unchanged no_transition answer", async () => {
+    const box = wireTask(claimedIn("scratch"));
+    const res = await measure<{ error: string; message: string }>(
+      jsonPost(`/tasks/${TASK_ID}/finish`, { result: "done" }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("bad_request");
+    expect(res.body.message).toMatch(/^Transition from 'scratch' to 'spec_check' is not allowed by workflow/);
+    expect(box.current.status).toBe("scratch");
+  });
+});

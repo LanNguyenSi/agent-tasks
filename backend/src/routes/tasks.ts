@@ -82,7 +82,7 @@ import {
   defaultWorkflowDefinition,
   resolveEffectiveDefinition, withInReviewState,
   resolveProjectEffectiveDefinition,
-  expectedFinishStateFromDefinition,
+  expectedFinishStateFromDefinition, finishTargetFrom,
   isInitialState,
   isTerminalState,
   isReviewState,
@@ -2411,10 +2411,9 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     );
   }
 
-  // Resolve the workflow definition once so both branches can compute the
-  // expected finish state.
+  // Resolve the workflow definition once so both branches can use it (the work
+  // branch derives the expected finish state from it, the review branch its own).
   const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
-  const expectedFinishState = expectedFinishStateFromDefinition(effectiveDefinition);
 
   // ── Branch: status=open → author-claim + transition ──────────────────────
   if (isInitialState(effectiveDefinition, task.status)) {
@@ -2466,6 +2465,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       );
     }
 
+    const expectedFinishState = finishTargetFrom(effectiveDefinition, startTarget); // same helper as the finish: preview and finish name one edge
     // If the caller supplied a branchName AND the task has none, fold it
     // into the gate input so a `branchPresent` precondition passes on the
     // same call that claims the task. The actual DB write happens in the
@@ -3870,7 +3870,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
     targetStatus = terminalTargetFrom(effectiveDefinition, task.status);
   } else {
-    targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
+    targetStatus = finishTargetFrom(effectiveDefinition, task.status);
   }
 
   // Cross-repo validation on prUrl payload (ADR-0010 §5b/§5c). Shared gate —

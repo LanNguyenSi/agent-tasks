@@ -209,7 +209,7 @@ Per-verb defaults without `include`:
 | Verb | Default |
 |---|---|
 | `task_pickup` | full spec, without `comments` |
-| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState` (the work-finish target; on a review claim this is NOT the same edge `gateExpectations` previews, see the budget exception below), `gateExpectations`, `requestChangesGateExpectations` on a review claim, `gateExpectationsSource` when assumed, `transition` on an actual state change) |
+| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState` (the work-finish target; on a work claim the review state the start target has an edge to, else the workflow-wide fallback; on a review claim this is NOT the same edge `gateExpectations` previews, see the budget exception below), `gateExpectations`, `requestChangesGateExpectations` on a review claim, `gateExpectationsSource` when assumed, `transition` on an actual state change) |
 | `tasks_get` (and equivalents) | summary |
 | `project_tasks` | summary rows: an allowlist of id, title, status, priority, labels, externalRef, createdAt, claims (work claim only on this route), blockedBy, prUrl; every other field, description and templateData included, is left off each row by default |
 | `tasks_list` (legacy-only since rc-v1-C007) | existing summary projection (unchanged) |

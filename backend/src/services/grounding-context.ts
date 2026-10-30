@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import type { GroundingBinding, Prisma, Project, Task } from "@prisma/client";
 import { z } from "zod";
 import type { Actor } from "../types/auth.js";
-import { approveTarget, defaultWorkflowDefinition, expectedFinishStateFromDefinition, isReviewState, isTerminalState, isWorkState, sanitizeStoredDefinition } from "./default-workflow.js";
+import { approveTarget, defaultWorkflowDefinition, finishTargetFrom, isReviewState, isTerminalState, isWorkState, sanitizeStoredDefinition } from "./default-workflow.js";
 import { checkReviewApprovalGate, checkSelfMergeGate, type DistinctReviewerRejection } from "./review-gate.js";
 import { resolveGovernanceMode } from "../lib/governance-mode.js";
 import { findDelegationUser } from "./github-delegation.js";
@@ -143,7 +143,7 @@ export async function resolveGroundingTarget(
     ? reviewEdges : outgoing.filter(t => isTerminalState(def, t.to));
   if (candidates.length !== 1) throw new GroundingAccessError("bad_state", 409);
   const edge = candidates[0];
-  const existingTarget = intent === "finish" ? expectedFinishStateFromDefinition(def) : approveTarget(def, task.status);
+  const existingTarget = intent === "finish" ? finishTargetFrom(def, task.status) : approveTarget(def, task.status);
   if (edge.to !== existingTarget) throw new GroundingAccessError("bad_state", 409);
   if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole as ProjectRole, db))
     throw new GroundingAccessError("forbidden", 403, roleRefusal(edge.to, edge.requiredRole));
