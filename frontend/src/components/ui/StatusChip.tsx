@@ -11,6 +11,9 @@ import { STATUS_LABELS } from "@/lib/status";
 
 interface StatusChipProps {
   status: string;
+  /** Display override (e.g. a workflow state's label); the status' own
+   *  label is used when absent. */
+  label?: string;
   className?: string;
 }
 
@@ -23,9 +26,9 @@ const STATUS_CLASS_MAP: Record<string, string> = {
   done: "done",
 };
 
-export function StatusChip({ status, className }: StatusChipProps) {
+export function StatusChip({ status, label, className }: StatusChipProps) {
   const modifier = STATUS_CLASS_MAP[status] ?? "unknown";
-  const label = STATUS_LABELS[status] ?? status;
+  const text = label ?? STATUS_LABELS[status] ?? status;
 
   return (
     <span
@@ -38,7 +41,7 @@ export function StatusChip({ status, className }: StatusChipProps) {
         .join(" ")}
     >
       <span className="status-chip-dot" aria-hidden="true" />
-      {label}
+      {text}
     </span>
   );
 }

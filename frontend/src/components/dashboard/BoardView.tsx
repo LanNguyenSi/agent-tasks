@@ -1,10 +1,14 @@
 "use client";
 
-// Board view: 5-column kanban layout in the Quiet Precision style.
+// Board view: a kanban layout in the Quiet Precision style whose columns come
+// from the project's workflows (buildBoardColumns): backlog always first, then
+// the workflow states, then one extra column per task status no column covers.
+// With no columns passed (or workflows the page could not read) it is the
+// built-in five: Backlog, Open, In Progress, Review, Done.
 // Card anatomy: PriorityLabel + confidence badge + (optional) PR chip | title
 // | footer (labels, due, avatar). Column header: status dot + h2 title +
 // tinted count Badge + add-task (+) button (an empty slot of the same size on
-// the columns without one, so all five heads are equally tall).
+// the columns without one, so all heads are equally tall).
 //
 // Semantics: each card is an <article> whose <h3> holds the one interactive
 // control, a button named by the task title. Priority, spec score, labels, due
@@ -25,7 +29,6 @@ import { Badge, type BadgeTone } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { PriorityLabel } from "../ui/PriorityLabel";
 import { calculateConfidence, resolveEffectiveThreshold, type TaskTypeThresholds } from "../../lib/confidence";
-import { STATUS_LABELS } from "../../lib/status";
 import {
   normalizeStatus,
   isOverdue,
@@ -34,12 +37,23 @@ import {
   PRIORITY_RANK,
 } from "../../lib/taskDisplay";
 import { DONE_BOARD_VISIBLE_LIMIT } from "../../lib/dashboardPrefs";
+import { buildBoardColumns, type BoardColumn } from "../../lib/boardColumns";
 import type { Task, TaskTemplate } from "../../lib/api";
 import { formatAbsoluteDate } from "../../lib/time";
 import { apiTokensSettingsHref } from "../../lib/routes";
 
-const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
-type Status = (typeof STATUSES)[number];
+/** The only statuses a column's + can hand to the create modal: the pipeline
+ *  starts at backlog (the human queue) or at the workflow's initial state,
+ *  which `workflowDefinitionSchema` in `backend/src/routes/workflows.ts` locks
+ *  to `open`. */
+type Status = "backlog" | "open";
+
+/** More columns than the built-in five no longer fit the wide-desktop
+ *  equal-column grid without dropping below a readable card width, so a board
+ *  of this many columns or more marks itself `.db-board--scroll` and takes the same
+ *  horizontally scrolled treatment (240px minimum column) the 761-1279px band
+ *  uses; see globals.css. Five columns and fewer keep today's equal columns. */
+const SCROLL_FROM_COLUMN_COUNT = 6;
 
 // Badge tone per column status.
 const COLUMN_BADGE_TONE: Record<string, BadgeTone> = {
@@ -220,6 +234,10 @@ const TaskCard = memo(function TaskCard({
 
 interface BoardViewProps {
   tasks: Task[];
+  /** The column list (buildBoardColumns): backlog, the project's workflow
+   *  states, extra raw-status columns. Omitted reads as the built-in five,
+   *  whatever the tasks are. */
+  columns?: BoardColumn[];
   activeTaskId: string | null;
   /** Project task template, threaded to each card's confidence score. */
   templateFields: TaskTemplate["fields"] | null;
@@ -233,6 +251,7 @@ interface BoardViewProps {
 
 export default function BoardView({
   tasks,
+  columns,
   activeTaskId,
   templateFields,
   confidenceThreshold = null,
@@ -240,6 +259,7 @@ export default function BoardView({
   onSelectTask,
   onAddTask,
 }: BoardViewProps) {
+  const boardColumns = columns ?? buildBoardColumns(undefined, []);
   const [showAllDone, setShowAllDone] = useState(false);
 
   // Jump-chip activation: scroll the column into view and move focus to its
@@ -257,10 +277,10 @@ export default function BoardView({
     (column.querySelector(".db-col-title") as HTMLElement | null)?.focus();
   };
 
-  const columnCounts = STATUSES.map((status) => ({
-    status,
-    label: STATUS_LABELS[normalizeStatus(status)] ?? normalizeStatus(status),
-    count: tasks.filter((t) => t.status === status).length,
+  const columnCounts = boardColumns.map((column) => ({
+    status: column.status,
+    label: column.label,
+    count: tasks.filter((t) => t.status === column.status).length,
   }));
 
   return (
@@ -283,12 +303,19 @@ export default function BoardView({
         </a>
       ))}
     </nav>
-    <div className="db-board" role="group" aria-label="Board">
-      {STATUSES.map((status) => {
+    <div
+      className={`db-board${boardColumns.length >= SCROLL_FROM_COLUMN_COUNT ? " db-board--scroll" : ""}`}
+      role="group"
+      aria-label="Board"
+      // eslint-disable-next-line no-restricted-syntax
+      style={{ "--db-cols": boardColumns.length } as React.CSSProperties} /* dynamic: board column count */
+    >
+      {boardColumns.map((column) => {
+        const { status, terminal } = column;
         const normStatus = normalizeStatus(status);
-        const columnLabel = STATUS_LABELS[normStatus] ?? normStatus;
+        const columnLabel = column.label;
         const columnTasks = sortColumnTasks(tasks.filter((t) => t.status === status));
-        const capped = status === "done" && !showAllDone && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT;
+        const capped = terminal && !showAllDone && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT;
         const visibleTasks = capped ? columnTasks.slice(0, DONE_BOARD_VISIBLE_LIMIT) : columnTasks;
         const overflowCount = columnTasks.length - visibleTasks.length;
         const badgeTone = COLUMN_BADGE_TONE[normStatus] ?? "neutral";
@@ -297,7 +324,7 @@ export default function BoardView({
           <section
             key={status}
             id={columnDomId(status)}
-            className={`db-col db-col--${normStatus}`}
+            className={`db-col db-col--${normStatus}${column.builtIn ? "" : " db-col--custom"}`}
             aria-label={`${columnLabel}, ${columnTasks.length} task${columnTasks.length !== 1 ? "s" : ""}`}
           >
             <header className="db-col-head">
@@ -309,8 +336,11 @@ export default function BoardView({
               <Badge tone={badgeTone}>{columnTasks.length}</Badge>
               {/* Column-gated create affordance (operator decision
                   2026-08-20): the + only appears where the pipeline can
-                  legally start -- Backlog and Open. In Progress, Review, and
-                  Done never get one. */}
+                  legally start -- Backlog and Open. Every other column,
+                  custom workflow states included, never gets one: the
+                  initial state is locked to `open` by `workflowDefinitionSchema`
+                  in `backend/src/routes/workflows.ts`, so no custom column can
+                  be a legal start either. */}
               {status === "backlog" || status === "open" ? (
                 <button
                   type="button"
@@ -321,7 +351,7 @@ export default function BoardView({
                   <Icon name="plus" size={13} />
                 </button>
               ) : (
-                /* Reserves the + slot so all five heads are equally tall. */
+                /* Reserves the + slot so all heads are equally tall. */
                 <span className="db-col-add db-col-add--slot" aria-hidden="true" />
               )}
             </header>
@@ -342,7 +372,7 @@ export default function BoardView({
                       onSelect={onSelectTask}
                     />
                   ))}
-                  {status === "done" && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT && (
+                  {terminal && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT && (
                     <button
                       type="button"
                       className="db-col-expander"
@@ -374,7 +404,7 @@ interface BoardEmptyStateProps {
   canConnectAgent?: boolean;
 }
 
-/** Shown instead of the five empty columns when the project has no tasks at
+/** Shown instead of the empty columns when the project has no tasks at
  *  all (filters that hide every task still show the columns). */
 export function BoardEmptyState({
   onNewTask,

@@ -31,6 +31,7 @@ vi.mock("../../src/lib/api", async () => {
     getTasks: vi.fn(),
     getTask: vi.fn(),
     getEffectiveWorkflow: vi.fn(),
+    getWorkflows: vi.fn(),
   };
 });
 

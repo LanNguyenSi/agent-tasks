@@ -3491,18 +3491,22 @@ html[data-theme="light"] {
   flex-shrink: 0;
 }
 
-/* Board grid: 5 equal columns in one row on wide desktops */
+/* Board grid: one row of equal columns on wide desktops. The column count
+   comes from the inline --db-cols the board writes (the length of the
+   project's column list, buildBoardColumns); the 5 fallback is the built-in
+   workflow's count, which the board uses whenever no count is set. */
 .db-board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--db-cols, 5), minmax(0, 1fr));
   gap: var(--space-3);
   padding: var(--space-4) var(--page-gutter) var(--space-6);
   align-items: start;
 }
 
-/* Medium widths: 5 columns don't fit without squeezing cards unreadable,
-   and any partial wrap (e.g. 4+1) reads as broken. Scroll the board
-   horizontally instead, kanban-style, keeping one row of 5 columns. */
+/* Medium widths: that many columns don't fit without squeezing cards
+   unreadable, and any partial wrap (e.g. 4+1) reads as broken. Scroll the
+   board horizontally instead, kanban-style, keeping one row of columns as
+   wide as they can be without going below the readable 240px. */
 @media (max-width: 1279px) and (min-width: 761px) {
   .db-board {
     grid-template-columns: none;
@@ -3523,6 +3527,39 @@ html[data-theme="light"] {
        column's own padding edge dissolves. Static CSS cannot hide the
        fade entirely at scroll-end; that would need JS/scroll-driven
        animations. */
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - (var(--space-5) + var(--space-2))),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - (var(--space-5) + var(--space-2))),
+      transparent 100%
+    );
+  }
+}
+
+/* Wide desktops (the base count-driven grid above): a project with more
+   columns than the built-in five would otherwise squeeze every card below a
+   readable width (ten columns are 128px at 1440px), so the board marks itself
+   .db-board--scroll in that case and takes exactly the band treatment above --
+   the same readable 240px column and horizontal scroll. A board with five
+   columns or fewer never carries the class and keeps the equal-column grid
+   untouched. Inside this scroll container the column heads are static (see the
+   min-width: 1280px rule further down): the board's own overflow-x makes it
+   the sticky scrollport, so the heads could not pin to the page and a top
+   offset would only push each head down into its column, over the first card.
+   Static heads stay in the flow and scroll away with their columns, exactly
+   as they do in the 761-1279px band. */
+@media (min-width: 1280px) {
+  .db-board--scroll {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(240px, 1fr);
+    overflow-x: auto;
+    padding-bottom: var(--space-4);
+    /* Right-edge fade, exactly as in the 761-1279px band above. */
     -webkit-mask-image: linear-gradient(
       to right,
       #000 calc(100% - (var(--space-5) + var(--space-2))),
@@ -3565,6 +3602,13 @@ html[data-theme="light"] {
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* Custom workflow states carry no status colour: the dot falls back to the
+   neutral open (grey) treatment every unknown status uses, so it never leaves
+   an empty gap. Placed before the built-in names below on purpose: an extra
+   column for a built-in state a workflow left out keeps that state's own
+   colour, the way its badge tone already does. */
+.db-col--custom .db-col-dot { background: var(--status-open); }
 
 .db-col--backlog .db-col-dot { background: var(--status-backlog); }
 .db-col--open    .db-col-dot { background: var(--status-open); }
@@ -8644,13 +8688,27 @@ a.proj-chip:hover {
  *  - up to 760px (stacked columns): the head sticks below the sticky jump bar
  *    (--board-jump-height), inside its own column.
  * From 761px to 1279px the heads stay in the flow: there the board is a
- * horizontal scroller, which sticky cannot pin against the page. */
+ * horizontal scroller, which sticky cannot pin against the page. The heads of
+ * a .db-board--scroll board at 1280px and above (more columns than the
+ * built-in five, see that rule just after the band) are made static right
+ * below: inside that board the sticky scrollport is the board itself (its
+ * overflow-x makes overflow-y compute to auto), so the top offset is measured
+ * from the board's own top edge and pushes every head down into its column,
+ * over the first card, instead of pinning it to the page. */
 @media (min-width: 1280px) {
   .db-col-head {
     position: sticky;
     top: calc(var(--app-header-height) + var(--board-toolbar-height));
     z-index: 2;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  /* More columns than the built-in five: the board is the sticky scrollport
+     here, not the page, so undo the stickiness (more specific than the rule
+     above). The heads stay in the flow and scroll with their columns, as they
+     already do in the 761-1279px band. */
+  .db-board--scroll .db-col-head {
+    position: static;
   }
 }
 

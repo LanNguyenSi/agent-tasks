@@ -72,6 +72,15 @@ describe("sticky column heads", () => {
     expect(rule(".db-col-head")).not.toMatch(/position:\s*sticky/);
   });
 
+  it("stay in the flow inside a .db-board--scroll board at 1280px and above", () => {
+    // The board's overflow-x makes the board the sticky scrollport (overflow-y
+    // computes to auto), so the sticky top would be measured from the board's
+    // own top edge and push each head down into its column, over the first
+    // card. Static keeps the heads in the flow, as in the 761-1279px band.
+    const scrollHead = inMedia(media("(min-width: 1280px)"), ".db-board--scroll .db-col-head");
+    expect(scrollHead).toMatch(/position:\s*static/);
+  });
+
   it("paint over the cards that scroll under them", () => {
     expect(rule(".db-col-head")).toMatch(/background:\s*var\(--surface\)/);
     const head = inMedia(media("(min-width: 1280px)"), ".db-col-head");
@@ -90,6 +99,61 @@ describe("sticky column heads", () => {
     // in two space-2 paddings plus a 1px border.
     expect(rule(".page-header")).toMatch(/min-height:\s*52px/);
     expect(css).toMatch(/--board-jump-height:\s*49px/);
+  });
+});
+
+describe("column count drives the grid", () => {
+  it("takes the wide-desktop column count from the inline --db-cols, never from a hard-coded repeat(5, ...)", () => {
+    const board = rule(".db-board");
+    expect(board).toMatch(/grid-template-columns:\s*repeat\(var\(--db-cols,\s*5\),\s*minmax\(0,\s*1fr\)\)/);
+    expect(board).not.toMatch(/repeat\(5,/);
+  });
+
+  it("keeps one scrollable row with a readable minimum column in the 761-1279px band", () => {
+    const band = inMedia(media("(max-width: 1279px) and (min-width: 761px)"), ".db-board");
+    expect(band).toMatch(/grid-auto-flow:\s*column/);
+    expect(band).toMatch(/grid-auto-columns:\s*minmax\(240px,\s*1fr\)/);
+    expect(band).toMatch(/overflow-x:\s*auto/);
+    // The count-driven template must not survive into the band: with
+    // grid-auto-flow the columns follow, never wrap 4+3.
+    expect(band).toMatch(/grid-template-columns:\s*none/);
+  });
+
+  it("stacks every column full-width at the mobile width", () => {
+    const mobile = inMedia(media("(max-width: 760px)"), ".db-board");
+    expect(mobile).toMatch(/grid-template-columns:\s*1fr/);
+  });
+
+  it("gives a wider board the same readable minimum column and horizontal scroll at 1280px and above", () => {
+    // The board writes .db-board--scroll once it has more columns than the
+    // built-in five; the equal-column minmax(0, 1fr) would take a ten-column
+    // board to 128px at 1440px.
+    const wide = inMedia(media("(min-width: 1280px)"), ".db-board--scroll");
+    expect(wide).toMatch(/grid-template-columns:\s*none/);
+    expect(wide).toMatch(/grid-auto-flow:\s*column/);
+    expect(wide).toMatch(/grid-auto-columns:\s*minmax\(240px,\s*1fr\)/);
+    expect(wide).toMatch(/overflow-x:\s*auto/);
+  });
+
+  it("keeps the scrolled wide board on the class alone, never on the plain .db-board rule of that width", () => {
+    // Five built-in columns at 1280px are 236px each and must stay exactly as
+    // they are: no media rule may touch the plain .db-board at the wide width.
+    const wideBody = media("(min-width: 1280px)");
+    expect(wideBody).not.toMatch(/(?:^|\n)\s*\.db-board\s*\{/);
+    expect(rule(".db-board")).toMatch(/grid-template-columns:\s*repeat\(var\(--db-cols,\s*5\),\s*minmax\(0,\s*1fr\)\)/);
+  });
+});
+
+describe("custom column dot", () => {
+  it("paints the neutral open colour, so a custom head never leaves an empty 8px gap", () => {
+    expect(rule(".db-col--custom .db-col-dot")).toMatch(/background:\s*var\(--status-open\)/);
+  });
+
+  it("declares the built-in state colours after it, so an extra column of a built-in name keeps its own", () => {
+    const neutral = css.indexOf(".db-col--custom .db-col-dot");
+    const inProgress = css.indexOf(".db-col--in-progress .db-col-dot");
+    expect(neutral).toBeGreaterThan(-1);
+    expect(inProgress).toBeGreaterThan(neutral);
   });
 });
 
