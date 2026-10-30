@@ -16,10 +16,14 @@
 // workflow, like every other reader of the port, and a project whose workflow
 // list cannot be read at all (403, network) shows exactly the built-in five.
 //
-// Invariant: no task is ever invisible. A task whose status matches no column
-// (a state of a deleted workflow, or a project whose workflows cannot be read)
-// lands in an extra last column titled with the raw state name, so the sum of
-// the column counts always equals the number of tasks handed in.
+// Invariant: every task except an abandoned one is visible. A task whose status
+// matches no column (a state of a deleted workflow, or a project whose
+// workflows cannot be read) lands in an extra last column titled with the
+// board's own label for a built-in state name and the raw status otherwise, so
+// the sum of the column counts always equals the number of tasks handed in
+// minus the abandoned ones. `abandoned` is a reserved name the backend writes
+// only when a human discards a backlog task; the board has never shown it, so
+// it never becomes a column and is not counted.
 //
 // The list is computed once per (workflows, tasks) pair by the board page and
 // drives the columns, the jump bar, the grid column count and the list-view
@@ -34,13 +38,18 @@ const BUILT_IN_STATES: readonly string[] = ["open", "in_progress", "review", "do
 
 const BACKLOG_STATE = "backlog";
 
+/** Reserved status the backend writes when a human discards a backlog task.
+ *  Never a workflow state, never a board column, never counted. */
+const ABANDONED_STATE = "abandoned";
+
 /** One board column: a workflow state name plus what the view needs. */
 export interface BoardColumn {
   /** Raw state name (API form, `[a-z0-9_]+` for workflow states): the id and
    *  the task match. The CSS class normalizes `in_progress` separately. */
   status: string;
-  /** Column title: the state's workflow label, else the built-in status name,
-   *  else the state name made readable, else (extra column) the raw name. */
+  /** Column title: a built-in state name keeps the board's own label, else the
+   *  state's workflow label, else the state name made readable. An extra column
+   *  uses the board label for a built-in name and the raw status otherwise. */
   label: string;
   /** Terminal column: carries the Done cap. */
   terminal: boolean;
@@ -165,13 +174,22 @@ export function buildBoardColumns(
     builtIn: true,
   });
 
-  // No task is ever invisible: any status with no column of its own gets an
-  // extra last column titled with the raw state name.
+  // No task but an abandoned one is ever invisible: any status with no column of
+  // its own gets an extra last column, titled with the board's own label when
+  // the name is one of the five built-in states (a workflow that left one out
+  // still shows discarded work under today's name) and the raw status
+  // otherwise. Abandoned tasks get no column at all, as always.
   const extraSeen = new Set<string>();
   for (const task of tasks) {
+    if (task.status === ABANDONED_STATE) continue;
     if (seen.has(task.status) || extraSeen.has(task.status)) continue;
     extraSeen.add(task.status);
-    columns.push({ status: task.status, label: task.status, terminal: false, builtIn: false });
+    columns.push({
+      status: task.status,
+      label: STATUS_LABELS[normalizeStatus(task.status)] ?? task.status,
+      terminal: false,
+      builtIn: false,
+    });
   }
 
   return columns;
@@ -185,8 +203,9 @@ function isTerminalName(def: { states: { name: string; terminal?: boolean }[] },
  * The definition's states in a stable order: the initial state first (a BFS
  * along the transitions), unreachable states in their listed order behind the
  * reachable ones, and every terminal state last (in the order the walk
- * reached it). Names are `[a-z0-9_]+` and `initialState` is `open` (P5A) and
- * never terminal, so the initial state can never move to the back.
+ * reached it). Names are `[a-z0-9_]+` and `initialState` is locked to `open` by
+ * `workflowDefinitionSchema` in `backend/src/routes/workflows.ts` and never
+ * terminal, so the initial state can never move to the back.
  */
 function orderStates(def: SanitizedDefinition): string[] {
   const names = def.states.map((s) => s.name);

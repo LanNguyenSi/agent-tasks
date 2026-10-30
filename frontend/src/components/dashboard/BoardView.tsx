@@ -44,8 +44,16 @@ import { apiTokensSettingsHref } from "../../lib/routes";
 
 /** The only statuses a column's + can hand to the create modal: the pipeline
  *  starts at backlog (the human queue) or at the workflow's initial state,
- *  which is `open` (P5A). */
+ *  which `workflowDefinitionSchema` in `backend/src/routes/workflows.ts` locks
+ *  to `open`. */
 type Status = "backlog" | "open";
+
+/** More columns than the built-in five no longer fit the wide-desktop
+ *  equal-column grid without dropping below a readable card width, so a board
+ *  of this many columns or more marks itself `.db-board--scroll` and takes the same
+ *  horizontally scrolled treatment (240px minimum column) the 761-1279px band
+ *  uses; see globals.css. Five columns and fewer keep today's equal columns. */
+const SCROLL_FROM_COLUMN_COUNT = 6;
 
 // Badge tone per column status.
 const COLUMN_BADGE_TONE: Record<string, BadgeTone> = {
@@ -296,7 +304,7 @@ export default function BoardView({
       ))}
     </nav>
     <div
-      className="db-board"
+      className={`db-board${boardColumns.length >= SCROLL_FROM_COLUMN_COUNT ? " db-board--scroll" : ""}`}
       role="group"
       aria-label="Board"
       // eslint-disable-next-line no-restricted-syntax
@@ -330,8 +338,9 @@ export default function BoardView({
                   2026-08-20): the + only appears where the pipeline can
                   legally start -- Backlog and Open. Every other column,
                   custom workflow states included, never gets one: the
-                  initial state is locked to `open` by P5A, so no custom
-                  column can be a legal start either. */}
+                  initial state is locked to `open` by `workflowDefinitionSchema`
+                  in `backend/src/routes/workflows.ts`, so no custom column can
+                  be a legal start either. */}
               {status === "backlog" || status === "open" ? (
                 <button
                   type="button"

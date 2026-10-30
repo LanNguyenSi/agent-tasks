@@ -3540,6 +3540,37 @@ html[data-theme="light"] {
   }
 }
 
+/* Wide desktops (the base count-driven grid above): a project with more
+   columns than the built-in five would otherwise squeeze every card below a
+   readable width (ten columns are 128px at 1440px), so the board marks itself
+   .db-board--scroll in that case and takes exactly the band treatment above --
+   the same readable 240px column and horizontal scroll. A board with five
+   columns or fewer never carries the class and keeps the equal-column grid
+   untouched. Inside this scroll container the sticky column heads of this
+   width band (see the min-width: 1280px rule further down) stick to the board
+   instead of the page, so they scroll away with their columns; cards no one can
+   read are the worse trade. */
+@media (min-width: 1280px) {
+  .db-board--scroll {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(240px, 1fr);
+    overflow-x: auto;
+    padding-bottom: var(--space-4);
+    /* Right-edge fade, exactly as in the 761-1279px band above. */
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - (var(--space-5) + var(--space-2))),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - (var(--space-5) + var(--space-2))),
+      transparent 100%
+    );
+  }
+}
+
 /* Narrow / mobile: stack all columns full-width, one per row. */
 @media (max-width: 760px) {
   .db-board {
@@ -3569,6 +3600,13 @@ html[data-theme="light"] {
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* Custom workflow states carry no status colour: the dot falls back to the
+   neutral open (grey) treatment every unknown status uses, so it never leaves
+   an empty gap. Placed before the built-in names below on purpose: an extra
+   column for a built-in state a workflow left out keeps that state's own
+   colour, the way its badge tone already does. */
+.db-col--custom .db-col-dot { background: var(--status-open); }
 
 .db-col--backlog .db-col-dot { background: var(--status-backlog); }
 .db-col--open    .db-col-dot { background: var(--status-open); }
@@ -8648,7 +8686,10 @@ a.proj-chip:hover {
  *  - up to 760px (stacked columns): the head sticks below the sticky jump bar
  *    (--board-jump-height), inside its own column.
  * From 761px to 1279px the heads stay in the flow: there the board is a
- * horizontal scroller, which sticky cannot pin against the page. */
+ * horizontal scroller, which sticky cannot pin against the page. The same
+ * holds for the heads of a .db-board--scroll board (more columns than the
+ * built-in five, see that rule just after the band): they scroll with the
+ * board. */
 @media (min-width: 1280px) {
   .db-col-head {
     position: sticky;

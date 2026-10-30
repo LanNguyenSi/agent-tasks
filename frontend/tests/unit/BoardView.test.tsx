@@ -339,6 +339,11 @@ function customColumnTasks(): Task[] {
     task({ id: "qa-1", title: "Checked", status: "qa" }),
     task({ id: "sh-1", title: "Shipped", status: "shipped" }),
     task({ id: "x-1", title: "Orphan", status: "legacy_x" }),
+    // Work still in a built-in state the custom workflow left out, and a
+    // discarded task: the first lands in an extra column under the board's own
+    // label, the second gets no column at all.
+    task({ id: "ip-1", title: "Left behind", status: "in_progress" }),
+    task({ id: "ab-1", title: "Discarded", status: "abandoned" }),
   ];
 }
 
@@ -368,6 +373,7 @@ describe("BoardView -- custom workflow columns", () => {
       "db-col-qa",
       "db-col-shipped",
       "db-col-legacy_x",
+      "db-col-in_progress",
     ]);
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "Backlog",
@@ -377,19 +383,47 @@ describe("BoardView -- custom workflow columns", () => {
       "QA",
       "Shipped",
       "legacy_x",
+      "In Progress",
     ]);
+    // An abandoned task is not on the board at all: no column, not counted.
+    expect(board.querySelector("#db-col-abandoned")).toBeNull();
+    expect(screen.queryByText("Discarded")).not.toBeInTheDocument();
   });
 
   it("shows the unknown-status task in the extra last column", () => {
     renderCustom();
     const extra = screen.getByLabelText("legacy_x, 1 task");
     expect(within(extra).getByText("Orphan")).toBeInTheDocument();
+    // A built-in state the workflow left out reads with the board's own label.
+    const builtInExtra = screen.getByLabelText("In Progress, 1 task");
+    expect(within(builtInExtra).getByText("Left behind")).toBeInTheDocument();
+    expect(builtInExtra).toHaveClass("db-col", "db-col--in-progress", "db-col--custom");
   });
 
   it("gives the board an inline --db-cols equal to the column count", () => {
     renderCustom();
     const board = screen.getByLabelText("Board");
-    expect(board).toHaveStyle({ "--db-cols": "7" });
+    expect(board).toHaveStyle({ "--db-cols": "8" });
+  });
+
+  it("marks a board wider than the built-in five as horizontally scrollable", () => {
+    renderCustom();
+    expect(screen.getByLabelText("Board")).toHaveClass("db-board", "db-board--scroll");
+  });
+
+  it("starts the scroll treatment at the sixth column, not later", () => {
+    render(
+      <BoardView
+        tasks={[task({ id: "x-1", title: "Orphan", status: "legacy_x" })]}
+        columns={buildBoardColumns(undefined, [{ status: "legacy_x" }])}
+        activeTaskId={null}
+        templateFields={null}
+        onSelectTask={() => {}}
+      />,
+    );
+    const board = screen.getByLabelText("Board");
+    expect(board).toHaveStyle({ "--db-cols": "6" });
+    expect(board).toHaveClass("db-board--scroll");
   });
 
   it("gives custom columns the neutral fallback class and leaves the built-in classes alone", () => {
@@ -405,7 +439,7 @@ describe("BoardView -- custom workflow columns", () => {
     renderCustom();
     expect(screen.getByLabelText("Add task to Backlog")).toBeInTheDocument();
     expect(screen.getByLabelText("Add task to Open")).toBeInTheDocument();
-    for (const label of ["Planning", "Build", "QA", "Shipped", "legacy_x"]) {
+    for (const label of ["Planning", "Build", "QA", "Shipped", "legacy_x", "In Progress"]) {
       expect(screen.queryByLabelText(`Add task to ${label}`)).not.toBeInTheDocument();
     }
   });
@@ -436,6 +470,7 @@ describe("BoardView -- custom workflow columns", () => {
       "Jump to QA, 1 task",
       "Jump to Shipped, 1 task",
       "Jump to legacy_x, 1 task",
+      "Jump to In Progress, 1 task",
     ]);
     expect(links.map((l) => l.getAttribute("href"))).toEqual([
       "#db-col-backlog",
@@ -445,6 +480,7 @@ describe("BoardView -- custom workflow columns", () => {
       "#db-col-qa",
       "#db-col-shipped",
       "#db-col-legacy_x",
+      "#db-col-in_progress",
     ]);
   });
 
@@ -460,6 +496,8 @@ describe("BoardView -- custom workflow columns", () => {
     const board = screen.getByLabelText("Board");
     expect(board.querySelectorAll(":scope > section.db-col")).toHaveLength(5);
     expect(board).toHaveStyle({ "--db-cols": "5" });
+    // Five columns keep today's equal-column grid: no scroll treatment.
+    expect(board).not.toHaveClass("db-board--scroll");
     expect(screen.queryByLabelText("legacy_x, 1 task")).not.toBeInTheDocument();
   });
 });

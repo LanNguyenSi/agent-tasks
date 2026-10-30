@@ -114,6 +114,38 @@ describe("column count drives the grid", () => {
     const mobile = inMedia(media("(max-width: 760px)"), ".db-board");
     expect(mobile).toMatch(/grid-template-columns:\s*1fr/);
   });
+
+  it("gives a wider board the same readable minimum column and horizontal scroll at 1280px and above", () => {
+    // The board writes .db-board--scroll once it has more columns than the
+    // built-in five; the equal-column minmax(0, 1fr) would take a ten-column
+    // board to 128px at 1440px.
+    const wide = inMedia(media("(min-width: 1280px)"), ".db-board--scroll");
+    expect(wide).toMatch(/grid-template-columns:\s*none/);
+    expect(wide).toMatch(/grid-auto-flow:\s*column/);
+    expect(wide).toMatch(/grid-auto-columns:\s*minmax\(240px,\s*1fr\)/);
+    expect(wide).toMatch(/overflow-x:\s*auto/);
+  });
+
+  it("keeps the scrolled wide board on the class alone, never on the plain .db-board rule of that width", () => {
+    // Five built-in columns at 1280px are 236px each and must stay exactly as
+    // they are: no media rule may touch the plain .db-board at the wide width.
+    const wideBody = media("(min-width: 1280px)");
+    expect(wideBody).not.toMatch(/(?:^|\n)\s*\.db-board\s*\{/);
+    expect(rule(".db-board")).toMatch(/grid-template-columns:\s*repeat\(var\(--db-cols,\s*5\),\s*minmax\(0,\s*1fr\)\)/);
+  });
+});
+
+describe("custom column dot", () => {
+  it("paints the neutral open colour, so a custom head never leaves an empty 8px gap", () => {
+    expect(rule(".db-col--custom .db-col-dot")).toMatch(/background:\s*var\(--status-open\)/);
+  });
+
+  it("declares the built-in state colours after it, so an extra column of a built-in name keeps its own", () => {
+    const neutral = css.indexOf(".db-col--custom .db-col-dot");
+    const inProgress = css.indexOf(".db-col--in-progress .db-col-dot");
+    expect(neutral).toBeGreaterThan(-1);
+    expect(inProgress).toBeGreaterThan(neutral);
+  });
 });
 
 describe("equal column heads", () => {

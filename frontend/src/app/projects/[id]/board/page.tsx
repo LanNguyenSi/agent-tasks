@@ -54,7 +54,8 @@ import { authHref, projectsHref } from "../../../../lib/routes";
 
 // The statuses the create modal's preset can carry: the board renders its +
 // only on Backlog and Open (the workflow initial state, locked to `open` by
-// P5A), so onAddTask only ever hands over one of the two.
+// `workflowDefinitionSchema` in `backend/src/routes/workflows.ts`), so
+// onAddTask only ever hands over one of the two.
 type Status = "backlog" | "open";
 // Supersedes D19 (operator decision 2026-08-20): human create no longer
 // always targets "open" -- backlog is now the default human create target

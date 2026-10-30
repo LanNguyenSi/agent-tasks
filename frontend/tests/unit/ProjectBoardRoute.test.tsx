@@ -243,7 +243,29 @@ describe("board route columns from the project's workflows", () => {
     },
   ] as unknown as Awaited<ReturnType<typeof getWorkflows>>;
 
-  const STATUSES = ["backlog", "open", "plan", "build", "qa", "shipped", "legacy_x"];
+  const STATUSES = ["backlog", "open", "plan", "build", "qa", "shipped", "legacy_x", "abandoned"];
+
+  /** The shipped default workflow row (what a built-in project answers). */
+  const BUILT_IN_WORKFLOWS = [
+    {
+      ...CUSTOM_WORKFLOWS[0],
+      id: "wf-built-in",
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "in_progress", label: "In progress", terminal: false },
+          { name: "review", label: "Review", terminal: false },
+          { name: "done", label: "Done", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "in_progress" },
+          { from: "in_progress", to: "review" },
+          { from: "review", to: "done" },
+        ],
+      },
+    },
+  ] as unknown as Awaited<ReturnType<typeof getWorkflows>>;
 
   /** The board's column sections, in DOM order. */
   function columnIds(): string[] {
@@ -265,10 +287,13 @@ describe("board route columns from the project's workflows", () => {
         "db-col-qa",
         "db-col-shipped",
         "db-col-legacy_x",
+        // and no eighth column for the task in the reserved `abandoned` status
       ]),
     );
-    // The unknown-status task is visible in its extra column.
+    // The unknown-status task is visible in its extra column; the discarded
+    // one is on no column at all (the board has never shown `abandoned`).
     expect(screen.getByLabelText("legacy_x, 1 task")).toBeInTheDocument();
+    expect(document.getElementById("db-col-abandoned")).toBeNull();
     // And the list-view chip row follows the same column list.
     await userEvent.click(screen.getByRole("tab", { name: "List" }));
     const summary = await waitFor(() => {
@@ -279,6 +304,38 @@ describe("board route columns from the project's workflows", () => {
     expect(summary.textContent).toContain("QA");
     expect(summary.textContent).toContain("legacy_x");
     expect(summary.textContent).not.toContain("In Progress");
+  });
+
+  it("shows the five built-in columns for a built-in project with discarded tasks", async () => {
+    mockGetProject.mockResolvedValue(PROJECT);
+    vi.mocked(getTasks).mockResolvedValue([
+      boardTask("t-1", "backlog"),
+      boardTask("t-2", "open"),
+      boardTask("t-3", "done"),
+      boardTask("t-4", "abandoned"),
+      boardTask("t-5", "abandoned"),
+    ]);
+    vi.mocked(getWorkflows).mockResolvedValue(BUILT_IN_WORKFLOWS);
+    renderRoute();
+
+    await waitFor(() => expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument());
+    expect(columnIds()).toEqual([
+      "db-col-backlog",
+      "db-col-open",
+      "db-col-in_progress",
+      "db-col-review",
+      "db-col-done",
+    ]);
+    // A discarded task is neither a column nor a card in one.
+    expect(screen.queryByText("Task t-4")).not.toBeInTheDocument();
+    // The list-view chip row stays on the same five.
+    await userEvent.click(screen.getByRole("tab", { name: "List" }));
+    const summary = await waitFor(() => {
+      const el = document.querySelector(".db-status-summary");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(summary.textContent).not.toContain("abandoned");
   });
 
   it("shows the five built-in columns when the workflows answer 403", async () => {

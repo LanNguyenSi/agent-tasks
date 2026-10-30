@@ -5,9 +5,10 @@
  * in workflow order), label precedence (workflow label, then the built-in
  * STATUS_LABELS name, then the readable state name), the built-in fallbacks
  * (unreadable workflow list, missing default row, unreadable definition),
- * the reserved backlog state, one column per duplicated state name, and the
- * no-invisible-task invariant (every fixture: the column set covers every
- * task status exactly once).
+ * the reserved backlog state, one column per duplicated state name, the
+ * reserved abandoned status (never a column), and the no-invisible-task
+ * invariant (every fixture: the column set covers every task status but an
+ * abandoned one exactly once).
  */
 import { describe, it, expect } from "vitest";
 import { buildBoardColumns, type BoardColumn } from "../../src/lib/boardColumns";
@@ -72,10 +73,12 @@ const CUSTOM = definition(
 
 const statuses = (columns: BoardColumn[]) => columns.map((c) => c.status);
 
-/** The column counts as BoardView renders them add up to every task handed in. */
+/** The column counts as BoardView renders them add up to every task handed in
+ *  except the abandoned ones, which the board never shows. */
 const sumInvariant = (columns: BoardColumn[], tasks: { status: string }[]) => {
+  const countable = tasks.filter((t) => t.status !== "abandoned");
   const counts = columns.reduce((sum, c) => sum + tasks.filter((t) => t.status === c.status).length, 0);
-  expect(counts).toBe(tasks.length);
+  expect(counts).toBe(countable.length);
 };
 
 describe("buildBoardColumns -- built-in workflow", () => {
@@ -205,9 +208,10 @@ describe("buildBoardColumns -- custom default workflow", () => {
     expect(columns[0]!.label).toBe("Backlog");
   });
 
-  it("P5A tripwire: every stored fixture definition starts at open, the only start with a + on the board", () => {
+  it("tripwire: every stored fixture definition starts at open, the only start with a + on the board", () => {
     // The + renders on backlog and open only, because the backend refuses an
-    // initialState other than `open` (P5A). If a future change unlocked the
+    // initialState other than `open` (`workflowDefinitionSchema` in
+    // `backend/src/routes/workflows.ts`). If a future change unlocked the
     // initial state, a stored workflow could start at a custom state whose
     // column has no +, and a task there would be uncreatable from the board:
     // this walk over the shared fixture corpus (the same definitions the
@@ -426,7 +430,7 @@ describe("buildBoardColumns -- label precedence", () => {
   });
 });
 
-describe("buildBoardColumns -- unknown statuses (no task is ever invisible)", () => {
+describe("buildBoardColumns -- unknown statuses (every task but an abandoned one is visible)", () => {
   it("adds an extra last column per status no column covers, titled with the raw name", () => {
     const columns = buildBoardColumns([workflow({ id: "w1" })], [
       { status: "open" },
@@ -438,6 +442,21 @@ describe("buildBoardColumns -- unknown statuses (no task is ever invisible)", ()
     expect(columns[5]!.label).toBe("legacy_x");
     expect(columns[5]!.builtIn).toBe(false);
     expect(columns[5]!.terminal).toBe(false);
+  });
+
+  it("titles an extra column whose name is a built-in state with the board's own label", () => {
+    // A custom workflow that left in_progress, review and done out: work still
+    // in those states is not shown under a lowercase raw name.
+    const columns = buildBoardColumns([workflow({ id: "w1", definition: CUSTOM as Workflow["definition"] })], [
+      { status: "in_progress" },
+      { status: "review" },
+      { status: "done" },
+      { status: "legacy_x" },
+    ]);
+    expect(statuses(columns).slice(6)).toEqual(["in_progress", "review", "done", "legacy_x"]);
+    expect(columns.slice(6).map((c) => c.label)).toEqual(["In Progress", "Review", "Done", "legacy_x"]);
+    // Still an extra column, not a workflow column: no built-in treatment.
+    expect(columns.slice(6).map((c) => c.builtIn)).toEqual([false, false, false, false]);
   });
 
   it("adds the extra column even when the workflows are unreadable", () => {
@@ -456,12 +475,32 @@ describe("buildBoardColumns -- unknown statuses (no task is ever invisible)", ()
     expect(columns).toHaveLength(5);
   });
 
-  it("sums to the task count for every fixture shape (column set covers each status exactly once)", () => {
+  it("gives abandoned tasks no column on the built-in workflow (the board never showed them)", () => {
+    const tasks = [{ status: "abandoned" }, { status: "abandoned" }, { status: "open" }];
+    const columns = buildBoardColumns([workflow({ id: "w1" })], tasks);
+    expect(statuses(columns)).toEqual(["backlog", "open", "in_progress", "review", "done"]);
+    // The two discarded tasks are counted nowhere: no column claims the status.
+    expect(columns.filter((c) => c.status === "abandoned")).toHaveLength(0);
+    expect(columns.reduce((sum, c) => sum + tasks.filter((t) => t.status === c.status).length, 0)).toBe(1);
+  });
+
+  it("gives abandoned tasks no column on a custom workflow either", () => {
+    const columns = buildBoardColumns([workflow({ id: "w1", definition: CUSTOM as Workflow["definition"] })], [
+      { status: "abandoned" },
+      { status: "shipped" },
+    ]);
+    expect(statuses(columns)).toEqual(["backlog", "open", "plan", "build", "qa", "shipped"]);
+    expect(statuses(columns)).not.toContain("abandoned");
+  });
+
+  it("sums to the task count for every fixture shape (column set covers every status but an abandoned one once)", () => {
     const fixtures: [readonly Workflow[] | null, { status: string }[]][] = [
       [[workflow({ id: "w1" })], []],
       [[workflow({ id: "w1" })], [{ status: "open" }, { status: "open" }, { status: "done" }]],
       [null, [{ status: "open" }, { status: "nope" }]],
       [[], [{ status: "gone" }, { status: "backlog" }]],
+      [[workflow({ id: "w1" })], [{ status: "abandoned" }, { status: "abandoned" }]],
+      [[workflow({ id: "w1" })], [{ status: "abandoned" }, { status: "open" }, { status: "legacy_x" }]],
       [
         [workflow({ id: "w1", definition: CUSTOM as Workflow["definition"] })],
         [
@@ -473,14 +512,17 @@ describe("buildBoardColumns -- unknown statuses (no task is ever invisible)", ()
           { status: "shipped" },
           { status: "legacy_x" },
           { status: "in_progress" },
+          { status: "abandoned" },
         ],
       ],
     ];
     for (const [workflows, tasks] of fixtures) {
       const columns = buildBoardColumns(workflows, tasks);
       expect(new Set(statuses(columns)).size, "one column per status").toBe(statuses(columns).length);
-      const covered = tasks.filter((t) => columns.some((c) => c.status === t.status)).length;
-      expect(covered, "no task without a column").toBe(tasks.length);
+      expect(statuses(columns), "abandoned is never a column").not.toContain("abandoned");
+      const countable = tasks.filter((t) => t.status !== "abandoned");
+      const covered = countable.filter((t) => columns.some((c) => c.status === t.status)).length;
+      expect(covered, "no task without a column").toBe(countable.length);
       sumInvariant(columns, tasks);
     }
   });
