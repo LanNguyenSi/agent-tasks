@@ -160,9 +160,11 @@ export default function ConnectAgentModal({
   // Latest callbacks, for the unmount cleanup and for responses that arrive
   // after the render that started the request (no stale closure).
   const onSecretUnseenRef = useRef(onSecretUnseen);
-  onSecretUnseenRef.current = onSecretUnseen;
   const onCreateFailedUnseenRef = useRef(onCreateFailedUnseen);
-  onCreateFailedUnseenRef.current = onCreateFailedUnseen;
+  useEffect(() => {
+    onSecretUnseenRef.current = onSecretUnseen;
+    onCreateFailedUnseenRef.current = onCreateFailedUnseen;
+  }, [onSecretUnseen, onCreateFailedUnseen]);
 
   // Reset all state when the modal closes so a fresh open starts clean.
   useEffect(() => {

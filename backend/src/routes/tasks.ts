@@ -1373,7 +1373,7 @@ taskRouter.post(
           // 90 (respec/create/422/instructions consistency).
           riskModifiers: unknown;
         }
-      | null = null;
+      | null;
     try {
       projectConf = await prisma.project.findUnique({
         where: { id: projectId },

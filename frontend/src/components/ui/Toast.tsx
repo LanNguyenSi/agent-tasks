@@ -63,7 +63,9 @@ function ToastCard({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep stable refs so the timer callback captures the latest values
   const onDismissRef = useRef(onDismiss);
-  onDismissRef.current = onDismiss;
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
   const idRef = useRef(item.id);
 
   const startTimer = useCallback(() => {

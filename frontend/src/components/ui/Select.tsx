@@ -76,7 +76,6 @@ export default function Select({
   // Searchable: the popover anchors on the input + chevron wrapper, so a press
   // on the chevron counts as "inside" and the chevron can toggle on its own.
   const searchRef = useRef<HTMLDivElement | null>(null);
-  const listRef = useRef<HTMLDivElement | null>(null);
   const id = useId();
 
   const selected = options.find((o) => o.value === value);
@@ -180,11 +179,11 @@ export default function Select({
 
   // Scroll active option into view
   useEffect(() => {
-    if (open && activeIndex >= 0 && listRef.current) {
-      const item = listRef.current.children[activeIndex] as HTMLElement | undefined;
+    if (open && activeIndex >= 0 && panelRef.current) {
+      const item = panelRef.current.children[activeIndex] as HTMLElement | undefined;
       item?.scrollIntoView({ block: "nearest" });
     }
-  }, [activeIndex, open]);
+  }, [activeIndex, open, panelRef]);
 
   return (
     <div
@@ -300,12 +299,9 @@ export default function Select({
         mounted &&
         createPortal(
           <div
-            ref={(el) => {
-              // Share the ref with both usePopover (for position computation)
-              // and the local list ref (for scroll-into-view).
-              (panelRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-              listRef.current = el;
-            }}
+            // One ref serves usePopover (position computation) and the
+            // scroll-into-view effect above.
+            ref={panelRef}
             role="listbox"
             // Searchable: a mousedown on the list padding or scrollbar must not
             // blur the input (blur closes the list).

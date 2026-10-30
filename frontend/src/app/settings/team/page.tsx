@@ -78,7 +78,9 @@ export default function TeamSettingsPage() {
   >([]);
   const failureSeq = useRef(0);
   const teamIdRef = useRef<string | null>(null);
-  teamIdRef.current = teamId;
+  useEffect(() => {
+    teamIdRef.current = teamId;
+  }, [teamId]);
   const handleCreateFailed = useCallback(
     (_teamId: string, teamName: string, message: string) => {
       failureSeq.current += 1;
