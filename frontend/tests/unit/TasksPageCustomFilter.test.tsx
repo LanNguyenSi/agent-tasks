@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { Task, User, Team, TeamTasksProject } from "../../src/lib/api";
 
@@ -80,8 +81,8 @@ async function renderAt(search: string) {
 
 /** The URL of the most recent router.replace (the page writes ?teamId= in
 once the current team resolves, so the asserted action is never calls[0]). */
-function lastReplace(): URLSearchParams {
-  const calls = routerMocks.replace.mock.calls;
+async function lastReplace(): Promise<URLSearchParams> {
+  const calls = await waitForCall(routerMocks.replace);
   const href = String(calls[calls.length - 1]![0]);
   return new URLSearchParams(href.split("?")[1] ?? "");
 }
@@ -160,7 +161,7 @@ describe("/tasks custom-filter Reset", () => {
   it("keeps the active scope tab and drops only the custom overrides", async () => {
     await renderAt("scope=mine&status=backlog&priority=LOW&mine=1&projectId=proj-1");
     await userEvent.click(screen.getByRole("button", { name: "Reset to My Tasks" }));
-    const q = lastReplace();
+    const q = await lastReplace();
     // Target: the active tab's preset (scope=mine stays; mine=1 is the
     // preset value again, so it is dropped from the URL too).
     expect(q.get("scope")).toBe("mine");
@@ -174,7 +175,7 @@ describe("/tasks custom-filter Reset", () => {
   it("keeps the scope and teamId parameters", async () => {
     await renderAt("scope=open&status=open&teamId=team-1&page=2");
     await userEvent.click(screen.getByRole("button", { name: "Reset to Active" }));
-    const q = lastReplace();
+    const q = await lastReplace();
     expect(q.get("scope")).toBe("open");
     expect(q.get("teamId")).toBe("team-1");
     expect(q.has("status")).toBe(false);
@@ -185,7 +186,7 @@ describe("/tasks custom-filter Reset", () => {
   it("Reset to All on the All tab (no scope parameter) stays on the All tab", async () => {
     await renderAt("status=backlog");
     await userEvent.click(screen.getByRole("button", { name: "Reset to All" }));
-    const q = lastReplace();
+    const q = await lastReplace();
     expect(q.has("scope")).toBe(false);
     expect(q.has("status")).toBe(false);
   });
@@ -193,7 +194,7 @@ describe("/tasks custom-filter Reset", () => {
   it("picking another tab from the custom state leaves that state for the new tab's preset", async () => {
     await renderAt("scope=open&status=open");
     await userEvent.click(screen.getByRole("tab", { name: "Recently Done" }));
-    const q = lastReplace();
+    const q = await lastReplace();
     expect(q.get("scope")).toBe("done");
     expect(q.has("status")).toBe(false);
   });
@@ -208,7 +209,7 @@ describe("/tasks Mine toggle removed in favour of the My Tasks tab", () => {
   it("the My Tasks tab links scope=mine and that scope fetches mine=true", async () => {
     await renderAt("");
     await userEvent.click(screen.getByRole("tab", { name: "My Tasks" }));
-    const q = lastReplace();
+    const q = await lastReplace();
     expect(q.get("scope")).toBe("mine");
   });
 
@@ -220,11 +221,11 @@ describe("/tasks Mine toggle removed in favour of the My Tasks tab", () => {
   ])("the fetch mine parameter for %s is %s", async (_label, search, expected) => {
     await renderAt(search);
     await waitFor(() => expect(getTeamTasks).toHaveBeenCalled());
-    expect(mockFetchArgs().mine).toBe(expected);
+    expect((await mockFetchArgs()).mine).toBe(expected);
   });
 });
 
-function mockFetchArgs(): Record<string, unknown> {
-  const calls = vi.mocked(getTeamTasks).mock.calls;
+async function mockFetchArgs(): Promise<Record<string, unknown>> {
+  const calls = await waitForCall(vi.mocked(getTeamTasks));
   return calls[calls.length - 1]![1] as unknown as Record<string, unknown>;
 }

@@ -18,7 +18,7 @@
  * a live request.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup, within } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ImprovementPanel from "../../src/components/task-detail/ImprovementPanel";
 import type { TaskConfidenceDetail } from "../../src/lib/api";
@@ -255,7 +255,7 @@ describe("ImprovementPanel", () => {
       expect(screen.getByText("someFutureModifier")).toBeInTheDocument();
     });
 
-    it("gives each triggered-risk-modifier <li> a stable, non-duplicate key (no two entries collide on the same key)", () => {
+    it("gives each triggered-risk-modifier <li> a stable, non-duplicate key (no two entries collide on the same key)", async () => {
       // A duplicate/undefined key across siblings triggers React's
       // "each child in a list should have a unique key" console.error --
       // the exact regression the {code, message} shape produced (every
@@ -270,10 +270,12 @@ describe("ImprovementPanel", () => {
       });
       const { container } = render(<ImprovementPanel confidence={confidence} />);
       expect(container.querySelectorAll(".ip-risk-item")).toHaveLength(2);
-      const keyWarning = errorSpy.mock.calls.some((call) =>
-        call.some((arg) => typeof arg === "string" && arg.includes("unique \"key\" prop")),
-      );
-      expect(keyWarning).toBe(false);
+      await waitFor(() => {
+        const keyWarning = errorSpy.mock.calls.some((call) =>
+          call.some((arg) => typeof arg === "string" && arg.includes("unique \"key\" prop")),
+        );
+        expect(keyWarning).toBe(false);
+      });
       errorSpy.mockRestore();
     });
 

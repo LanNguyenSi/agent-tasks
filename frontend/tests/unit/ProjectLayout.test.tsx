@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import { ApiRequestError, type Project, type Team } from "../../src/lib/api";
 import { projectsHref } from "../../src/lib/routes";
@@ -329,7 +330,7 @@ describe("hub band project picker", () => {
     renderLayout("members");
     await screen.findByRole("button", { name: "Switch project, current: Project One" });
     await waitFor(() => expect(mockGetProjects).toHaveBeenCalled());
-    expect(mockGetProjects.mock.calls[0]).toEqual([undefined]);
+    expect((await waitForCall(mockGetProjects))[0]).toEqual([undefined]);
     await userEvent.click(screen.getByRole("button", { name: /Switch project/ }));
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
       "Project One",

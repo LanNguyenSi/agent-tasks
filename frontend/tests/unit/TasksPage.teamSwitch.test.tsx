@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor, fireEvent, act, within } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Task, Team, User } from "../../src/lib/api";
 
 vi.mock("next/navigation", async () => {
@@ -435,7 +436,7 @@ describe("/tasks: dismissing a load error", () => {
     vi.mocked(getTeamTasks).mockRejectedValue(new Error("team one is down"));
     render(<TasksPage />);
     expect(await screen.findByText("team one is down")).toBeInTheDocument();
-    const calls = vi.mocked(getTeamTasks).mock.calls.length;
+    const calls = (await waitForCall(vi.mocked(getTeamTasks))).length;
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
 
@@ -444,7 +445,7 @@ describe("/tasks: dismissing a load error", () => {
     expect(document.querySelector(".tasks-table-region")).not.toHaveAttribute("aria-busy");
     expect(document.querySelector('[aria-busy="true"]')).toBeNull();
     expect(newTaskButton()).toBeDisabled();
-    expect(vi.mocked(getTeamTasks).mock.calls.length).toBe(calls);
+    expect((await waitForCall(vi.mocked(getTeamTasks))).length).toBe(calls);
   });
 
   it("with the team's list on screen keeps the rows and their count", async () => {
@@ -494,12 +495,12 @@ describe("/tasks: dismissing a load error", () => {
     render(<TasksPage />);
     expect(await screen.findByText("team one is down")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    const calls = vi.mocked(getTeamTasks).mock.calls.length;
+    const calls = (await waitForCall(vi.mocked(getTeamTasks))).length;
     vi.mocked(getTeamTasks).mockImplementation(async () => result("Alpha only task"));
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(vi.mocked(getTeamTasks).mock.calls.length).toBe(calls + 1);
+    expect((await waitForCall(vi.mocked(getTeamTasks))).length).toBe(calls + 1);
     // A request is in flight now: the loading state is real.
     expect(screen.getAllByText("Loading tasks").length).toBeGreaterThan(0);
     expect(screen.queryByText("Couldn't load tasks")).not.toBeInTheDocument();

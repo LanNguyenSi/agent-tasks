@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { uploadTaskAttachmentFile, rawAttachmentUrl, ApiRequestError } from "../../src/lib/api";
+import { waitForCall } from "./helpers/waitForCall";
 
 const realFetch = globalThis.fetch;
 
@@ -41,7 +42,7 @@ describe("uploadTaskAttachmentFile", () => {
 
     expect(result).toEqual(created);
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    const [url, init] = (await waitForCall(fetchFn))[0] as [string, RequestInit];
     expect(url).toMatch(/\/api\/tasks\/task-1\/attachments\/upload$/);
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");
@@ -58,7 +59,7 @@ describe("uploadTaskAttachmentFile", () => {
     const fetchFn = mockFetchOnce(() => ({ ok: true, json: async () => ({ attachment: {} }) }));
     const file = new File([new Uint8Array([1])], "a.txt", { type: "text/plain" });
     await uploadTaskAttachmentFile("task-1", file);
-    const init = (fetchFn.mock.calls[0] as [string, RequestInit])[1];
+    const init = ((await waitForCall(fetchFn))[0] as [string, RequestInit])[1];
     expect((init.body as FormData).get("name")).toBeNull();
   });
 

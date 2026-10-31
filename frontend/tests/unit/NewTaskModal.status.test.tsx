@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../src/lib/api", () => ({
@@ -134,7 +135,7 @@ describe("NewTaskModal -- Assignee guard while status is backlog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(mockCreateTask).toHaveBeenCalled());
-    expect(mockCreateTask.mock.calls[0]![1]).toMatchObject({ status: "backlog" });
+    expect((await waitForCall(mockCreateTask))[0]![1]).toMatchObject({ status: "backlog" });
     expect(mockClaimTask).not.toHaveBeenCalled();
   });
 
@@ -175,7 +176,7 @@ describe("NewTaskModal -- Assignee guard while status is backlog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(mockCreateTask).toHaveBeenCalled());
-    expect(mockCreateTask.mock.calls[0]![1]).toMatchObject({ status: "open" });
+    expect((await waitForCall(mockCreateTask))[0]![1]).toMatchObject({ status: "open" });
     await waitFor(() => expect(mockClaimTask).toHaveBeenCalledWith("task-2"));
   });
 });

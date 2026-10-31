@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -92,11 +93,11 @@ describe("/tasks with a team", () => {
     render(<TasksPage />);
 
     await waitFor(() => expect(getTeamTasks).toHaveBeenCalled());
-    expect(vi.mocked(getTeamTasks).mock.calls[0]![0]).toBe("t1");
+    expect((await waitForCall(vi.mocked(getTeamTasks)))[0]![0]).toBe("t1");
     expect(screen.queryByText("Cross-project tasks need a team.")).toBeNull();
     expect(getProjects).not.toHaveBeenCalled();
     // No redirect: the only replace writes the resolved team into this page's
     // own URL (lib/teamSwitch useCurrentTeam).
-    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/tasks?teamId=t1"]);
+    expect((await waitForCall(routerMocks.replace)).map((c) => c[0])).toEqual(["/tasks?teamId=t1"]);
   });
 });

@@ -24,6 +24,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { expectDocumentTitle } from "./helpers/documentTitle";
+import { waitForCall } from "./helpers/waitForCall";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiRequestError, type User, type Team, type Project, type Task } from "../../src/lib/api";
@@ -430,7 +431,7 @@ describe("task modal and the URL", () => {
       renderBoard();
       await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
       await settled();
-      expect(routerMocks.replace.mock.calls).toEqual([["/auth"]]);
+      expect(await waitForCall(routerMocks.replace)).toEqual([["/auth"]]);
       expect(replaceStateSpy).not.toHaveBeenCalled();
       expect(window.location.search).toBe("?taskId=k-1");
     });
@@ -443,7 +444,7 @@ describe("task modal and the URL", () => {
       renderBoard();
       await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/projects"));
       await settled();
-      expect(routerMocks.replace.mock.calls).toEqual([["/projects"]]);
+      expect(await waitForCall(routerMocks.replace)).toEqual([["/projects"]]);
       expect(replaceStateSpy).not.toHaveBeenCalled();
       expect(window.location.search).toBe("?taskId=k-1");
     });

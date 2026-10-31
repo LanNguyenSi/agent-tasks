@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { User, Team, Task, TeamTasksProject } from "../../src/lib/api";
 
 vi.mock("next/navigation", async () => {
@@ -264,14 +265,14 @@ describe("/home: current team follows the URL", () => {
   it("a URL naming the team already shown, or an unknown team, loads nothing new", async () => {
     renderBoth();
     await screen.findAllByText("Alpha only task");
-    const calls = vi.mocked(getTeamTasks).mock.calls.length;
+    const calls = (await waitForCall(vi.mocked(getTeamTasks))).length;
 
     act(() => nav.push("/home?teamId=team-1"));
     act(() => nav.push("/home?teamId=ghost"));
 
     expect(screen.getByRole("heading", { name: "Alpha Team" })).toBeInTheDocument();
     expect(screen.getAllByText("Alpha only task")).not.toHaveLength(0);
-    expect(vi.mocked(getTeamTasks).mock.calls).toHaveLength(calls);
+    expect(await waitForCall(vi.mocked(getTeamTasks))).toHaveLength(calls);
   });
 });
 
@@ -321,14 +322,14 @@ describe("/home: Your projects strip recents", () => {
 
     // Another tab visits pc; the 15 s poll must not reshuffle the strip.
     window.localStorage.setItem("agent-tasks:recentProjects:team-1", JSON.stringify(["pc"]));
-    const before = vi.mocked(getTeamTasks).mock.calls.length;
-    const poll = interval.mock.calls.find((c) => c[1] === 15_000);
+    const before = (await waitForCall(vi.mocked(getTeamTasks))).length;
+    const poll = (await waitForCall(interval)).find((c) => c[1] === 15_000);
     if (!poll) throw new Error("no 15 s poll registered");
     await act(async () => {
       (poll[0] as () => void)();
     });
 
-    expect(vi.mocked(getTeamTasks).mock.calls.length).toBeGreaterThan(before);
+    expect((await waitForCall(vi.mocked(getTeamTasks))).length).toBeGreaterThan(before);
     expect(stripOrder()).toEqual(["Project pb", "Project pa", "Project pc"]);
     interval.mockRestore();
   });

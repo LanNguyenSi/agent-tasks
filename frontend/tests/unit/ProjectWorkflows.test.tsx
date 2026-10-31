@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, cleanup } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { TeamTasksProject, Workflow } from "../../src/lib/api";
 
 vi.mock("../../src/lib/api", () => ({
@@ -31,7 +32,7 @@ const WF = (projectId: string): Workflow =>
   }) as Workflow;
 
 const forbidden = () => Object.assign(new Error("Forbidden"), { status: 403 });
-const calls = (id: string) => mockGetWorkflows.mock.calls.filter((c) => c[0] === id).length;
+const calls = async (id: string) => (await waitForCall(mockGetWorkflows)).filter((c) => c[0] === id).length;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -54,7 +55,7 @@ describe("loadMissingProjectWorkflows", () => {
     const memo = new Set<string>();
     expect(await loadMissingProjectWorkflows(["a"], cache, memo)).toBe(false);
     expect(await loadMissingProjectWorkflows(["a"], cache, memo)).toBe(false);
-    expect(calls("a")).toBe(1);
+    expect(await calls("a")).toBe(1);
     expect([...memo]).toEqual(["a"]);
   });
 
@@ -67,7 +68,7 @@ describe("loadMissingProjectWorkflows", () => {
     await loadMissingProjectWorkflows(["a"], cache, memo);
     mockGetWorkflows.mockResolvedValueOnce([WF("a")]);
     expect(await loadMissingProjectWorkflows(["a"], cache, memo)).toBe(true);
-    expect(calls("a")).toBe(3);
+    expect(await calls("a")).toBe(3);
     expect(memo.size).toBe(0);
   });
 
@@ -76,7 +77,7 @@ describe("loadMissingProjectWorkflows", () => {
     const cache = new Map<string, Workflow[]>();
     await loadMissingProjectWorkflows(["a"], cache);
     await loadMissingProjectWorkflows(["a"], cache);
-    expect(calls("a")).toBe(2);
+    expect(await calls("a")).toBe(2);
   });
 
   it("still reads the other projects of the call when one answers 403", async () => {
@@ -113,8 +114,8 @@ describe("useProjectWorkflows", () => {
     rerender({ projects: P("a", "b") });
     rerender({ projects: P("a", "b") });
     await new Promise((r) => setTimeout(r, 20));
-    expect(calls("a")).toBe(1);
-    expect(calls("b")).toBe(1);
+    expect(await calls("a")).toBe(1);
+    expect(await calls("b")).toBe(1);
   });
 
   it("asks a project that failed with a 502 again on the next refresh", async () => {
@@ -125,9 +126,9 @@ describe("useProjectWorkflows", () => {
     const { rerender } = renderHook(({ projects }) => useProjectWorkflows("t1", projects), {
       initialProps: { projects: P("a") },
     });
-    await waitFor(() => expect(calls("a")).toBe(1));
+    await waitFor(async () => expect(await calls("a")).toBe(1));
     rerender({ projects: P("a") });
-    await waitFor(() => expect(calls("a")).toBe(2));
+    await waitFor(async () => expect(await calls("a")).toBe(2));
   });
 
   it("does not ask for a project whose request is still on the way", async () => {
@@ -136,9 +137,9 @@ describe("useProjectWorkflows", () => {
     const { result, rerender } = renderHook(({ projects }) => useProjectWorkflows("t1", projects), {
       initialProps: { projects: P("a") },
     });
-    await waitFor(() => expect(calls("a")).toBe(1));
+    await waitFor(async () => expect(await calls("a")).toBe(1));
     rerender({ projects: P("a") });
-    expect(calls("a")).toBe(1);
+    expect(await calls("a")).toBe(1);
     release([WF("a")]);
     await waitFor(() => expect(result.current.size).toBe(1));
   });
@@ -148,10 +149,10 @@ describe("useProjectWorkflows", () => {
     const { result, rerender } = renderHook(({ team }) => useProjectWorkflows(team, P("a")), {
       initialProps: { team: "t1" },
     });
-    await waitFor(() => expect(calls("a")).toBe(1));
+    await waitFor(async () => expect(await calls("a")).toBe(1));
     mockGetWorkflows.mockResolvedValue([WF("a")]);
     rerender({ team: "t2" });
-    await waitFor(() => expect(calls("a")).toBe(2));
+    await waitFor(async () => expect(await calls("a")).toBe(2));
     await waitFor(() => expect(result.current.size).toBe(1));
   });
 
@@ -173,7 +174,7 @@ describe("useProjectWorkflows", () => {
       ({ team, projects }) => useProjectWorkflows(team, projects),
       { initialProps: { team: "t1", projects: P("a") } },
     );
-    await waitFor(() => expect(calls("a")).toBe(1));
+    await waitFor(async () => expect(await calls("a")).toBe(1));
     rerender({ team: "t2", projects: [] });
     release([WF("a")]);
     await new Promise((r) => setTimeout(r, 20));

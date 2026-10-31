@@ -12,7 +12,8 @@
  */
 import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, within, act } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within, act, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { AgentToken, Team, User } from "../../src/lib/api";
 
 vi.mock("next/navigation", async () => {
@@ -248,14 +249,14 @@ describe("connect-agent secret: the team changes while the create is pending", (
     await screen.findByText("beta-bot");
     pick("Alpha");
     await screen.findByText("alpha-bot");
-    const loadsBefore = mockGetAgentTokens.mock.calls.length;
+    const loadsBefore = (await waitForCall(mockGetAgentTokens)).length;
 
     await act(async () => {
       pending.resolve({ token: token("tok-c", NAME_A), rawToken: SECRET_A });
     });
 
     expect(await screen.findByText(NAME_A, { selector: ".settings-token-name" })).toBeInTheDocument();
-    expect(mockGetAgentTokens.mock.calls.length).toBe(loadsBefore);
+    expect((await waitForCall(mockGetAgentTokens)).length).toBe(loadsBefore);
     const banner = revealBanner(`Token "${NAME_A}" created (shown once)`);
     expect(banner.closest("#api-tokens")).not.toBeNull();
     expect(within(banner).getByText(SECRET_A)).toBeInTheDocument();
@@ -269,13 +270,13 @@ describe("connect-agent secret: the team changes while the create is pending", (
     connectAndGenerate();
     pick("Beta");
     await screen.findByText("beta-bot");
-    const loadsBefore = mockGetAgentTokens.mock.calls.length;
+    const loadsBefore = (await waitForCall(mockGetAgentTokens)).length;
 
     await act(async () => {
       pending.resolve({ token: token("tok-c", NAME_A), rawToken: SECRET_A });
     });
 
-    expect(mockGetAgentTokens.mock.calls.length).toBe(loadsBefore);
+    expect((await waitForCall(mockGetAgentTokens)).length).toBe(loadsBefore);
   });
 
   it("a secret created for Alpha and one created for Beta are each named with their own team", async () => {
@@ -479,7 +480,9 @@ describe("connect-agent secret: it stays in React state", () => {
     });
     expect(screen.getByText(SECRET_A)).toBeInTheDocument();
 
-    for (const [, value] of setItem.mock.calls) expect(String(value)).not.toContain(SECRET_A);
+    await waitFor(() => {
+      for (const [, value] of setItem.mock.calls) expect(String(value)).not.toContain(SECRET_A);
+    });
     expect(JSON.stringify(window.localStorage)).not.toContain(SECRET_A);
     expect(JSON.stringify(window.sessionStorage)).not.toContain(SECRET_A);
     expect(nav.entries.join(" ")).not.toContain("SECRET");

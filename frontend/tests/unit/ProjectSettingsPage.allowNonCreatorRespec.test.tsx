@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { Project, User } from "../../src/lib/api";
 
@@ -124,6 +125,6 @@ describe("ProjectSettingsPage allowNonCreatorRespec toggle", () => {
     await user.click(box);
     await user.click(screen.getByRole("button", { name: /save settings/i }));
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
-    expect(mockUpdateProject.mock.calls[0][1].allowNonCreatorRespec).toBe(false);
+    expect((await waitForCall(mockUpdateProject))[0][1].allowNonCreatorRespec).toBe(false);
   });
 });

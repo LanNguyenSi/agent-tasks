@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Task, Team, TeamTasksProject, User } from "../../src/lib/api";
 
 vi.mock("next/navigation", async () => {
@@ -376,7 +377,7 @@ describe("a failed first lookup is retried by the next team-scoped page", () => 
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/auth"));
     await settleAll();
     expect(getTeams).toHaveBeenCalledTimes(1);
-    expect(router.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+    expect((await waitForCall(router.replace)).map((c) => c[0])).toEqual(["/auth"]);
   });
 
   it("a page that mounts while the first lookup is still in flight does not retry", async () => {
@@ -423,7 +424,7 @@ describe("without a session the pages resolve no team and request nothing", () =
       await settleAll();
 
       expect(getTeams).toHaveBeenCalledTimes(1);
-      expect(router.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+      expect((await waitForCall(router.replace)).map((c) => c[0])).toEqual(["/auth"]);
       expect(getTeamTasks).not.toHaveBeenCalled();
       expect(getProjects).not.toHaveBeenCalled();
       expect(getTasks).not.toHaveBeenCalled();
@@ -447,7 +448,7 @@ describe("without a session the pages resolve no team and request nothing", () =
       await settleAll();
 
       expect(getTeams).toHaveBeenCalledTimes(1);
-      expect(router.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+      expect((await waitForCall(router.replace)).map((c) => c[0])).toEqual(["/auth"]);
       expect(getTeamTasks).not.toHaveBeenCalled();
       expect(getAgentTokens).not.toHaveBeenCalled();
     },

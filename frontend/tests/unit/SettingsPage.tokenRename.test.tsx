@@ -26,6 +26,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, within, act } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { User, Team, AgentToken } from "../../src/lib/api";
 
@@ -433,6 +434,6 @@ describe("TeamSettingsPage — page shell", () => {
     expect(mockGetTeams).toHaveBeenCalled();
     expect(mockGetAgentTokens).not.toHaveBeenCalled();
     // No ?teamId written for a team the page never resolved.
-    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/auth"]);
+    expect((await waitForCall(routerMocks.replace)).map((c) => c[0])).toEqual(["/auth"]);
   });
 });

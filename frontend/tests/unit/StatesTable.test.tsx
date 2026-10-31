@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { waitForCall } from "./helpers/waitForCall";
 import {
   StatesTable,
   type StatesTableProps,
@@ -253,10 +254,8 @@ describe("StatesTable — edit mode", () => {
     // The label-edit handler should fire on every keystroke; we don't assert
     // the full string here, only that *some* update came through.
     expect(handlers.onUpdateStateField).toHaveBeenCalled();
-    const lastCall =
-      handlers.onUpdateStateField.mock.calls[
-        handlers.onUpdateStateField.mock.calls.length - 1
-      ];
+    const updates = await waitForCall(handlers.onUpdateStateField);
+    const lastCall = updates[updates.length - 1];
     expect(lastCall?.[1]).toBe("label");
   });
 });

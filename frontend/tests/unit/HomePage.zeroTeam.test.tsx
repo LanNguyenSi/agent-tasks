@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -108,6 +109,7 @@ describe("/home with a team", () => {
     expect(getProjects).not.toHaveBeenCalled();
     // No redirect: the only replace writes the resolved team into this page's
     // own URL (lib/teamSwitch useCurrentTeam).
-    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/home?teamId=t1"]);
+    const replaces = await waitForCall(routerMocks.replace);
+    expect(replaces.map((c) => c[0])).toEqual(["/home?teamId=t1"]);
   });
 });

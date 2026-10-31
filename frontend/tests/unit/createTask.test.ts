@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createTask, type CreateConfidence, type Task } from "../../src/lib/api";
+import { waitForCall } from "./helpers/waitForCall";
 
 const realFetch = globalThis.fetch;
 
@@ -43,7 +44,7 @@ describe("createTask", () => {
     expect(result.task).toEqual(task);
     expect(result.confidence).toEqual(confidence);
 
-    const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    const [url, init] = (await waitForCall(fetchFn))[0] as [string, RequestInit];
     expect(url).toMatch(/\/api\/projects\/proj-1\/tasks$/);
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");
