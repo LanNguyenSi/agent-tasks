@@ -99,7 +99,14 @@ webhookRouter.post("/github", async (c) => {
       // applied, non-idempotent handler would double-apply side effects. The
       // failed delivery is surfaced here for operator follow-up instead.
       logger.error(
-        { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event, deliveryId },
+        {
+          err,
+          errMessage: err instanceof Error ? err.message : String(err),
+          component: "webhook",
+          event,
+          deliveryId,
+          repo: (payload as { repository?: { full_name?: unknown } } | null)?.repository?.full_name,
+        },
         "error processing webhook event (delivery stays claimed, not reprocessed)",
       );
     }

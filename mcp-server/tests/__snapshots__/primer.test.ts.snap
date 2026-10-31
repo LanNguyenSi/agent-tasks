@@ -31,6 +31,9 @@ A call that cannot proceed returns an MCP tool error (isError: true) whose text 
 ## Backlog routing (v1)
 Every agent-created task lands in \`backlog\`, not \`open\` (task_create routes it there unconditionally; an explicit non-backlog status from an agent caller is rejected, not silently downgraded). task_pickup never returns a backlog task and task_start refuses to start one (backlog_not_promoted, above); only an operator can promote it to open, or discard it. The creator can withdraw it any time via task_creator_abandon. task_respec works on an unclaimed backlog task for any agent with project access and tasks:update, so the draft can be refined before promotion; once promoted to open, the creator rule applies unless project.allowNonCreatorRespec is enabled. Humans with project write access can respec in either state.
 
+## Merged outside agent-tasks
+A PR merged outside agent-tasks (a human on GitHub, say) normally moves its task through the GitHub webhook. If the task did not move and your token lacks github:pr_merge, task_merge is refused with a forbidden error naming that scope: do not retry task_merge. Ask the operator to close the task in the UI, and to check docs/webhook-setup.md (troubleshooting, "merge did not move the task": App installation per repo, Recent Deliveries, the backend warn line).
+
 ## Project rules
 Call projects_get_effective_gates before task_create or task_submit_pr to see which gates are active on this project and why, instead of discovering them by tripping a 4xx."
 `;

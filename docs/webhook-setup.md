@@ -80,6 +80,7 @@ When `GROUNDING_RUNTIME_CONFIG` is set, the same URL and secret are served by th
 | `pull_request_review` (dismissed) | Any | None | "Review dismissed for {reviewer}" |
 | `pull_request` (merged) | Task not `done` or `backlog` | `governanceMode: AUTONOMOUS`: `* → done`; any other mode: `open`/`in_progress → review`, `review` unchanged (approval through `task_finish` still required) | "PR #N merged by {user}" |
 | `pull_request` (closed, no merge) | Task not `done` or `backlog` | None | "PR #N closed without merge" |
+| `pull_request` (merged) | Repo bound to no project, or no open task of the bound project carries the PR | None | None; a warn line with `repo` and `prNumber` and an audit row `task.reviewed` with `event: pr_merged_unmatched` and `reason: no_project` (no project on the row) or `no_task`. A task bound to the PR that is already `done` or `backlog` writes neither |
 | `pull_request` (opened) | No matching task | None, no task is created (an audit row `task.reviewed` with `event: pr_opened_unmatched` is written) | None |
 | `pull_request` (opened) | Matching task found | Backfills prNumber/prUrl/branchName where unset | "PR #N opened: {url}" |
 | `issues` (opened) | Project `githubRepo` equals the repo | Creates task `[GH #N] <title>` in the initial state of the project's default workflow (`open` in the built-in one) and sends `task_available` to the team's claim-eligible agents | None |
@@ -116,7 +117,8 @@ Delivery semantics:
 
 - The endpoint answers `200` before the event is processed, so a green entry in Recent Deliveries does not prove that the side effect ran.
 - Each `X-GitHub-Delivery` id is processed at most once. A redelivery of the same id answers `{ "received": true, "duplicate": true }` and does nothing.
-- A delivery whose processing failed is logged (`error processing webhook event`) and not retried.
+- A delivery whose processing failed is logged (`error processing webhook event`, with the delivery id, the event and the repo) and not retried.
+- A merged-PR delivery that matched no project or no open task is logged as a warn line and written as a `pr_merged_unmatched` audit row (see the troubleshooting table).
 - Dedup records expire after `IDEMPOTENCY_TTL_DAYS` (default 30).
 
 ## Task ↔ PR binding
@@ -149,6 +151,7 @@ Then check an end-to-end PR binding:
 |---|---|---|
 | 401 on webhook delivery | `GITHUB_WEBHOOK_SECRET` mismatch or not set | Ensure server env matches the secret in App settings |
 | Events delivered but no task updated | No task matches the PR by `prNumber`, `prUrl`, `branchName` or a `[PR #N]` title, or the project `githubRepo` is not the repo full name | Set `githubRepo` to `owner/repo` and record the branch or PR on the task |
+| A PR was merged but the task did not move (still `in_progress` or `review`, work claim still held) | The merged delivery never reached the backend, or reached it and matched nothing. Either the GitHub App is not installed on that repo, or the delivery failed or was never sent (check the App installation per repo and **Recent Deliveries** for a `pull_request` delivery with `action: closed` for the merge); or the repo is bound to no project (`githubRepo` must equal the repo full name as GitHub sends it, `owner/repo`, matched case-sensitively), or no open task carries the PR by `prNumber`, `prUrl`, `branchName` or a `[PR #N]` title (a task already `done` or still in `backlog` is not matched) | Look for the warn line `merged pull request matched no project` or `merged pull request matched no open task` in the backend log (fields `repo`, `prNumber`, `reason`; the Grounding webhook service says `matched no task` and adds the `deliveryId`), and for the audit row `task.reviewed` with `event: pr_merged_unmatched` (a `no_project` row has no project). With no warn line the delivery did not arrive: fix the installation or redeliver from Recent Deliveries. Then bind the task (`task_submit_pr`) or fix `githubRepo`. An agent whose token lacks `github:pr_merge` cannot move the task itself: the operator closes it in the UI |
 | Delivery succeeds but no side effects | Event type not subscribed or action not handled | Check event subscriptions in App settings |
 | Delivery shows 200 but nothing changed | Processing runs after the response | Check the backend log |
 | Redelivered event has no effect | Deliveries are processed at most once per delivery id | Apply the change manually |

@@ -4,6 +4,7 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- The `forbidden` teaching error for a missing `github:pr_merge` scope adds, after the admin re-mint text, that a PR merged outside agent-tasks whose task did not move is not helped by retrying `task_merge`: ask the operator to close the task in the UI. `workflow_primer` gained a "Merged outside agent-tasks" section with the same recipe and a pointer to the troubleshooting in `docs/webhook-setup.md`.
 - `tasks_transition`, `tasks_list` and `project_tasks` take a workflow state name as a bounded string (lowercase letters, digits and underscores, 1 to 64 characters) instead of a fixed list of the four built-in names plus `backlog` and `abandoned`, so a status filter or transition can name a state of a custom workflow. The backend judges the name against the task's or project's workflow and an unknown one comes back as its 400, unchanged. The tool descriptions keep the built-in names as examples for the default workflow. `tools/list` now publishes a string with a `pattern` and `maxLength` where it published an `enum`; the accepted built-in names are unchanged.
 
 ## 0.18.0

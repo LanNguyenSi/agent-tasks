@@ -867,6 +867,15 @@ function mergeInProgressError(message: string): TeachingError {
 // workflow_primer).
 const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
 
+// A token without github:pr_merge is often met by an agent whose PR was
+// already merged outside agent-tasks (a human on GitHub, another tool) while
+// the task did not move. A retried task_merge cannot help that agent: the
+// merge itself is refused for the missing scope, and a task that is only
+// waiting for the webhook is closed by the operator in the UI. The pointer to
+// docs/webhook-setup.md (troubleshooting) lives in WORKFLOW_PRIMER; the
+// 240-char recipe budget leaves no room for it here.
+const MERGED_OUTSIDE_HINT = ". PR merged outside agent-tasks, task not moved? Do not retry task_merge; ask the operator to close it in the UI.";
+
 const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
   task_merge:
     "the github:pr_merge scope, write access to the project of every task linked to the PR, the self-merge, approval and role gates, or allowAgentPrMerge consent",
@@ -889,7 +898,7 @@ function groundingForbiddenError(body: BackendErrorBody, message: string, verbCo
       ? buildTeachingError({
           code: "forbidden",
           message,
-          recipe: `a team admin must re-mint this agent token with the missing scope (${missing}); existing tokens never gain new scopes`,
+          recipe: `a team admin must re-mint this agent token with the missing scope (${missing}); existing tokens never gain new scopes${missing.includes("github:pr_merge") ? MERGED_OUTSIDE_HINT : ""}`,
           allowedNext: [],
         })
       : undefined;

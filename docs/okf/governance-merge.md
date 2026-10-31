@@ -262,7 +262,23 @@ and `backlog` to that workflow's first terminal state (`done` in the built-in
 workflow);
 `pull_request` `opened` fills a missing `prNumber`, `prUrl` or `branchName`
 on the matching tasks and never creates a task, a merged `closed` applies the
-merge target above, and an unmerged `closed` adds a timeline entry only;
+merge target above, and an unmerged `closed` adds a timeline entry only. A
+merged `closed` that moves nothing because the repository is bound to no
+project (`githubRepo` is matched exactly, case-sensitively) or because no open
+task of a bound project carries the PR (`reportUnmatchedMerge`) logs a
+`github-webhook` warn with `repo`, `prNumber` and `reason` (`no_project` or
+`no_task`) and writes a `task.reviewed` audit row with `event:
+pr_merged_unmatched` (no `projectId` for `no_project`, the project's id for
+`no_task`, one row per bound project); a task already in a terminal state or
+`backlog` that carries the PR (`hasUnopenedTaskForPr`) is the echo of an
+earlier merge and writes neither, and an unmerged `closed` or an `opened`
+never writes this row. The configured grounding webhook service writes the same
+warn (component `grounding-github-webhook`, with the `deliveryId`) and audit
+row (with `actorType: system_observation`) inside the delivery's transaction
+when a `pr_merged` delivery matches no project or no task of the projects
+bound to the repository; a replayed delivery returns its stored result and adds
+none. A dispatch error in the route is logged with the delivery id, the event
+and the repo;
 `pull_request_review` records `approved`, `commented` and `dismissed` as
 timeline entries and moves a task in `review` back to `in_progress` on
 `changes_requested`. Other events are ignored. `findTasksByPr` matches a PR

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 const {
   mockTaskFindMany,
@@ -57,6 +57,7 @@ vi.mock("../../src/services/audit.js", () => ({
 }));
 
 import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
+import { logger } from "../../src/lib/logger.js";
 import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION, TWO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 /** A webhook write into a terminal state also clears the work claim and the review claim. */
@@ -420,6 +421,148 @@ describe("handlePullRequestEvent", () => {
         content: expect.stringContaining("PR #42 opened"),
       }),
     });
+  });
+});
+
+describe("handlePullRequestEvent: merged delivery that matches no project or no task", () => {
+  const delivery = (action: "closed" | "opened", merged: boolean, fullName = "test/repo", number = 42) => ({
+    action,
+    repository: { full_name: fullName },
+    pull_request: {
+      number,
+      title: "Fix bug",
+      body: null,
+      html_url: `https://github.com/${fullName}/pull/${number}`,
+      state: action === "closed" ? ("closed" as const) : ("open" as const),
+      merged,
+      merged_by: { login: "merger" },
+      head: { ref: "fix/bug" },
+    },
+  });
+  const unmatchedAudit = () =>
+    mockLogAuditEvent.mock.calls.filter(([arg]) => (arg as { payload?: { event?: string } }).payload?.event === "pr_merged_unmatched");
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+  });
+  afterEach(() => {
+    warn.mockRestore();
+    mockTaskFindMany.mockReset();
+  });
+
+  it("repo bound to no project: warns with repo and PR number and writes an audit row without a project", async () => {
+    mockProjectFindMany.mockResolvedValue([]);
+
+    await handlePullRequestEvent(delivery("closed", true, "acme/unbound", 77));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ repo: "acme/unbound", prNumber: 77, reason: "no_project", event: "pr_merged_unmatched" });
+    expect(unmatchedAudit()).toEqual([
+      [{ action: "task.reviewed", payload: { source: "github_webhook", event: "pr_merged_unmatched", pr_number: 77, repo: "acme/unbound", reason: "no_project" } }],
+    ]);
+    expect(mockTaskFindMany).not.toHaveBeenCalled();
+    expect(mockCommentCreate).not.toHaveBeenCalled();
+  });
+
+  it("repo bound to a project, no task carries the PR: warns and audits on that project", async () => {
+    mockTaskFindMany.mockResolvedValue([]);
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ repo: "test/repo", prNumber: 42, reason: "no_task", projectId: "proj-1" });
+    expect(unmatchedAudit()).toEqual([
+      [{ action: "task.reviewed", projectId: "proj-1", payload: { source: "github_webhook", event: "pr_merged_unmatched", pr_number: 42, repo: "test/repo", reason: "no_task" } }],
+    ]);
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("two bound projects, only one has the task: the audit row is written for the project without it", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }, { id: "proj-2", soloMode: false }]);
+    mockTaskFindMany.mockImplementation(async (args: { where: { projectId: string } }) =>
+      args.where.projectId === "proj-1" ? [makeTask({ status: "in_progress" })] : [],
+    );
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(unmatchedAudit().map(([arg]) => (arg as { projectId?: string }).projectId)).toEqual(["proj-2"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ projectId: "proj-2", reason: "no_task" });
+    expect(mockCommentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a matching open task: no unmatched warn and no unmatched audit row", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(unmatchedAudit()).toHaveLength(0);
+  });
+
+  it("a task bound to the PR that is already terminal or backlog is the echo of an earlier merge: no warn, no audit row", async () => {
+    // The open-task lookups come back empty; the unfiltered lookup (an OR over the same bindings) finds the done task.
+    mockTaskFindMany.mockImplementation(async (args: { where: { OR?: unknown } }) => (args.where.OR ? [{ id: "task-1" }] : []));
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(unmatchedAudit()).toHaveLength(0);
+  });
+
+  it("the unfiltered lookup covers every binding the open lookup uses (prNumber, prUrl, branch, title)", async () => {
+    mockTaskFindMany.mockResolvedValue([]);
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    const orCall = mockTaskFindMany.mock.calls.map(([arg]) => arg as { where: { OR?: unknown[] }; take?: number }).find((arg) => arg.where.OR);
+    expect(orCall?.where).toMatchObject({
+      projectId: "proj-1",
+      OR: [
+        { prNumber: 42 },
+        { prUrl: "https://github.com/test/repo/pull/42" },
+        { branchName: "fix/bug" },
+        { title: { contains: "[PR #42]" } },
+      ],
+    });
+    expect(orCall?.take).toBe(1);
+  });
+
+  it.each([
+    ["closed without merge, no project", "closed", false, []],
+    ["closed without merge, no task", "closed", false, [{ id: "proj-1", soloMode: false }]],
+    ["opened, no project", "opened", false, []],
+  ] as const)("%s: no unmatched-merge diagnostics", async (_name, action, merged, projects) => {
+    mockProjectFindMany.mockResolvedValue([...projects]);
+    mockTaskFindMany.mockResolvedValue([]);
+
+    await handlePullRequestEvent(delivery(action, merged));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(unmatchedAudit()).toHaveLength(0);
+  });
+
+  // The payload shape of the depsight repo's merges, with fields the handler ignores left in.
+  const depsightMerge = {
+    ...delivery("closed", true, "LanNguyenSi/depsight", 214),
+    number: 214,
+    sender: { login: "LanNguyenSi" },
+  };
+  it.each(["review", "in_progress"])("AUTONOMOUS project: a %s task with a work claim goes to done, both claims are cleared, and a [webhook] comment is written", async (status) => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", governanceMode: "AUTONOMOUS", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([
+      makeTask({ status, prNumber: 214, prUrl: "https://github.com/LanNguyenSi/depsight/pull/214", claimedByUserId: "user-1", claimedAt: new Date() }),
+    ]);
+
+    await handlePullRequestEvent(depsightMerge);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status, statusVersion: 0 },
+      data: { status: "done", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
+    });
+    expect(mockCommentCreate).toHaveBeenCalledWith({ data: { taskId: "task-1", content: "[webhook] PR #214 merged by merger" } });
+    expect(mockSignalUpdateMany).toHaveBeenCalledWith({ where: { taskId: "task-1", acknowledgedAt: null }, data: { acknowledgedAt: expect.any(Date) } });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
