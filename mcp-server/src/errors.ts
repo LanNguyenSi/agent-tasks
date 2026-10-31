@@ -881,7 +881,8 @@ const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
 // tasks:transition, github:pr_merge`) names 33 characters, and the recipe is
 // then 239 characters, one under RECIPE_CHAR_BUDGET. Lengthen that sentence
 // without shortening this hint and the two-scope recipe is clamped, losing the
-// tail of the hint.
+// tail of the hint. Three or more missing scopes still exceed the budget and
+// clamp the end of the hint.
 const MERGED_OUTSIDE_HINT = ". PR merged outside agent-tasks, task not moved? Do not retry task_merge; ask the operator to close it in the UI.";
 
 const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
