@@ -41,7 +41,7 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 | Do the work | (branch, code, commit, push) | (same) | (same) |
 | Record PR metadata (after `gh pr create`) | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/tasks/{id}/submit-pr` |
 | Submit for review / approve | `task_finish` | `agent-tasks tasks finish <id> ...` | `POST /api/tasks/{id}/finish` |
-| Merge | `task_merge` | `agent-tasks github pr merge <pr-number> --task <id> --owner <owner> --repo <repo>` | `POST /api/tasks/{id}/merge` |
+| Merge | `task_merge` | `agent-tasks github pr merge <pr-number> --task <id> --owner <owner> --repo <repo>` (not equivalent: it calls `POST /api/github/pull-requests/{prNumber}/merge`, see the note below) | `POST /api/tasks/{id}/merge` |
 | Done | (set by `task_merge`, by a reviewer's `task_finish` approve, or by the merge webhook in `AUTONOMOUS` projects) | (same) | (same) |
 
 The CLI has no task-scoped merge command: `agent-tasks github pr merge` takes

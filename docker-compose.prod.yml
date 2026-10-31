@@ -69,6 +69,15 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
+      # Backend log level. The default equals the backend's own fallback
+      # (backend/src/lib/logger.ts: unset LOG_LEVEL -> "info" when
+      # NODE_ENV=production). Unlike the optional keys below, the default
+      # must NOT be empty here: logger.ts reads the raw variable with `??`,
+      # so a forwarded "" would win over the fallback, and pino throws on an
+      # empty level. The `:-` form also maps an empty value in the
+      # deployment .env to the default (compose substitutes on unset AND
+      # empty), so unset, empty and set all resolve to the intended level.
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       # The backend can connect as a separate runtime role that owns no table
       # and is not a superuser, so it cannot disable the grounding fence and
       # hold triggers. Set both or neither; unset, both fall back to the owner
@@ -96,6 +105,13 @@ services:
       BACKEND_URL: ${BACKEND_URL:-}
       IDEMPOTENCY_TTL_DAYS: ${IDEMPOTENCY_TTL_DAYS:-}
       REDIS_URL: ${REDIS_URL:-}
+      # Key prefix for the Redis-backed caches. The default equals the
+      # backend's fallback (backend/src/services/cache.ts: unset ->
+      # "agent-tasks:"), and must not be empty: cache.ts reads the raw
+      # variable with `??`, so a forwarded "" would silently drop the
+      # prefix and let environments sharing one redis instance collide.
+      # Unused when REDIS_URL is unset.
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-agent-tasks:}
       # Optional: gates the identity-broker register endpoint. Empty by
       # default (back-compat accept-any); set in prod .env to restrict.
       ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
