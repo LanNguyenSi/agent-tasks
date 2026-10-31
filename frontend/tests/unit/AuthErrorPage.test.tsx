@@ -131,14 +131,27 @@ describe("/auth/error page", () => {
 });
 
 describe("producer parity with the backend redirects", () => {
+  // Code only: `//` comment lines may mention the URL shape.
   const read = (file: string) =>
-    readFileSync(resolve(__dirname, "../../../backend/src/routes", file), "utf8");
+    readFileSync(resolve(__dirname, "../../../backend/src/routes", file), "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n");
+
+  // A full literal producer: the whole forwarded charset up to the closing quote.
+  const DIRECT = /\/auth\/error\?reason=([A-Za-z0-9_-]+)[`"']/g;
+  // The two documented interpolated producers (sso.ts `safe`, auth.ts helper `reason`).
+  const INTERPOLATED = /\/auth\/error\?reason=\$\{(?:safe|reason)\}`/g;
+  const HELPER = /redirectToAuthError\(c, "([A-Za-z0-9_-]+)"\)/g;
+
+  const direct = (src: string) => [...src.matchAll(DIRECT)].map((m) => m[1]!);
+  const helper = (src: string) => [...src.matchAll(HELPER)].map((m) => m[1]!);
+  const count = (src: string, re: RegExp) => [...src.matchAll(re)].length;
+  const occurrences = (src: string) => count(src, /\/auth\/error/g);
 
   it("finds the literal reasons the backend can redirect with", () => {
-    const sso = [...read("sso.ts").matchAll(/\/auth\/error\?reason=([a-z_]+)/g)].map((m) => m[1]);
-    const gh = [...read("auth.ts").matchAll(/redirectToAuthError\(c, "([a-z_]+)"\)/g)].map(
-      (m) => m[1],
-    );
+    const sso = direct(read("sso.ts"));
+    const gh = [...direct(read("auth.ts")), ...helper(read("auth.ts"))];
     // Guard against the regexes silently matching nothing.
     expect(new Set(sso)).toEqual(
       new Set([
@@ -155,11 +168,22 @@ describe("producer parity with the backend redirects", () => {
     );
   });
 
+  it("every /auth/error occurrence is a recognised producer form (unknown forms fail loudly)", () => {
+    const sso = read("sso.ts");
+    const auth = read("auth.ts");
+    expect(count(sso, INTERPOLATED)).toBe(1);
+    expect(count(auth, INTERPOLATED)).toBe(1);
+    expect(occurrences(sso)).toBe(direct(sso).length + count(sso, INTERPOLATED));
+    expect(occurrences(auth)).toBe(direct(auth).length + count(auth, INTERPOLATED));
+  });
+
   it("every literal reason a backend producer emits has a message of its own", () => {
     const literals = new Set<string>([
-      ...[...read("sso.ts").matchAll(/\/auth\/error\?reason=([a-z_]+)/g)].map((m) => m[1]!),
-      ...[...read("auth.ts").matchAll(/redirectToAuthError\(c, "([a-z_]+)"\)/g)].map((m) => m[1]!),
+      ...direct(read("sso.ts")),
+      ...direct(read("auth.ts")),
+      ...helper(read("auth.ts")),
     ]);
+    expect(literals.size).toBeGreaterThan(0);
     for (const reason of literals) {
       expect(KNOWN_AUTH_ERROR_REASONS).toContain(reason);
     }

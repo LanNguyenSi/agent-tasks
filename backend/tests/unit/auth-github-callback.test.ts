@@ -167,6 +167,15 @@ describe("GET /github/callback failure redirects", () => {
     expectOAuthCookiesCleared(res);
   });
 
+  it("empty provider error (?error= with no code) is not a provider error → reason=bad_request", async () => {
+    const res = await authRouter.request("/github/callback?error=&state=STATE123", {
+      headers: { Cookie: LOGIN_COOKIES },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${ERROR_PAGE}?reason=bad_request`);
+    expectOAuthCookiesCleared(res);
+  });
+
   it("missing code (no error) → reason=bad_request, cookies cleared, no JSON 400", async () => {
     const res = await authRouter.request("/github/callback?state=STATE123", {
       headers: { Cookie: LOGIN_COOKIES },
