@@ -70,10 +70,22 @@ function loopbackViolations(doc: unknown): string[] {
     return [`compose file has no services mapping: ${show(doc)}`];
   }
   const v: string[] = [];
+  // A top-level include pulls in services this check cannot see.
+  if (doc.include !== undefined) {
+    v.push(`compose file uses include, which this check cannot follow: ${show(doc.include)}`);
+  }
   for (const [name, svc] of Object.entries(doc.services)) {
     if (!isMapping(svc)) {
       v.push(`service ${name} is not a mapping: ${show(svc)}`);
       continue;
+    }
+    // Host networking listens on every host interface without any ports entry.
+    if (svc.network_mode === "host") {
+      v.push(`service ${name} uses network_mode: host, which binds every interface`);
+    }
+    // extends can bring in ports from another file this check does not read.
+    if (svc.extends !== undefined) {
+      v.push(`service ${name} uses extends, which this check cannot follow: ${show(svc.extends)}`);
     }
     const ports = svc.ports;
     if (ports === undefined) continue;
@@ -168,6 +180,9 @@ describe("loopback check on fixtures", () => {
     ["the long form with a wildcard host_ip", '"127.0.0.1:5432:5432"', "{host_ip: 0.0.0.0, published: '5432', target: 5432}", /on 0\.0\.0\.0/],
     ["an IPv6 address other than loopback", '"127.0.0.1:5432:5432"', '"[::]:5432:5432"', /on ::/],
     ["a non-string ports entry", '"127.0.0.1:5432:5432"', "5432", /without a host address/],
+    ["host networking", "    image: redis:7-alpine\n", "    image: redis:7-alpine\n    network_mode: host\n", /network_mode: host/],
+    ["a service extends", "  worker:\n    image: busybox\n", "  worker:\n    image: busybox\n    extends: {file: other.yml, service: db}\n", /uses extends/],
+    ["a top-level include", "name: t\n", "name: t\ninclude:\n  - other.yml\n", /uses include/],
   ])("rejects %s", (_name, from, to, expected) => {
     expect(loopback(edit(COMPOSE_OK, from, to))).toMatch(expected);
   });
