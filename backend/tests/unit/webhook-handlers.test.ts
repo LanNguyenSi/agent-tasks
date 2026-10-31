@@ -1089,3 +1089,74 @@ describe("webhook PR merge on a workflow with several review-like states", () =>
     });
   });
 });
+
+describe("legacy webhook handlers match the bound repo case-insensitively", () => {
+  // GitHub sends `repository.full_name` in the repo's own case while
+  // `project.githubRepo` keeps whatever case the operator bound the project with
+  // (`Owner/Repo` on the project against a delivery for `owner/repo`), so a
+  // project lookup that compares the two case-sensitively matches no project and
+  // the whole delivery does nothing. prisma is mocked here, so the mock never
+  // evaluates `mode`: each handler's own lookup is pinned on the `where` it
+  // passes, together with the effect the matched project unlocks.
+  const REPO = { equals: "owner/repo", mode: "insensitive" };
+  const boundRepos = () =>
+    mockProjectFindMany.mock.calls.map(([arg]) => (arg as { where: { githubRepo: unknown } }).where.githubRepo);
+
+  it("issues.opened: matches the bound project case-insensitively and creates the task", async () => {
+    await handleIssuesEvent({
+      action: "opened",
+      repository: { full_name: "owner/repo" },
+      issue: { number: 7, title: "Something", body: "Details", html_url: "https://github.com/owner/repo/issues/7", state: "open" },
+    });
+
+    expect(boundRepos()).toEqual([REPO]);
+    expect(mockTaskCreate).toHaveBeenCalledWith({
+      data: { projectId: "proj-1", title: "[GH #7] Something", description: "Details", status: "open" },
+    });
+  });
+
+  it("pull_request merged: matches the bound project case-insensitively and transitions the task", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent({
+      action: "closed",
+      repository: { full_name: "owner/repo" },
+      pull_request: {
+        number: 42,
+        title: "Fix bug",
+        body: null,
+        html_url: "https://github.com/owner/repo/pull/42",
+        state: "closed",
+        merged: true,
+        merged_by: { login: "merger" },
+        head: { ref: "fix/bug" },
+      },
+    });
+
+    expect(boundRepos()).toEqual([REPO]);
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
+      data: { status: "review", statusVersion: { increment: 1 } },
+    });
+  });
+
+  it("pull_request_review submitted: matches the bound project case-insensitively and runs the review path", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "review" })]);
+
+    await handlePullRequestReviewEvent({
+      action: "submitted",
+      repository: { full_name: "owner/repo" },
+      pull_request: { number: 42, title: "Fix bug", html_url: "https://github.com/owner/repo/pull/42" },
+      review: { state: "changes_requested", user: { login: "bob" }, html_url: "https://review" },
+    });
+
+    expect(boundRepos()).toEqual([REPO]);
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "review", statusVersion: 0 },
+      data: { status: "in_progress", statusVersion: { increment: 1 } },
+    });
+    expect(mockCommentCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ content: expect.stringContaining("Changes requested by bob") }),
+    });
+  });
+});

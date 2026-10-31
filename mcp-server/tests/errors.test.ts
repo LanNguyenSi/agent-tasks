@@ -690,9 +690,24 @@ describe("mapBackendError catalog", () => {
       expect(err.error.allowedNext).toEqual([]);
     }
   });
+  // The two-scope message is the tight one: the backend names both missing
+  // scopes, so the re-mint sentence in front of the hint must stay short enough
+  // that the hint is never the part the 240-char budget clamps away.
+  it("grounding 403: a two-scope message names both scopes and still carries the whole merged-outside hint within the budget", () => {
+    const err = mapBackendError(403, { error: "forbidden", message: "Token missing scope: tasks:transition, github:pr_merge" }, "task_merge");
+    expect(err.error.recipe).toContain("tasks:transition, github:pr_merge");
+    expect(err.error.recipe).toContain("re-mint");
+    expect(err.error.recipe).toContain("existing tokens never gain new scopes");
+    expect(err.error.recipe).toContain(
+      "PR merged outside agent-tasks, task not moved? Do not retry task_merge; ask the operator to close it in the UI.",
+    );
+    expect(err.error.recipe.endsWith("...")).toBe(false);
+    expect(err.error.recipe.length).toBeLessThanOrEqual(240);
+    expect(err.error.allowedNext).toEqual([]);
+  });
   it("grounding 403: a missing github scope other than pr_merge keeps the plain re-mint recipe without the merged-outside hint", () => {
     const err = mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_create" }, "pull_requests_create");
-    expect(err.error.recipe).toBe("a team admin must re-mint this agent token with the missing scope (github:pr_create); existing tokens never gain new scopes");
+    expect(err.error.recipe).toBe("a team admin must re-mint the token with the scopes (github:pr_create); existing tokens never gain new scopes");
     expect(err.error.recipe).not.toContain("merged outside");
   });
   it("grounding 403: a multi-scope absent list containing a github scope also gets the re-mint recipe naming the full list", () => {
