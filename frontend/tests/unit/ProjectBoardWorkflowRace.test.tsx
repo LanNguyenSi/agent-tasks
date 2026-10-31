@@ -188,7 +188,9 @@ describe("board page -- the workflow list of the project the route left", () => 
     const view = renderBoard();
     await waitFor(() => expect(screen.queryByText("Loading tasks")).not.toBeInTheDocument());
     expect(columnIds()).toEqual(BUILT_IN_COLUMNS);
-    expect(vi.mocked(getWorkflows).mock.calls.map((c) => c[0])).toEqual(["p-1"]);
+    // The workflow request starts after the tasks load; wait for it instead of
+    // reading the mock right after the loading text disappears.
+    await waitFor(() => expect(vi.mocked(getWorkflows).mock.calls.map((c) => c[0])).toEqual(["p-1"]));
 
     nav.id = "p-2";
     view.rerender(
