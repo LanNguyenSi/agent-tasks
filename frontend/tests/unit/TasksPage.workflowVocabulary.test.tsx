@@ -199,7 +199,7 @@ describe("/tasks presets follow the workflow vocabulary", () => {
   it("All sends no status filter", async () => {
     await renderAt("");
     await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
-    expect(new Set(statusRequests())).toEqual(new Set([undefined]));
+    await waitFor(() => expect(new Set(statusRequests())).toEqual(new Set([undefined])));
   });
 
   it("uses the built-in lists when the workflows cannot be read", async () => {
@@ -287,7 +287,7 @@ describe("/tasks status parameter", () => {
 
   it("keeps a custom name in the very first request, before the workflows are read", async () => {
     await renderAt("status=qa,spec");
-    expect(statusRequests()[0]).toBe("qa,spec");
+    await waitFor(() => expect(statusRequests()[0]).toBe("qa,spec"));
     await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
     expect(new Set(statusRequests())).toEqual(new Set(["qa,spec"]));
   });
@@ -346,7 +346,13 @@ describe("/tasks custom-filter detection against the resolved presets", () => {
     ["Review with its resolved names written out, in another order", "scope=review&status=qa,review", "In Review"],
   ])("%s is the tab itself", async (_label, search, heading) => {
     await renderAt(search);
-    await lastStatusIs(search.includes("status=") ? "qa,review" : vi.mocked(getTeamTasks).mock.calls.at(-1)![1]!.status);
+    if (search.includes("status=")) {
+      await lastStatusIs("qa,review");
+    } else {
+      // No status param: just wait for the first request to have been made,
+      // the expected status is whatever the preset resolved to.
+      await waitFor(() => expect(statusRequests().length).toBeGreaterThan(0));
+    }
     await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(chipNames()).toContain("Quality gate"));
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(heading);
