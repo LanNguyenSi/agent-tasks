@@ -7,7 +7,7 @@
 // Submit Button is pinned in the Modal footer slot.
 // All existing fields, validation, and create behavior are preserved.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   createTask,
   claimTask,
@@ -135,30 +135,38 @@ export default function NewTaskModal({
   const [createdAssignmentError, setCreatedAssignmentError] = useState<string | null>(null);
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
 
-  // Reset all fields whenever the modal opens (including when initialStatus changes).
-  useEffect(() => {
-    if (!open) return;
-    setTitle("");
-    setDescription("");
-    setStatus(resolvedInitialStatus);
-    setPriority("MEDIUM");
-    setDueAt("");
-    setAssignee("unassigned");
-    setGoal("");
-    setAcceptanceCriteria("");
-    setContext("");
-    setConstraints("");
-    setScope("");
-    setOutOfScope("");
-    setDependencies("");
-    setRisk("");
-    setAgentPrompt("");
-    setTaskType("");
-    setCreating(false);
-    setCreatedConfidence(null);
-    setCreatedAssignmentError(null);
-    setCreatedTaskId(null);
-  }, [open, resolvedInitialStatus]);
+  // Reset all fields whenever the modal opens (including when initialStatus
+  // changes while it is open). Adjusted in the render that sees the new open
+  // or initial-status value; a re-render with both unchanged keeps the edits,
+  // and a change while the modal is closed waits for the next open.
+  const [seenOpen, setSeenOpen] = useState(open);
+  const [seenInitialStatus, setSeenInitialStatus] = useState(resolvedInitialStatus);
+  if (seenOpen !== open || seenInitialStatus !== resolvedInitialStatus) {
+    setSeenOpen(open);
+    setSeenInitialStatus(resolvedInitialStatus);
+    if (open) {
+      setTitle("");
+      setDescription("");
+      setStatus(resolvedInitialStatus);
+      setPriority("MEDIUM");
+      setDueAt("");
+      setAssignee("unassigned");
+      setGoal("");
+      setAcceptanceCriteria("");
+      setContext("");
+      setConstraints("");
+      setScope("");
+      setOutOfScope("");
+      setDependencies("");
+      setRisk("");
+      setAgentPrompt("");
+      setTaskType("");
+      setCreating(false);
+      setCreatedConfidence(null);
+      setCreatedAssignmentError(null);
+      setCreatedTaskId(null);
+    }
+  }
 
   const templateData = useMemo(
     () =>
@@ -317,7 +325,7 @@ export default function NewTaskModal({
               onChange={(v) => {
                 const next = v as CreateStatus;
                 setStatus(next);
-                // Review round 1 fix (task 31528564): a stale "me" pick from
+                // A stale "me" pick from
                 // Open would otherwise survive the switch to Backlog -- the
                 // trigger is disabled and keeps showing "Assign to me" while
                 // submit silently creates the task unassigned. Reset it here
