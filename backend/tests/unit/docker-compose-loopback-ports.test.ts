@@ -12,6 +12,9 @@
 // rejected):
 // 1. every published port, in string or long mapping form, names 127.0.0.1
 //    as its host address. An entry without one publishes on all interfaces.
+//    No service uses network_mode: host (binds every interface without a
+//    ports entry) or extends, and the file has no top-level include: this
+//    check cannot follow either into another file.
 // 2. the four dev services publish exactly the pinned ports, so a service
 //    that drops `ports:` entirely or renames a target cannot slip past a
 //    comment-only edit.
