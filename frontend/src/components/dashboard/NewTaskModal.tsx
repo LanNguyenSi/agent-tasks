@@ -325,10 +325,10 @@ export default function NewTaskModal({
               onChange={(v) => {
                 const next = v as CreateStatus;
                 setStatus(next);
-                // A stale "me" pick from
-                // Open would otherwise survive the switch to Backlog -- the
-                // trigger is disabled and keeps showing "Assign to me" while
-                // submit silently creates the task unassigned. Reset it here
+                // A stale "me" pick from Open would otherwise survive the
+                // switch to Backlog -- the trigger is disabled and keeps
+                // showing "Assign to me" while submit silently creates the
+                // task unassigned. Reset it here
                 // so the visible state matches what will actually happen;
                 // handleSubmit's own `status !== "backlog"` guard stays as
                 // defense in depth regardless.

@@ -117,7 +117,8 @@ describe("NewTaskModal: reset on open", () => {
     await userEvent.click(screen.getByRole("option", { name: "feature" }));
 
     rerender(modal({ open: false, initialStatus: "open", templateFields: allFields }));
-    rerender(modal({ open: true, initialStatus: "open", templateFields: allFields }));
+    const onTaskCreated = vi.fn();
+    rerender(modal({ open: true, initialStatus: "open", templateFields: allFields, onTaskCreated }));
 
     await userEvent.type(titleInput(), "New title");
     await userEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -130,7 +131,10 @@ describe("NewTaskModal: reset on open", () => {
     expect(body.description).toBeUndefined();
     expect(body.dueAt).toBeUndefined();
     expect(body).not.toHaveProperty("templateData");
-    // The "me" pick was reset too, so no claim follows the create.
+    // The "me" pick was reset too, so no claim follows the create. Wait for
+    // onTaskCreated first: the submit handler calls it after the claim
+    // decision, so the negative assertion cannot pass before that decision.
+    await waitFor(() => expect(onTaskCreated).toHaveBeenCalled());
     expect(mockClaimTask).not.toHaveBeenCalled();
   });
 
