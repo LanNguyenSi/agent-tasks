@@ -134,7 +134,7 @@ agent-tasks/
 |-------|---------|
 | `/` | Landing page; signed-in users go to `/onboarding` only when they have neither a team nor a shared project (`needsOnboarding` in `frontend/src/lib/access.ts`), else to `/home` |
 | `/auth` | Login / Register |
-| `/auth/error` | Login error page |
+| `/auth/error` | Login error page: `?reason=<code>` (set by the GitHub OAuth and SSO callbacks) selects a user-facing message, an unknown code gets a generic one; see `frontend/src/app/auth/error/messages.ts` |
 | `/onboarding` | First team creation; optional (a "Skip for now" link) when you already have shared projects. A user who already has a team is redirected to `/home` (also with the old `?create=team` link) and creates another team in the "New team" dialog opened from the header team switcher or the account menu; after creating, the new team is remembered and its Home opens |
 | `/home` | Signed-in start page: the team's tasks across projects; without a team, the projects shared with you |
 | `/projects` | Projects list (project management, GitHub sync); `?teamId=<id>` pre-selects a team |
