@@ -46,10 +46,10 @@ git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks
 cp .env.example .env
 echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
-make dev-docker          # docker compose up: db + redis + backend + frontend
+make dev-docker          # docker compose up: db + redis + backend + frontend, all on 127.0.0.1
 ```
 
-This is a development stack (`NODE_ENV=development`, compose project `agent-tasks-dev`); `TRUSTED_PROXY_HOPS` defaults to `0` because no reverse proxy is in front of the backend. The production stack is a separate file with its own project name, `docker-compose.prod.yml`, and always needs `-f`: `docker compose -f docker-compose.prod.yml up -d --build`. A bare `docker compose` command uses the dev file. Volumes from a dev stack started before the project had an explicit name keep their old prefix and are not picked up: re-seed, or remove them with `docker compose -p <old-project> down -v`.
+This is a local development stack (`NODE_ENV=development`, compose project `agent-tasks-dev`), not a self-hosting path: it uses dev database credentials, Redis has no auth, and every published port (3000, 3001, 5432, 6379) binds the host side to `127.0.0.1`, so nothing here is reachable from other hosts. To self-host on a server use the production stack `docker-compose.prod.yml` (deploy notes: [docs/okf/deploy.md](docs/okf/deploy.md)); `TRUSTED_PROXY_HOPS` defaults to `0` because no reverse proxy is in front of the backend. The production stack is a separate file with its own project name, `docker-compose.prod.yml`, and always needs `-f`: `docker compose -f docker-compose.prod.yml up -d --build`. A bare `docker compose` command uses the dev file. Volumes from a dev stack started before the project had an explicit name keep their old prefix and are not picked up: re-seed, or remove them with `docker compose -p <old-project> down -v`.
 
 Open http://localhost:3000, register the first user, create a team, and generate an API token in **Team settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
 
