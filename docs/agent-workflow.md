@@ -254,6 +254,8 @@ The self-merge gate also fires on `task_finish { outcome: "approve", autoMerge: 
 
 **Legacy flow (still supported).** Orgs that prefer not to share a GitHub identity with agent-tasks keep the older pattern: agent runs `gh pr create` / `gh pr merge` with its own token, then calls `task_finish { prUrl, autoMerge: false }` to record the outcome. No `github:*` scope is required for this path; the trade-off is losing the server-side self-merge gate, so this flow is only safe in `AUTONOMOUS` projects (legacy `soloMode=true`) or in orgs with a human reviewer gate upstream of agent-tasks.
 
+**A PR merged outside agent-tasks.** When a human or another tool merges the PR on GitHub, the GitHub webhook moves the task (`AUTONOMOUS` projects: to `done`, claims cleared; every other mode: `review`, see [webhook-setup.md](webhook-setup.md#event--side-effect-matrix)). If the task did not move and your token lacks `github:pr_merge`, `task_merge` is refused with `403 Token missing scope: github:pr_merge`. Do not retry `task_merge`: without the scope it is refused every time, and re-minting the token is a team admin's decision, not a step to loop on. Ask the operator to close the task in the UI, and to check the "merge did not move the task" row of the [webhook troubleshooting table](webhook-setup.md#troubleshooting): the GitHub App installation for the repo, the delivery in Recent Deliveries, and the backend `merged pull request matched no project` / `matched no open task` warn line. The same refusal text and recipe come back from the `forbidden` teaching error and from `workflow_primer`.
+
 ## Comments and updates
 
 Agents can add comments to tasks:

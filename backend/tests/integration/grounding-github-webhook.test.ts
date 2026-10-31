@@ -5,6 +5,7 @@ import type { PrismaClient } from "@prisma/client";
 import { completionFixture, completionStore, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
 import { barrier } from "../helpers/grounding-postgres.js";
 import { ids } from "../helpers/grounding-fixtures.js";
+import { logger } from "../../src/lib/logger.js";
 import { GroundingGithubWebhookService } from "../../src/services/grounding-github-webhook.js";
 import { GroundingGithubMergeService } from "../../src/services/grounding-github-merge.js";
 import { createGroundingGithubWebhookRouter } from "../../src/routes/grounding-github-webhooks.js";
@@ -389,4 +390,77 @@ it.each([["work_a", "check_a"], ["work_b", "check_b"], ["queued", "check_a"]])("
   const legacy = await bothClaims(from);
   expect((await request()).status).toBe(200);
   expect(await reload(legacy.id)).toMatchObject({ status: to, claimedByAgentId: ids.agent, reviewClaimedByUserId: ids.user });
+});
+
+// A merged PR of an AUTONOMOUS project whose task was merged outside agent-tasks: the
+// task never left review (work claim still held) or in_progress. An EXACT binding ends it,
+// a weaker one is only recorded as a pending observation.
+it.each(["review", "in_progress"])("HOOK AUTONOMOUS project: an exactly bound %s task is moved to done, its claims cleared, with a [webhook] comment", async status => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { governanceMode: "AUTONOMOUS" } });
+  const legacy = await bothClaims(status);
+  expect((await request()).status).toBe(200);
+  expect(await reload(legacy.id)).toMatchObject({ status: "done", ...NO_CLAIMS });
+  const comments = await store.db.comment.findMany({ where: { taskId: legacy.id } });
+  expect(comments).toHaveLength(1); expect(comments[0].content).toMatch(/^\[webhook\] pr_merged observed for .* PR #42\. Delivery /);
+  expect(await store.db.groundingGithubObservation.findFirstOrThrow({ where: { taskId: legacy.id } })).toMatchObject({ state: "OBSERVED", matchKind: "EXACT", event: "pr_merged" });
+  expect((await f.task()).status).toBe("in_progress");
+});
+
+it.each(["review", "in_progress"])("HOOK AUTONOMOUS project: a %s task without an exact PR binding stays put as a pending weak_binding observation", async status => {
+  await store.db.project.update({ where: { id: f.projectId }, data: { governanceMode: "AUTONOMOUS" } });
+  const legacy = await bothClaims(status);
+  await store.db.task.update({ where: { id: legacy.id }, data: { prNumber: null, prUrl: null } });
+  const before = await reload(legacy.id);
+  expect((await request()).status).toBe(200);
+  expect(await reload(legacy.id)).toEqual(before);
+  expect(await store.db.groundingGithubObservation.findFirstOrThrow({ where: { taskId: legacy.id } })).toMatchObject({ state: "PENDING", reason: "weak_binding", matchKind: "WEAK" });
+});
+
+// A merged delivery for a PR of the given repo and number, in the shape of the other HOOK payloads, from a branch no task has.
+function mergedFor(fullName: string, number: number) {
+  const body = payload("merged") as { repository: { full_name: string }; pull_request: { number: number; html_url: string; head: { ref: string } } };
+  body.repository.full_name = fullName; body.pull_request.number = number; body.pull_request.head.ref = "unrelated-branch"; body.pull_request.html_url = `https://github.com/${fullName}/pull/${number}`;
+  return body;
+}
+const unmatchedRows = (where: Record<string, unknown> = {}) => store.db.auditLog.findMany({ where: { action: "task.reviewed", payload: { path: ["event"], equals: "pr_merged_unmatched" }, ...where } });
+
+it("HOOK a merged PR of a repo bound to no project warns and writes a project-less audit row, once per delivery", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+  const unbound = `acme/unbound_${randomUUID().replaceAll("-", "")}`;
+  const body = mergedFor(unbound, 77);
+  const first = await request(body, "unbound"); expect(first.status).toBe(200); expect(await first.json()).toMatchObject({ observed: 0, changed: 0 });
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0]![0]).toMatchObject({ repo: unbound, prNumber: 77, reason: "no_project", event: "pr_merged_unmatched", deliveryId: `${prefix}:unbound` });
+  const rows = await unmatchedRows({ payload: { path: ["repo"], equals: unbound } });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ projectId: null, taskId: null, actorId: null });
+  expect(rows[0]!.payload).toMatchObject({ source: "github_webhook", actorType: "system_observation", event: "pr_merged_unmatched", repo: unbound, number: 77, reason: "no_project", deliveryId: `${prefix}:unbound` });
+  expect((await request(body, "unbound")).status).toBe(200);
+  expect(await unmatchedRows({ payload: { path: ["repo"], equals: unbound } })).toHaveLength(1);
+  expect(warn).toHaveBeenCalledTimes(1);
+});
+
+it("HOOK a merged PR that no task of the bound project matches warns and writes an audit row on the project", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+  const before = await snapshot();
+  expect((await request(mergedFor(repo, 999), "no-task")).status).toBe(200);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0]![0]).toMatchObject({ repo, prNumber: 999, reason: "no_task", projectIds: [f.projectId] });
+  const rows = await unmatchedRows({ projectId: f.projectId });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.payload).toMatchObject({ event: "pr_merged_unmatched", repo, number: 999, reason: "no_task" });
+  const after = await snapshot();
+  expect(after.task).toEqual(before.task); expect(after.observations).toEqual(before.observations); expect(after.comments).toEqual(before.comments);
+});
+
+it("HOOK a matched merge, an unmatched PR that is not a merge and an ignored event write no unmatched-merge diagnostics", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+  expect((await request(payload("merged"), "matched")).status).toBe(200);
+  const reopened = payload("reopened") as { pull_request: { number: number; html_url: string } };
+  reopened.pull_request.number = 999; (reopened.pull_request as unknown as { head: { ref: string } }).head.ref = "unrelated-branch"; reopened.pull_request.html_url = `https://github.com/${repo}/pull/999`;
+  expect((await request(reopened, "reopened-unmatched")).status).toBe(200);
+  const closed = mergedFor(repo, 998); (closed.pull_request as unknown as { merged: boolean }).merged = false;
+  expect((await request(closed, "closed-unmatched")).status).toBe(200);
+  expect(warn).not.toHaveBeenCalled();
+  expect(await unmatchedRows({ projectId: f.projectId })).toHaveLength(0);
 });

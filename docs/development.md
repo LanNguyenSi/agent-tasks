@@ -16,7 +16,7 @@ Then open http://localhost:3000.
 
 The Docker quick start is a development stack (`NODE_ENV=development`). Set `TRUSTED_PROXY_HOPS=0` in `.env` when no reverse proxy is in front of the backend (see [architecture.md](architecture.md#security-model)).
 
-`docker-compose.yml` brings up Postgres 16, the backend (Hono on `:3001`), the frontend (Next.js on `:3000`), and Redis. The redis container always starts, but the backend uses it only when `REDIS_URL` is set and otherwise falls back to an in-memory cache.
+`docker-compose.yml` brings up Postgres 16, the backend (Hono on `:3001`), the frontend (Next.js on `:3000`), and Redis. The redis container always starts, but the backend uses it only when `REDIS_URL` is set and otherwise falls back to an in-memory cache. Every published port binds the host side to `127.0.0.1` (dev credentials, and Redis has no auth), so the stack serves `localhost` on this machine only; it is not a self-hosting path, which is what `docker-compose.prod.yml` is for.
 
 ## Quick start (host)
 

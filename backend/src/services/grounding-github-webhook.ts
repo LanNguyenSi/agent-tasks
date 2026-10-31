@@ -169,6 +169,21 @@ export class GroundingGithubWebhookService {
     await tx.auditLog.create({ data: { taskId: match.task.id, projectId: match.task.projectId, actorId: null, action: pending ? "task.grounding.external_pending" : "task.github.observed", payload: { source: "github_webhook", actorType: "system_observation", deliveryId: event.deliveryId, observationId: fact.id, event: event.kind, repo: event.repo, number: event.number, reason, matchKind: match.strength, operationId, ...(event.login ? { githubLogin: event.login } : {}) } } });
   }
 
+  /**
+   * A merged-PR delivery that no project or no task matched has nothing to
+   * observe and would otherwise leave no trace at all: the delivery is answered
+   * with `observed: 0`. The warn line and the audit row (inside the delivery's
+   * transaction, so a replayed delivery adds none) tell an operator why a
+   * merge did not move a task. One row per bound project for `no_task`, one
+   * project-less row for `no_project`.
+   */
+  private async unmatchedMerge(tx: Prisma.TransactionClient, event: Event, reason: "no_project" | "no_task", projectIds: string[]) {
+    logger.warn({ component: "grounding-github-webhook", event: "pr_merged_unmatched", repo: event.repo, prNumber: event.number, reason, deliveryId: event.deliveryId, ...(projectIds.length ? { projectIds } : {}) }, reason === "no_project" ? "merged pull request matched no project: the repo is not bound to any project" : "merged pull request matched no task of the bound projects");
+    for (const projectId of projectIds.length ? projectIds : [null]) {
+      await tx.auditLog.create({ data: { projectId, taskId: null, actorId: null, action: "task.reviewed", payload: { source: "github_webhook", actorType: "system_observation", deliveryId: event.deliveryId, event: "pr_merged_unmatched", repo: event.repo, number: event.number, reason } } });
+    }
+  }
+
   private async changedHead(tx: Prisma.TransactionClient, task: GroundingTask, event: Event) {
     if (!event.head) return false;
     const binding = await tx.groundingBinding.findUnique({ where: { taskId: task.id } });
@@ -208,6 +223,7 @@ export class GroundingGithubWebhookService {
       return { observed: 0, changed };
     }
     const matches = await this.matches(tx, event, projects.map(project => project.id));
+    if (event.kind === "pr_merged" && !matches.length) await this.unmatchedMerge(tx, event, projects.length ? "no_task" : "no_project", projects.map(project => project.id));
     const changes: GithubObservedContextChange[] = [];
     const observations: Array<{ match: Match; pending: boolean; reason: string; operationId: string | null }> = [];
     const acknowledge: string[] = [];
