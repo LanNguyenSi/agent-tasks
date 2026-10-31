@@ -96,6 +96,33 @@ function clearOAuthCookies(c: CookieWriter): void {
   c.header("Set-Cookie", clearCookie(OAUTH_CONNECT_USER_COOKIE), { append: true });
 }
 
+// Reason codes the GitHub callback hands to the frontend error page
+// (`/auth/error?reason=<code>`): `bad_request`, `state_mismatch`,
+// `session_mismatch`, `callback_failed`, or GitHub's own sanitised `error`
+// value (for example `access_denied`). The page maps each code to a
+// user-facing message (frontend/src/app/auth/error/messages.ts); the SSO
+// callback uses the same parameter name.
+//
+// Every failed callback ends here: the transient OAuth cookies are cleared
+// (as on success) and the browser lands on the error page with a reason.
+// `reason` is either a literal code from the list above or the provider's
+// `error` value after `sanitizeProviderError`, so it is always [A-Za-z0-9_-].
+function redirectToAuthError(
+  c: CookieWriter & { redirect: (location: string) => Response },
+  reason: string,
+): Response {
+  clearOAuthCookies(c);
+  return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=${reason}`);
+}
+
+// GitHub echoes `error` (for example `access_denied` when the user declines)
+// back on the callback; restrict it to a safe charset before forwarding it.
+// An empty result (nothing but unsafe characters) is a generic failure.
+function sanitizeProviderError(value: string): string {
+  const safe = value.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40);
+  return safe || "callback_failed";
+}
+
 function buildUserResponse(user: {
   id: string;
   login: string;
@@ -204,18 +231,25 @@ authRouter.get("/github/connect", (c) => {
 authRouter.get("/github/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
+  const providerError = c.req.query("error");
   const cookieHeader = c.req.header("Cookie");
 
   const storedState = readCookie(cookieHeader, OAUTH_STATE_COOKIE);
   const intent = readCookie(cookieHeader, OAUTH_INTENT_COOKIE);
   const connectUserId = readCookie(cookieHeader, OAUTH_CONNECT_USER_COOKIE);
 
+  // The user declined (or GitHub refused) the authorization: GitHub redirects
+  // back with `error` and no code.
+  if (providerError) {
+    return redirectToAuthError(c, sanitizeProviderError(providerError));
+  }
+
   if (!code) {
-    return c.json({ error: "bad_request", message: "Missing code parameter" }, 400);
+    return redirectToAuthError(c, "bad_request");
   }
 
   if (!storedState || storedState !== state) {
-    return c.json({ error: "bad_request", message: "Invalid OAuth state" }, 400);
+    return redirectToAuthError(c, "state_mismatch");
   }
 
   try {
@@ -229,8 +263,7 @@ authRouter.get("/github/callback", async (c) => {
         : null;
 
       if (!session || !connectUserId || session.userId !== connectUserId) {
-        clearOAuthCookies(c);
-        return c.redirect(`${config.FRONTEND_URL}/auth/error`);
+        return redirectToAuthError(c, "session_mismatch");
       }
 
       await connectGitHubToExistingUser(session.userId, githubUser, tokenResponse.access_token);
@@ -252,8 +285,7 @@ authRouter.get("/github/callback", async (c) => {
       { component: "oauth", err, errMessage: err instanceof Error ? err.message : String(err) },
       "OAuth callback error",
     );
-    clearOAuthCookies(c);
-    return c.redirect(`${config.FRONTEND_URL}/auth/error`);
+    return redirectToAuthError(c, "callback_failed");
   }
 });
 

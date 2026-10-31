@@ -164,6 +164,72 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
   });
 }
 
+/**
+ * True when the project has a task bound to the PR that `findTasksByPr` leaves
+ * out because it is already terminal or still in `backlog`. A merged-PR
+ * delivery for such a task is the normal echo of a merge agent-tasks did
+ * itself (or of a task that was closed by hand), not a delivery that matched
+ * nothing, so the unmatched-merge diagnostics must not fire for it.
+ */
+async function hasUnopenedTaskForPr(projectId: string, hint: PrBindingHint): Promise<boolean> {
+  const { prNumber, prUrl, headBranch } = hint;
+  const rows = await prisma.task.findMany({
+    where: {
+      projectId,
+      OR: [
+        { prNumber },
+        ...(prUrl ? [{ prUrl }] : []),
+        ...(headBranch ? [{ branchName: headBranch }] : []),
+        { title: { contains: `[PR #${prNumber}]` } },
+      ],
+    },
+    select: { id: true },
+    take: 1,
+  });
+  return rows.length > 0;
+}
+
+/**
+ * A merged-PR delivery that moved nothing because no project or no task
+ * matched it. The delivery is acknowledged with 200 before dispatch, so
+ * without this line (and the audit row) an operator sees a green delivery and
+ * a task that did not move, with no trace of why. `reason` says which
+ * lookup came up empty: `no_project` (the repo is bound to no project, often
+ * an App installation or `githubRepo` that does not cover the repo) or
+ * `no_task` (a project is bound but no open task carries the PR).
+ */
+async function reportUnmatchedMerge(input: {
+  repo: string;
+  prNumber: number;
+  reason: "no_project" | "no_task";
+  projectId?: string;
+}): Promise<void> {
+  logger.warn(
+    {
+      component: "github-webhook",
+      event: "pr_merged_unmatched",
+      repo: input.repo,
+      prNumber: input.prNumber,
+      reason: input.reason,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+    },
+    input.reason === "no_project"
+      ? "merged pull request matched no project: the repo is not bound to any project's githubRepo"
+      : "merged pull request matched no open task of the bound project",
+  );
+  await logAuditEvent({
+    action: "task.reviewed",
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    payload: {
+      source: "github_webhook",
+      event: "pr_merged_unmatched",
+      pr_number: input.prNumber,
+      repo: input.repo,
+      reason: input.reason,
+    },
+  });
+}
+
 /** How many times a webhook status write re-reads and re-decides after losing a race. */
 const WEBHOOK_STATUS_WRITE_ATTEMPTS = 3;
 
@@ -416,7 +482,16 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
     },
   });
 
-  if (projects.length === 0) return;
+  if (projects.length === 0) {
+    if (payload.action === "closed" && payload.pull_request.merged) {
+      await reportUnmatchedMerge({
+        repo: repoFullName,
+        prNumber: payload.pull_request.number,
+        reason: "no_project",
+      });
+    }
+    return;
+  }
 
   const prNumber = payload.pull_request.number;
   const hint: PrBindingHint = {
@@ -468,6 +543,14 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         // it is always a state of that workflow; a workflow without a
         // review-like state gets no confirmation-required transition.
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
+        if (tasks.length === 0 && !(await hasUnopenedTaskForPr(project.id, hint))) {
+          await reportUnmatchedMerge({
+            repo: repoFullName,
+            prNumber,
+            reason: "no_task",
+            projectId: project.id,
+          });
+        }
         for (const task of tasks) {
           const definition = await resolveEffectiveDefinition(task, prisma);
           const moved = await writeWebhookStatus(task, definition, (currentStatus) =>

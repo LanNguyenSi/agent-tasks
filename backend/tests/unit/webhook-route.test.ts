@@ -30,6 +30,7 @@ vi.mock("../../src/lib/logger.js", () => ({
 }));
 
 import { webhookRouter } from "../../src/routes/webhooks.js";
+import { logger } from "../../src/lib/logger.js";
 
 // Flush the fire-and-forget dispatch IIFE (it awaits a mocked handler that
 // resolves immediately, so one macrotask turn is enough).
@@ -99,5 +100,42 @@ describe("POST /github delivery-id dedup wiring", () => {
 
     await flushDispatch();
     expect(webhookMocks.handlePullRequestEvent).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("POST /github dispatch errors", () => {
+  const headers = { "X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "delivery-err", "Content-Type": "application/json" };
+
+  it("a handler failure is logged with the delivery id, the event and the repo, and the response stays 200", async () => {
+    webhookMocks.claimWebhookDelivery.mockResolvedValue(true);
+    const boom = new Error("db down");
+    webhookMocks.handlePullRequestEvent.mockRejectedValue(boom);
+
+    const res = await post(headers);
+
+    expect(res.status).toBe(200);
+    await flushDispatch();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logger.error).mock.calls[0]![0]).toMatchObject({
+      err: boom,
+      errMessage: "db down",
+      component: "webhook",
+      event: "pull_request",
+      deliveryId: "delivery-err",
+      repo: "o/r",
+    });
+  });
+
+  it("a payload without a repository still logs the failure (repo is then undefined), and a null payload does not break the logging", async () => {
+    webhookMocks.claimWebhookDelivery.mockResolvedValue(true);
+    webhookMocks.handlePullRequestEvent.mockRejectedValue(new Error("bad payload"));
+
+    await post(headers, JSON.stringify({ action: "closed" }));
+    await post({ ...headers, "X-GitHub-Delivery": "delivery-null" }, "null");
+    await flushDispatch();
+
+    expect(logger.error).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(logger.error).mock.calls[0]![0]).toMatchObject({ deliveryId: "delivery-err", repo: undefined });
+    expect(vi.mocked(logger.error).mock.calls[1]![0]).toMatchObject({ deliveryId: "delivery-null", repo: undefined });
   });
 });
