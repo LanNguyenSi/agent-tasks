@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StrictMode } from "react";
 import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../src/lib/api", () => ({
@@ -121,7 +122,7 @@ describe("ConnectAgentModal", () => {
     await user.click(screen.getByTestId("connect-generate-btn"));
     await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
 
-    const call = mockCreate.mock.calls[0]![0];
+    const call = (await waitForCall(mockCreate))[0]![0];
     expect(call.teamId).toBe("team-1");
     expect(call.scopes).toEqual(
       expect.arrayContaining([
@@ -257,7 +258,7 @@ describe("ConnectAgentModal", () => {
     await screen.findByTestId("connect-snippet");
 
     expect(spy).toHaveBeenCalledTimes(1);
-    const passedToken = spy.mock.calls[0]![0];
+    const passedToken = (await waitForCall(spy))[0]![0];
     expect(passedToken.id).toBe("t-1");
     expect(passedToken.scopes).toContain("tasks:claim");
   });
@@ -601,7 +602,7 @@ describe("ConnectAgentModal: a result the dialog cannot show", () => {
     view.unmount();
 
     expect(unseen).toHaveBeenCalledTimes(1);
-    expect(unseen.mock.calls[0][0]).not.toHaveProperty("masked", true);
+    expect((await waitForCall(unseen))[0][0]).not.toHaveProperty("masked", true);
   });
 
   it("copied, masked and revealed again, then unmounted: the secret is handed over not masked", async () => {
@@ -621,7 +622,7 @@ describe("ConnectAgentModal: a result the dialog cannot show", () => {
     view.unmount();
 
     expect(unseen).toHaveBeenCalledTimes(1);
-    expect(unseen.mock.calls[0][0]).not.toHaveProperty("masked", true);
+    expect((await waitForCall(unseen))[0][0]).not.toHaveProperty("masked", true);
   });
 
   // React StrictMode runs every effect twice (mount, cleanup, mount). The

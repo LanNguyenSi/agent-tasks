@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { Project, Team, User } from "../../src/lib/api";
 
@@ -137,10 +138,12 @@ async function openByKeyboard(name: string): Promise<HTMLElement> {
   return panel;
 }
 
-function expectNoBoardNavigation(): void {
-  for (const [url] of [...router.push.mock.calls, ...router.replace.mock.calls]) {
-    expect(url).not.toContain("/board");
-  }
+async function expectNoBoardNavigation(): Promise<void> {
+  await waitFor(() => {
+    for (const [url] of [...router.push.mock.calls, ...router.replace.mock.calls]) {
+      expect(url).not.toContain("/board");
+    }
+  });
 }
 
 describe("/projects Table view: row menu items run instead of opening the board", () => {
@@ -178,7 +181,7 @@ describe("/projects Table view: row menu items run instead of opening the board"
 
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith("/projects/workflow?projectId=proj-1");
-    expectNoBoardNavigation();
+    await expectNoBoardNavigation();
   });
 
   it("a click on the Managed by GitHub sync note does not navigate", async () => {
@@ -195,7 +198,7 @@ describe("/projects Table view: row menu items run instead of opening the board"
     const tr = await tableRow("Manual Project");
     fireEvent.click(within(tr).getByText("Manual project"));
     expect(router.push).toHaveBeenCalledTimes(1);
-    expect(router.push.mock.calls[0]?.[0]).toContain("/projects/proj-1/board");
+    expect((await waitForCall(router.push))[0]?.[0]).toContain("/projects/proj-1/board");
   });
 });
 

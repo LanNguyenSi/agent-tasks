@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, within, fireEvent } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type {
   Team,
   Task,
@@ -185,7 +186,7 @@ function headerLink(title: string): HTMLAnchorElement {
 
 /** Run the page's 15 s poll once, now. */
 async function pollNow(spy: { mock: { calls: unknown[][] } }) {
-  const call = spy.mock.calls.find((c) => c[1] === 15_000);
+  const call = (await waitForCall(spy)).find((c) => c[1] === 15_000);
   if (!call) throw new Error("no 15 s poll registered");
   await act(async () => {
     (call[0] as () => void)();
@@ -211,7 +212,7 @@ describe("home page: one scoped request per widget", () => {
     serveDataset([makeTask()]);
     await renderHome();
 
-    const calls = mockGetTeamTasks.mock.calls;
+    const calls = await waitForCall(mockGetTeamTasks, { times: 6 });
     expect(calls).toHaveLength(6);
     expect(calls.every((c) => c[0] === "team-1")).toBe(true);
     const opts = calls.map((c) => c[1]);

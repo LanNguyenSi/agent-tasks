@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, fireEvent, waitFor, within } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Project, Team, User } from "../../src/lib/api";
 
 // The page's URL is the in-memory history of tests/setup/fakeNavigation.ts, so
@@ -351,12 +352,12 @@ describe("/projects page: current team follows the URL", () => {
     await waitFor(() => expect(syncTeamFromGitHub).toHaveBeenCalledWith("t1"));
     pick("Team Two");
     await screen.findAllByText("Second Team Project");
-    const loadsBefore = mockGetProjects.mock.calls.length;
+    const loadsBefore = (await waitForCall(mockGetProjects)).length;
     await act(async () => {
       sync.resolve({ created: 0, updated: 0, pruned: 0, message: "ok" } as never);
     });
 
-    expect(mockGetProjects.mock.calls).toHaveLength(loadsBefore);
+    expect(await waitForCall(mockGetProjects, { times: loadsBefore })).toHaveLength(loadsBefore);
     expect(screen.getAllByText("Second Team Project").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Loading projects")).not.toBeInTheDocument();
     expect(screen.getByText(/^Team Two · /)).toBeInTheDocument();

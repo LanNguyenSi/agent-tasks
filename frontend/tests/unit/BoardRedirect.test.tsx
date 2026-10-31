@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -25,7 +26,8 @@ async function redirectFrom(url: string): Promise<string> {
   render(<DashboardRedirectPage />);
   await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledTimes(1));
   expect(routerMocks.push).not.toHaveBeenCalled();
-  return routerMocks.replace.mock.calls[0]![0] as string;
+  const calls = await waitForCall(routerMocks.replace);
+  return calls[0]![0] as string;
 }
 
 beforeEach(() => {

@@ -6,6 +6,7 @@
  * and that only the awaited params/searchParams matter (no data fetching).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { waitForCall } from "./helpers/waitForCall";
 
 const redirectMock = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
@@ -23,7 +24,8 @@ async function redirectTo(
     searchParams: Promise.resolve(searchParams),
   });
   expect(redirectMock).toHaveBeenCalledTimes(1);
-  return redirectMock.mock.calls[0][0] as string;
+  const calls = await waitForCall(redirectMock);
+  return calls[0][0] as string;
 }
 
 beforeEach(() => {

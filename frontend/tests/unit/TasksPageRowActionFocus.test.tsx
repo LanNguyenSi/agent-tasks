@@ -28,6 +28,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor, act } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { Task, User, Team, TeamTasksProject } from "../../src/lib/api";
 
@@ -209,7 +210,7 @@ describe("/tasks row action dropping its row: focus recovery", () => {
     // The action completed and the list refreshed (the row is still there,
     // now open), and focus never left the row's own trigger.
     await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledWith("t-a", { status: "open" }));
-    expect(mockGetTeamTasks.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect((await waitForCall(mockGetTeamTasks, { times: 2 })).length).toBeGreaterThanOrEqual(2);
     await settle();
     expect(trigger("Row A")).toHaveFocus();
   });

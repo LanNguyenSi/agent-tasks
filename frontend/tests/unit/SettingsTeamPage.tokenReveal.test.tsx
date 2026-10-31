@@ -12,7 +12,8 @@
  */
 import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, within, act } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within, act, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { AgentToken, Team, User } from "../../src/lib/api";
 
 vi.mock("next/navigation", async () => {
@@ -499,7 +500,7 @@ describe("token reveal: the team changes while the create is pending", () => {
     await screen.findByText("beta-bot");
     pick("Alpha");
     await screen.findByText("alpha-bot");
-    const loadsBefore = mockGetAgentTokens.mock.calls.length;
+    const loadsBefore = (await waitForCall(mockGetAgentTokens)).length;
 
     await act(async () => {
       pending.resolve({ token: token("tok-late", "late-bot"), rawToken: SECRET_A });
@@ -507,7 +508,7 @@ describe("token reveal: the team changes while the create is pending", () => {
 
     expect(await screen.findByText("late-bot")).toBeInTheDocument();
     expect(screen.getByText("alpha-bot")).toBeInTheDocument();
-    expect(mockGetAgentTokens.mock.calls.length).toBe(loadsBefore);
+    expect((await waitForCall(mockGetAgentTokens)).length).toBe(loadsBefore);
     const banner = revealBanner('Token "late-bot" created (shown once)');
     expect(banner.closest("#api-tokens")).not.toBeNull();
     expect(within(banner).getByText(SECRET_A)).toBeInTheDocument();
@@ -521,13 +522,13 @@ describe("token reveal: the team changes while the create is pending", () => {
     submitCreate("late-bot");
     pick("Beta");
     await screen.findByText("beta-bot");
-    const loadsBefore = mockGetAgentTokens.mock.calls.length;
+    const loadsBefore = (await waitForCall(mockGetAgentTokens)).length;
 
     await act(async () => {
       pending.resolve({ token: token("tok-late", "late-bot"), rawToken: SECRET_A });
     });
 
-    expect(mockGetAgentTokens.mock.calls.length).toBe(loadsBefore);
+    expect((await waitForCall(mockGetAgentTokens)).length).toBe(loadsBefore);
   });
 });
 
@@ -703,7 +704,7 @@ describe("token reveal: the shown team's list is loading, failed, or in use", ()
     fireEvent.click(screen.getByRole("button", { name: "Create custom token" }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByPlaceholderText("e.g. ci-bot"), { target: { value: "typed-name" } });
-    const loadsBefore = mockGetAgentTokens.mock.calls.length;
+    const loadsBefore = (await waitForCall(mockGetAgentTokens)).length;
 
     await act(async () => {
       pending.resolve({ token: token("tok-late", "late-bot"), rawToken: SECRET_A });
@@ -714,7 +715,7 @@ describe("token reveal: the shown team's list is loading, failed, or in use", ()
     expect(within(dialog).getByPlaceholderText("e.g. ci-bot")).toHaveValue("typed-name");
     expect(screen.getByText("late-bot")).toBeInTheDocument();
     expect(screen.getByText(SECRET_A)).toBeInTheDocument();
-    expect(mockGetAgentTokens.mock.calls.length).toBe(loadsBefore);
+    expect((await waitForCall(mockGetAgentTokens)).length).toBe(loadsBefore);
   });
 
   it("a rename dialog survives the same way", async () => {
@@ -796,7 +797,9 @@ describe("token reveal: the secret stays in React state", () => {
     });
     expect(screen.getByText(SECRET_A)).toBeInTheDocument();
 
-    for (const [, value] of setItem.mock.calls) expect(String(value)).not.toContain(SECRET_A);
+    await waitFor(() => {
+      for (const [, value] of setItem.mock.calls) expect(String(value)).not.toContain(SECRET_A);
+    });
     expect(JSON.stringify(window.localStorage)).not.toContain(SECRET_A);
     expect(JSON.stringify(window.sessionStorage)).not.toContain(SECRET_A);
     expect(nav.entries.join(" ")).not.toContain("SECRET");

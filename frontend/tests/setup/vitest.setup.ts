@@ -23,15 +23,22 @@
  * itself:
  *   - tab title: `await expectDocumentTitle(...)` (tests/unit/helpers/documentTitle.ts);
  *     eslint.config.mjs flags a bare `expect(document.title)` in tests;
- *   - a mock call or count: `await waitFor(() => expect(mock).toHaveBeenCalledTimes(n))`,
- *     and when the count must stay exact, settle pending effects afterwards
+ *   - a mock call or count: `await waitForCall(mock)` (or the call itself
+ *     inside a `waitFor` callback, e.g. `await waitFor(() => expect(mock)
+ *     .toHaveBeenCalledTimes(n))`), and when the count must stay exact,
+ *     settle pending effects afterwards
  *     (`await act(async () => { await Promise.resolve(); })`) and assert it
- *     again (see SettingsTeamPage.headerSync.test.tsx).
+ *     again (see SettingsTeamPage.headerSync.test.tsx). Reading
+ *     the plain form `<expr>.mock.calls` outside a `waitFor` call is now
+ *     mechanically guarded: eslint.config.mjs flags it in tests (waitForCall
+ *     is the sanctioned reader). Other spellings (destructuring `calls` from
+ *     `.mock`, an alias of `.mock`, `mock["calls"]`, `mock.lastCall`) are not
+ *     caught and stay a review rule. Whether a waited-for call is the *right* call (an exact count
+ *     that a late extra call would break) stays a review rule.
  * Safe without a wait: the awaited element is itself rendered from the
  * effect's result (the effect ran first), the asserted call is made by an
  * event handler or an async function rather than an effect, or the update was
- * triggered inside `act` (RTL's fireEvent, userEvent). A lint rule cannot tell
- * these apart for call counts, so that part stays a review rule.
+ * triggered inside `act` (RTL's fireEvent, userEvent).
  */
 import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";

@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { expectDocumentTitle } from "./helpers/documentTitle";
 import { render, screen, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import { ApiRequestError, type User, type Project, type Task } from "../../src/lib/api";
 
@@ -75,8 +76,9 @@ function renderRoute() {
   );
 }
 
-function redirectTargets(): string[] {
-  return [...new Set(nav.router.replace.mock.calls.map((c) => String(c[0])))];
+async function redirectTargets(): Promise<string[]> {
+  const calls = await waitForCall(nav.router.replace);
+  return [...new Set(calls.map((c) => String(c[0])))];
 }
 
 beforeEach(() => {
@@ -159,7 +161,7 @@ describe("board route (hub layout + board page)", () => {
 
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalled());
     // The layout and the board both react; both go to the same sign-in URL.
-    expect(redirectTargets()).toEqual([
+    expect(await redirectTargets()).toEqual([
       "/auth?redirect=%2Fprojects%2Fp-1%2Fboard%3FtaskId%3Dk-1",
     ]);
     expect(nav.router.push).not.toHaveBeenCalled();
@@ -191,7 +193,7 @@ describe("board route (hub layout + board page)", () => {
 
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/projects"));
     // The layout and the board both react; both go to the same place.
-    expect(redirectTargets()).toEqual(["/projects"]);
+    expect(await redirectTargets()).toEqual(["/projects"]);
     expect(nav.router.push).not.toHaveBeenCalled();
     expect(screen.queryByText("Could not load tasks")).not.toBeInTheDocument();
   });

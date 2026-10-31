@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Project, Team, User } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -108,9 +109,9 @@ describe("/projects with a team", () => {
     expect(screen.getAllByRole("button", { name: /New Project/ }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: "Create a team" })).toBeNull();
     expect(screen.queryByText("Shared Project")).toBeNull();
-    expect(vi.mocked(getProjects).mock.calls.every((c) => c[0] === "t1")).toBe(true);
+    expect((await waitForCall(vi.mocked(getProjects))).every((c) => c[0] === "t1")).toBe(true);
     // No redirect: the only replace writes the resolved team into this page's
     // own URL (lib/teamSwitch useCurrentTeam).
-    expect(routerMocks.replace.mock.calls.map((c) => c[0])).toEqual(["/projects?teamId=t1"]);
+    expect((await waitForCall(routerMocks.replace)).map((c) => c[0])).toEqual(["/projects?teamId=t1"]);
   });
 });

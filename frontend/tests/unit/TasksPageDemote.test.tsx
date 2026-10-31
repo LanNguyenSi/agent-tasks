@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { Task, User, Team, TeamTasksProject } from "../../src/lib/api";
 
@@ -122,7 +123,7 @@ describe("/tasks page -- Move to backlog row action", () => {
     await openRowMenu("Promoted by mistake");
     expect(await screen.findByRole("menuitem", { name: "Promote" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Move to backlog" })).not.toBeInTheDocument();
-    expect(mockGetTeamTasks.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect((await waitForCall(mockGetTeamTasks, { times: 2 })).length).toBeGreaterThanOrEqual(2);
   });
 
   it("a rejected request shows the server message in the Action failed banner and does not re-fetch", async () => {

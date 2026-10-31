@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Team, Task, TeamTasksProject, TeamTasksResponse, User, Workflow } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -121,8 +122,9 @@ function serve(dataset: Task[], statusParam: string | undefined): TeamTasksRespo
   };
 }
 
-function priorityRequests(): (string | undefined)[] {
-  return mockGetTeamTasks.mock.calls.filter((c) => c[1]?.priority === "CRITICAL,HIGH").map((c) => c[1]?.status);
+async function priorityRequests(): Promise<(string | undefined)[]> {
+  const calls = await waitForCall(mockGetTeamTasks);
+  return calls.filter((c) => c[1]?.priority === "CRITICAL,HIGH").map((c) => c[1]?.status);
 }
 
 function priorityTitles(): string[] {
@@ -178,8 +180,9 @@ describe("home page: Priority widget follows the project workflows", () => {
     expect(titles.some((t) => t.startsWith("other project done"))).toBe(false);
     expect(titles.some((t) => t.startsWith("medium qa"))).toBe(false);
     // First request before the workflows are known, then once with the custom open state.
-    expect(priorityRequests()).toEqual(["open,in_progress,review", "open,in_progress,review,qa"]);
-    expect(mockGetWorkflows.mock.calls.map((c) => c[0]).sort()).toEqual(["p1", "p2"]);
+    expect(await priorityRequests()).toEqual(["open,in_progress,review", "open,in_progress,review,qa"]);
+    const workflowReads = await waitForCall(mockGetWorkflows, { times: 2 });
+    expect(workflowReads.map((c) => c[0]).sort()).toEqual(["p1", "p2"]);
   });
 
   it("does not show a custom terminal state a response returns anyway", async () => {
@@ -205,7 +208,7 @@ describe("home page: Priority widget follows the project workflows", () => {
     await vi.waitFor(() => {
       expect(mockGetWorkflows).toHaveBeenCalled();
     });
-    expect(priorityRequests()).toEqual(["open,in_progress,review"]);
+    expect(await priorityRequests()).toEqual(["open,in_progress,review"]);
     const titles = priorityTitles();
     expect(titles.some((t) => t.startsWith("plain open"))).toBe(true);
     expect(titles.some((t) => t.startsWith("needs qa"))).toBe(false);
@@ -219,7 +222,7 @@ describe("home page: Priority widget follows the project workflows", () => {
     await vi.waitFor(() => {
       expect(mockGetWorkflows).toHaveBeenCalledTimes(2);
     });
-    expect(priorityRequests()).toEqual(["open,in_progress,review"]);
+    expect(await priorityRequests()).toEqual(["open,in_progress,review"]);
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(6);
   });
 });
@@ -264,8 +267,9 @@ const QA_FLOW = flow(
 type Key = "mine" | "priority" | "review" | "done";
 
 /** The calls of one widget's request (the widgets differ in their filters). */
-function callsOf(key: Key) {
-  return mockGetTeamTasks.mock.calls
+async function callsOf(key: Key) {
+  const calls = await waitForCall(mockGetTeamTasks);
+  return calls
     .map((c) => c[1] ?? {})
     .filter((o) => {
       if (key === "mine") return o.mine === true;
@@ -331,10 +335,10 @@ describe("home page: Mine, In Review and Done widgets follow the project workflo
       expect(widgetTitles("My Tasks").some((t) => t.startsWith("my spec"))).toBe(true);
     });
 
-    expect(callsOf("mine")).toEqual(["open,in_progress,review", ACTIONABLE]);
-    expect(callsOf("priority")).toEqual(["open,in_progress,review", ACTIONABLE]);
-    expect(callsOf("review")).toEqual(["review", "review,qa"]);
-    expect(callsOf("done")).toEqual(["done", "done,shipped,wontfix"]);
+    expect(await callsOf("mine")).toEqual(["open,in_progress,review", ACTIONABLE]);
+    expect(await callsOf("priority")).toEqual(["open,in_progress,review", ACTIONABLE]);
+    expect(await callsOf("review")).toEqual(["review", "review,qa"]);
+    expect(await callsOf("done")).toEqual(["done", "done,shipped,wontfix"]);
     // Six first requests, then one more for each of the four widgets whose names grew.
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(10);
   });
@@ -408,9 +412,9 @@ describe("home page: Mine, In Review and Done widgets follow the project workflo
     await vi.waitFor(() => {
       expect(widgetTitles("My Tasks").some((t) => t.startsWith("my open"))).toBe(true);
     });
-    expect(callsOf("mine")).toEqual(["open,in_progress,review"]);
-    expect(callsOf("review")).toEqual(["review"]);
-    expect(callsOf("done")).toEqual(["done"]);
+    expect(await callsOf("mine")).toEqual(["open,in_progress,review"]);
+    expect(await callsOf("review")).toEqual(["review"]);
+    expect(await callsOf("done")).toEqual(["done"]);
     expect(mockGetTeamTasks).toHaveBeenCalledTimes(6);
     expect(has(widgetTitles("My Tasks"), "my spec")).toBe(false);
     expect(has(widgetTitles("In Review"), "p2 review name")).toBe(true);
@@ -451,7 +455,7 @@ describe("home page: a legacy stored copy of the default workflow is read like t
     await vi.waitFor(() => {
       expect(widgetTitles("In Review").some((t) => t.startsWith("legacy review"))).toBe(true);
     });
-    expect(callsOf("review").every((status) => status === "review")).toBe(true);
+    expect((await callsOf("review")).every((status) => status === "review")).toBe(true);
     const titles = widgetTitles("In Review");
     expect(has(titles, "legacy progress")).toBe(false);
     expect(has(titles, "legacy open")).toBe(false);
@@ -478,7 +482,7 @@ describe("home page: a project whose workflows answer 403 is asked once", () => 
   });
 
   async function pollOnce() {
-    const before = mockGetTeamTasks.mock.calls.length;
+    const before = (await waitForCall(mockGetTeamTasks)).length;
     tick!();
     await vi.waitFor(() => {
       expect(mockGetTeamTasks.mock.calls.length).toBeGreaterThan(before);
@@ -487,7 +491,7 @@ describe("home page: a project whose workflows answer 403 is asked once", () => 
     await new Promise((r) => setTimeout(r, 20));
   }
 
-  const callsFor = (id: string) => mockGetWorkflows.mock.calls.filter((c) => c[0] === id).length;
+  const callsFor = async (id: string) => (await waitForCall(mockGetWorkflows)).filter((c) => c[0] === id).length;
 
   it("requests a 403 project once across two polls and still reads the other project's workflows", async () => {
     mockGetTeamTasks.mockImplementation(async (_t, opts) => serveScoped(SCOPED_DATASET(), opts ?? {}));
@@ -496,15 +500,15 @@ describe("home page: a project whose workflows answer 403 is asked once", () => 
       return [PIPELINE];
     });
     await renderHome();
-    await vi.waitFor(() => {
-      expect(callsFor("p2")).toBe(1);
+    await vi.waitFor(async () => {
+      expect(await callsFor("p2")).toBe(1);
     });
     await pollOnce();
     await pollOnce();
-    expect(callsFor("p2")).toBe(1);
-    expect(callsFor("p1")).toBe(1);
+    expect(await callsFor("p2")).toBe(1);
+    expect(await callsFor("p1")).toBe(1);
     // p1's workflow still applies: its custom open state is in the mine request.
-    expect(callsOf("mine").at(-1)).toBe("open,in_progress,review,spec,plan,implement,test");
+    expect((await callsOf("mine")).at(-1)).toBe("open,in_progress,review,spec,plan,implement,test");
   });
 
   it("asks again after a failure that is not a 403", async () => {
@@ -514,12 +518,14 @@ describe("home page: a project whose workflows answer 403 is asked once", () => 
       return [PIPELINE];
     });
     await renderHome();
-    await vi.waitFor(() => {
-      expect(callsFor("p2")).toBe(1);
+    await vi.waitFor(async () => {
+      expect(await callsFor("p2")).toBe(1);
     });
     await pollOnce();
-    expect(callsFor("p2")).toBe(2);
-    expect(callsFor("p1")).toBe(1);
+    await vi.waitFor(async () => {
+      expect(await callsFor("p2")).toBe(2);
+    });
+    expect(await callsFor("p1")).toBe(1);
   });
 
   it("asks again after a plain network error without a status", async () => {
@@ -529,10 +535,12 @@ describe("home page: a project whose workflows answer 403 is asked once", () => 
       return [PIPELINE];
     });
     await renderHome();
-    await vi.waitFor(() => {
-      expect(callsFor("p2")).toBe(1);
+    await vi.waitFor(async () => {
+      expect(await callsFor("p2")).toBe(1);
     });
     await pollOnce();
-    expect(callsFor("p2")).toBe(2);
+    await vi.waitFor(async () => {
+      expect(await callsFor("p2")).toBe(2);
+    });
   });
 });

@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Project, Team } from "../../src/lib/api";
+import { waitForCall } from "./helpers/waitForCall";
 
 vi.mock("../../src/lib/api", () => ({
   getTeams: vi.fn(),
@@ -45,7 +46,8 @@ describe("getAccessContext", () => {
     const ctx = await getAccessContext();
     expect(ctx).toEqual({ teams: [], sharedProjects: [SHARED] });
     expect(getProjects).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(getProjects).mock.calls[0]).toEqual([]);
+    const calls = await waitForCall(vi.mocked(getProjects));
+    expect(calls[0]).toEqual([]);
   });
 
   it("zero teams and nothing shared: both lists empty", async () => {

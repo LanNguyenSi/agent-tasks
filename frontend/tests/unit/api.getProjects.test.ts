@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getProjects } from "../../src/lib/api";
+import { waitForCall } from "./helpers/waitForCall";
 
 const realFetch = globalThis.fetch;
 
@@ -18,8 +19,9 @@ function mockFetch() {
   return fn;
 }
 
-function requestedUrl(fn: ReturnType<typeof vi.fn>): string {
-  return String(fn.mock.calls[0]![0]);
+async function requestedUrl(fn: ReturnType<typeof vi.fn>): Promise<string> {
+  const calls = await waitForCall(fn);
+  return String(calls[0]![0]);
 }
 
 beforeEach(() => {
@@ -33,18 +35,18 @@ describe("getProjects", () => {
   it("names the team when one is given", async () => {
     const fn = mockFetch();
     await expect(getProjects("t-1")).resolves.toEqual([{ id: "p-1" }]);
-    expect(requestedUrl(fn)).toMatch(/\/api\/projects\?teamId=t-1$/);
+    expect(await requestedUrl(fn)).toMatch(/\/api\/projects\?teamId=t-1$/);
   });
 
   it("sends no team parameter when called without one", async () => {
     const fn = mockFetch();
     await getProjects();
-    expect(requestedUrl(fn)).toMatch(/\/api\/projects$/);
+    expect(await requestedUrl(fn)).toMatch(/\/api\/projects$/);
   });
 
   it("treats an empty team id like an absent one", async () => {
     const fn = mockFetch();
     await getProjects("");
-    expect(requestedUrl(fn)).toMatch(/\/api\/projects$/);
+    expect(await requestedUrl(fn)).toMatch(/\/api\/projects$/);
   });
 });

@@ -75,9 +75,12 @@ const eslintConfig = defineConfig([
     // Tests: a tab title is written by a passive effect, so a bare
     // `expect(document.title)` read right after an await for other DOM races
     // that effect under load. It belongs in a waitFor callback, via
-    // expectDocumentTitle (tests/unit/helpers/documentTitle.ts). Call counts
-    // of effect-driven mocks have no reliable mechanical guard; the rule for
-    // them is written at the top of tests/setup/vitest.setup.ts.
+    // expectDocumentTitle (tests/unit/helpers/documentTitle.ts). A mock call
+    // made from a promise-driven update has the same lag: reading
+    // `mock.calls` right after render (or after a waitFor on something else)
+    // can run before the call happened, so every call-list read belongs in a
+    // waitFor callback, or in waitForCall
+    // (tests/unit/helpers/waitForCall.ts).
     files: ["tests/**/*.ts", "tests/**/*.tsx"],
     rules: {
       "no-restricted-syntax": [
@@ -88,7 +91,21 @@ const eslintConfig = defineConfig([
           message:
             "Do not read document.title bare in a test: the title is set by a passive effect and can lag the DOM a test just awaited. Use `await expectDocumentTitle(...)` from tests/unit/helpers/documentTitle.ts, or put the expect inside waitFor.",
         },
+        {
+          selector:
+            "MemberExpression[property.name='calls'][object.type='MemberExpression'][object.property.name='mock']:not(:matches(CallExpression[callee.name='waitFor'], CallExpression[callee.object.name='vi'][callee.property.name='waitFor']) MemberExpression)",
+          message:
+            "Do not read mock.calls outside waitFor: a mock called from a promise-driven update can record the call after the await a test just made. Use `await waitForCall(mock)` from tests/unit/helpers/waitForCall.ts, or read mock.calls inside a waitFor callback.",
+        },
       ],
+    },
+  },
+  {
+    // The waitForCall helper is the one sanctioned reader of mock.calls
+    // outside a waitFor callback: it is what does the waiting.
+    files: ["tests/unit/helpers/waitForCall.ts"],
+    rules: {
+      "no-restricted-syntax": "off",
     },
   },
 ]);
