@@ -90,7 +90,7 @@ The backend validates its environment at startup (`backend/src/config/index.ts`)
 | `GITHUB_WEBHOOK_SECRET` | empty | Webhook signature secret, see [webhook-setup.md](webhook-setup.md) |
 | `SSO_ENCRYPTION_KEY` | empty | Required before an SSO connection can be created, see [enterprise-sso.md](enterprise-sso.md) |
 | `ALLOWED_GITHUB_LOGINS` | empty (any verified GitHub user) | Comma-separated logins the identity-broker endpoint `POST /api/auth/register-from-project-pilot` may provision |
-| `TRUSTED_PROXY_HOPS` | `0` (`.env.example`: `1`) | Number of reverse proxies in front of the backend; the rate limiter reads the client address that many `X-Forwarded-For` entries from the right |
+| `TRUSTED_PROXY_HOPS` | `0` (`.env.example` ships `0`; the prod compose file defaults to `1`) | Number of reverse proxies in front of the backend; the rate limiter reads the client address that many `X-Forwarded-For` entries from the right |
 | `REDIS_URL`, `REDIS_KEY_PREFIX` | unset, `agent-tasks:` | Optional shared cache; in-memory without `REDIS_URL` |
 | `IDEMPOTENCY_TTL_DAYS` | `30` | Retention of the idempotency dedup tables before the 6-hourly sweep prunes them |
 | `GROUNDING_RUNTIME_CONFIG` | empty | Grounding runtime configuration, see [grounding-migration.md](grounding-migration.md) |
