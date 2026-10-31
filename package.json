@@ -21,7 +21,7 @@
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
   },
   "engines": {
-    "node": ">=22.9"
+    "node": "^22.13.0 || >=24"
   },
   "devDependencies": {
     "eslint": "^10.14.0",
