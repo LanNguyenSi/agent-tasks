@@ -14,13 +14,16 @@
  * suites. The ESLint rule scoped to `tests/**` (eslint.config.mjs) flags a
  * `.mock.calls` read outside a waitFor callback; this file is the one
  * sanctioned exception.
+ * The default timeout (1000 ms) stays well under the test timeout, so a
+ * mock that is never called fails with this helper's message rather than
+ * a bare "Test timed out".
  * Not a test file (no `.test.` in the name): vitest does not collect it.
  */
 import { vi } from "vitest";
 
 export async function waitForCall<C extends unknown[]>(
   mock: { mock: { calls: C[] } },
-  { times = 1, timeout = 5000 }: { times?: number; timeout?: number } = {},
+  { times = 1, timeout = 1000 }: { times?: number; timeout?: number } = {},
 ): Promise<C[]> {
   return vi.waitFor(
     () => {
