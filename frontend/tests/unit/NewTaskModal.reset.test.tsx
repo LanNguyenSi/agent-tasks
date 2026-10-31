@@ -15,6 +15,7 @@ vi.mock("../../src/lib/api", () => ({
 
 import NewTaskModal from "../../src/components/dashboard/NewTaskModal";
 import { ToastProvider } from "../../src/components/ui/Toast";
+import { waitForCall } from "./helpers/waitForCall";
 import { createTask, claimTask } from "../../src/lib/api";
 
 const mockCreateTask = vi.mocked(createTask);
@@ -123,8 +124,7 @@ describe("NewTaskModal: reset on open", () => {
     await userEvent.type(titleInput(), "New title");
     await userEvent.click(screen.getByRole("button", { name: "Create task" }));
 
-    await waitFor(() => expect(mockCreateTask).toHaveBeenCalled());
-    const body = mockCreateTask.mock.calls[0]![1];
+    const body = (await waitForCall(mockCreateTask))[0]![1];
     expect(body).toMatchObject({ title: "New title", status: "open", priority: "MEDIUM" });
     // Nothing from before the reopen: no description, no due date, no
     // template data (every template field and the task type were cleared).
