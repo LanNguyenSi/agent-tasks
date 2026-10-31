@@ -264,7 +264,9 @@ workflow);
 on the matching tasks and never creates a task, a merged `closed` applies the
 merge target above, and an unmerged `closed` adds a timeline entry only. A
 merged `closed` that moves nothing because the repository is bound to no
-project (`githubRepo` is matched exactly, case-sensitively) or because no open
+project (the `githubRepo` comparison ignores letter case, `mode: "insensitive"`
+on the Prisma filter of the three handlers, and is otherwise exact: no trimming,
+no clone URL; the `push` sync lookup keeps its exact match) or because no open
 task of a bound project carries the PR (`reportUnmatchedMerge`) logs a
 `github-webhook` warn with `repo`, `prNumber` and `reason` (`no_project` or
 `no_task`) and writes a `task.reviewed` audit row with `event:

@@ -19,9 +19,7 @@ const eslintConfig = defineConfig([
     //   a ref/storage side effect in the same effect, so it cannot be split
     //   off without reordering the two,
     // - resetting a form or a section when its key (project, team, task or the
-    //   modal opening) changes while the same effect starts the new load,
-    // - two larger per-key form resets without a load (TaskDetail on task.id,
-    //   NewTaskModal on open/initial status), left as warnings for a follow-up.
+    //   modal opening) changes while the same effect starts the new load.
     // The rule stays a visible warning backlog for these files only and is an
     // error everywhere else, so new code cannot add the pattern unnoticed.
     files: [
@@ -35,9 +33,7 @@ const eslintConfig = defineConfig([
       "src/app/settings/team/page.tsx",
       "src/components/ConnectAgentModal.tsx",
       "src/components/TaskArtifactsSection.tsx",
-      "src/components/TaskDetail.tsx",
       "src/components/ThemePreferenceField.tsx",
-      "src/components/dashboard/NewTaskModal.tsx",
       "src/components/tasks/NewTaskFlow.tsx",
       "src/lib/teamList.tsx",
     ],

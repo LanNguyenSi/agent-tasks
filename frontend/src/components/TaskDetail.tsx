@@ -302,7 +302,13 @@ export default function TaskDetail({
   }, [task]);
 
   // Reset state when switching to a different task (not on every poll refresh).
-  useEffect(() => {
+  // Adjusted in the render that sees the new task id, so the first paint of a
+  // new task never shows the previous task's edit state. The key starts as
+  // null, so the mount itself runs the reset too (initialEditing seeds the
+  // edit fields and edit mode on the first render).
+  const [seenTaskId, setSeenTaskId] = useState<string | null>(null);
+  if (seenTaskId !== task.id) {
+    setSeenTaskId(task.id);
     if (initialEditing) {
       initEditState();
       setIsEditing(true);
@@ -314,8 +320,7 @@ export default function TaskDetail({
     setShowDeleteTaskConfirm(false);
     setShowDiscardTaskConfirm(false);
     setResultExpanded(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.id]);
+  }
 
   // Only show the result Show-more toggle when the collapsed box actually overflows.
   useEffect(() => {

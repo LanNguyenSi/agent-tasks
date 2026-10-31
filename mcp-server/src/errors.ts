@@ -874,6 +874,15 @@ const TOKEN_MISSING_SCOPE_PATTERN = /^Token missing scope: (.*)/;
 // waiting for the webhook is closed by the operator in the UI. The pointer to
 // docs/webhook-setup.md (troubleshooting) lives in WORKFLOW_PRIMER; the
 // 240-char recipe budget leaves no room for it here.
+//
+// The hint is 113 of the recipe's characters and its wording is pinned by its
+// own test, so the re-mint sentence in front of it is what stays short: a
+// backend that refused for TWO scopes (the message `Token missing scope:
+// tasks:transition, github:pr_merge`) names 33 characters, and the recipe is
+// then 239 characters, one under RECIPE_CHAR_BUDGET. Lengthen that sentence
+// without shortening this hint and the two-scope recipe is clamped, losing the
+// tail of the hint. Three or more missing scopes still exceed the budget and
+// clamp the end of the hint.
 const MERGED_OUTSIDE_HINT = ". PR merged outside agent-tasks, task not moved? Do not retry task_merge; ask the operator to close it in the UI.";
 
 const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
@@ -898,7 +907,7 @@ function groundingForbiddenError(body: BackendErrorBody, message: string, verbCo
       ? buildTeachingError({
           code: "forbidden",
           message,
-          recipe: `a team admin must re-mint this agent token with the missing scope (${missing}); existing tokens never gain new scopes${missing.includes("github:pr_merge") ? MERGED_OUTSIDE_HINT : ""}`,
+          recipe: `a team admin must re-mint the token with the scopes (${missing}); existing tokens never gain new scopes${missing.includes("github:pr_merge") ? MERGED_OUTSIDE_HINT : ""}`,
           allowedNext: [],
         })
       : undefined;

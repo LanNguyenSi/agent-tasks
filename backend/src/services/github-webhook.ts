@@ -340,13 +340,28 @@ export function verifyWebhookSignature(
   return constantTimeEqual(expected, signature);
 }
 
+/**
+ * The `githubRepo` filter the legacy `issues`, `pull_request` and
+ * `pull_request_review` handlers select their linked projects with.
+ *
+ * Matched case-insensitively: GitHub sends `repository.full_name` in the case
+ * of the repo's own name, while `project.githubRepo` keeps whatever case the
+ * operator pasted, so an exact match silently linked the delivery to no project
+ * and every merge did nothing. Nothing else about the match is relaxed: the
+ * stored value must still be exactly `owner/repo` (no trimming, no clone URL),
+ * and the `push` sync lookup (`updateProjectSyncAt`) keeps its exact match.
+ */
+function githubRepoFilter(repoFullName: string): Prisma.ProjectWhereInput["githubRepo"] {
+  return { equals: repoFullName, mode: "insensitive" };
+}
+
 /** Process a GitHub issues event — create or transition tasks */
 export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<void> {
   const repoFullName = payload.repository.full_name;
 
   // Find all projects linked to this repo
   const projects = await prisma.project.findMany({
-    where: { githubRepo: repoFullName },
+    where: { githubRepo: githubRepoFilter(repoFullName) },
     select: { id: true, teamId: true },
   });
 
@@ -473,7 +488,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
   const repoFullName = payload.repository.full_name;
 
   const projects = await prisma.project.findMany({
-    where: { githubRepo: repoFullName },
+    where: { githubRepo: githubRepoFilter(repoFullName) },
     select: {
       id: true,
       soloMode: true,
@@ -596,7 +611,7 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
 
   const repoFullName = payload.repository.full_name;
   const projects = await prisma.project.findMany({
-    where: { githubRepo: repoFullName },
+    where: { githubRepo: githubRepoFilter(repoFullName) },
     select: { id: true },
   });
   if (projects.length === 0) return;
