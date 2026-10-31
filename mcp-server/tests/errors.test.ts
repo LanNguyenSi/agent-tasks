@@ -676,6 +676,25 @@ describe("mapBackendError catalog", () => {
     expect(err.error.allowedNext).toEqual([]);
     assertAllowedNextRegistered(err, registered);
   });
+  // A token without github:pr_merge is met by an agent whose PR was already merged outside agent-tasks
+  // while the task did not move: retrying the merge cannot help, the operator closes the task in the UI.
+  it("grounding 403: a missing github:pr_merge scope also says not to retry task_merge and to ask the operator to close the task in the UI, within the recipe budget", () => {
+    for (const verb of ["task_merge", "pull_requests_merge", "task_finish"] as const) {
+      const err = mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_merge" }, verb);
+      expect(err.error.recipe).toContain("PR merged outside agent-tasks, task not moved?");
+      expect(err.error.recipe).toContain("Do not retry task_merge");
+      expect(err.error.recipe).toContain("ask the operator to close it in the UI");
+      expect(err.error.recipe).toContain("existing tokens never gain new scopes");
+      expect(err.error.recipe.endsWith("...")).toBe(false);
+      expect(err.error.recipe.length).toBeLessThanOrEqual(240);
+      expect(err.error.allowedNext).toEqual([]);
+    }
+  });
+  it("grounding 403: a missing github scope other than pr_merge keeps the plain re-mint recipe without the merged-outside hint", () => {
+    const err = mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_create" }, "pull_requests_create");
+    expect(err.error.recipe).toBe("a team admin must re-mint this agent token with the missing scope (github:pr_create); existing tokens never gain new scopes");
+    expect(err.error.recipe).not.toContain("merged outside");
+  });
   it("grounding 403: a multi-scope absent list containing a github scope also gets the re-mint recipe naming the full list", () => {
     const err = mapBackendError(403, { error: "forbidden", message: "Token missing scope: tasks:update, github:pr_create" }, "pull_requests_create");
     expect(err.error.recipe).toContain("re-mint");
@@ -2085,6 +2104,10 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
     {
       label: "grounding forbidden (github scope re-mint branch)",
       err: mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_merge" }, "task_merge"),
+      // The github:pr_merge recipe names task_merge only to say not to retry it
+      // (the PR was merged outside agent-tasks and the operator closes the task
+      // in the UI), so task_merge is a recipe-only aside here, not a corrective.
+      allowedRecipeOnlyVerbs: ["task_merge"],
     },
     {
       label: "grounding forbidden (no-message precondition-list branch)",

@@ -42,7 +42,12 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // (+~140 chars, 7390 -> 7531): the trap-list-sync guard makes naming every
 // catalog code mandatory, so the entry cannot be skipped, and the bound stays
 // a sanity ceiling against runaway growth with the same headroom as before.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 7700;
+// Ceiling raised from 7700 to 8300 for the "## Merged outside agent-tasks"
+// section (+~610 chars, 7531 -> 8144): the recipe for a PR merged outside
+// agent-tasks whose task did not move (token lacks github:pr_merge) has to be
+// reachable from workflow_primer, and the error recipe's 240-char budget has no
+// room for the webhook-setup pointer. Same sanity-ceiling rationale as above.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 8300;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -93,6 +98,7 @@ const NON_VERB_TOKENS = new Set([
   "backlog_routing_enforced", // 400 error code (v1 backlog routing: task_create rejects an explicit non-backlog status from an agent)
   "backlog_not_promoted", // 403 error code (v1 backlog routing: task_start/task_pickup on an unpromoted backlog task)
   "merge_in_progress", // 409 error code (a claim or status write refused while a PR merge holds the task)
+  "pr_merge", // the github:pr_merge scope-name fragment (the "Merged outside agent-tasks" section)
 ]);
 
 function snakeCaseTokens(text: string): string[] {
@@ -408,6 +414,17 @@ describe("WORKFLOW_PRIMER (workflow_primer verb)", () => {
 
   it("documents allowedNext as machine-checkable verb names, distinct from a receipt's free-form next[]", () => {
     expect(WORKFLOW_PRIMER).toMatch(/machine-checkable/i);
+  });
+
+  // A PR merged outside agent-tasks whose task did not move, with a token that lacks github:pr_merge:
+  // the recipe is to leave task_merge alone and have the operator close the task in the UI.
+  it("teaches the merged-outside-agent-tasks recipe: do not retry task_merge, ask the operator to close the task in the UI, check webhook-setup troubleshooting", () => {
+    const section = WORKFLOW_PRIMER.split("## Merged outside agent-tasks")[1]?.split("\n## ")[0] ?? "";
+    expect(section).toContain("lacks github:pr_merge");
+    expect(section).toContain("do not retry task_merge");
+    expect(section).toContain("Ask the operator to close the task in the UI");
+    expect(section).toContain("docs/webhook-setup.md");
+    expect(section).toContain("merge did not move the task");
   });
 });
 
