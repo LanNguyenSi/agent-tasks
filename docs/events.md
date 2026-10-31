@@ -128,7 +128,7 @@ so a single call surfaces "you have a pending signal", "you have a review to do"
 
 The audit layer covers backend state changes. The following are intentionally not in `AuditLog`:
 
-- **Webhook delivery.** Inbound GitHub webhook events are processed in `backend/src/services/github-webhook.ts` and emit their effects (`task.created` for an opened issue, `task.transitioned` for a closed issue or a merged PR (`payload.event: "pr_merged"`), and `task.reviewed` with a `payload.event` such as `review_approved` or `pr_closed`) under the existing actions. There is no `webhook.received` audit row by design.
+- **Webhook delivery.** Inbound GitHub webhook events are processed in `backend/src/services/github-webhook.ts` and emit their effects (`task.created` for an opened issue, `task.transitioned` for a closed issue or a merged PR (`payload.event: "pr_merged"`), and `task.reviewed` with a `payload.event` such as `review_approved` or `pr_closed`; a merged PR whose delivery matches no project or no open task of a bound project moves nothing and is recorded as `task.reviewed` with `payload.event: "pr_merged_unmatched"` and `payload.reason: "no_project"` or `"no_task"`, the `no_project` row carrying no `projectId`) under the existing actions. There is no `webhook.received` audit row by design.
 - **Signal acks.** Acking a signal is a recipient-side bookkeeping operation, not a system state change.
 - **Tool-invocation idempotency rows.** `ToolInvocation` is its own log, not an `AuditLog` entry. Use the `(projectId, verb, idempotencyKey)` unique index to detect retries.
 
