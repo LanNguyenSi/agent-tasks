@@ -193,6 +193,11 @@ Login-flow endpoints are public:
 | Login redirect lands on `/auth/error?reason=state_mismatch` | State/nonce cookies were dropped or tampered with. Usually means a cross-origin cookie issue — verify `BACKEND_URL` matches the origin serving the backend. |
 | Login redirect lands on `/auth/error?reason=not_provisioned` | The SSO connection has `autoProvision=false` and the user isn't already in the team. Add them via the normal team-member flow first. |
 | Login redirect lands on `/auth/error?reason=sso_failed` | Generic fall-through; check backend logs. ID token verification failures (bad signature, wrong audience, expired, nonce mismatch) land here. |
+| Login redirect lands on `/auth/error?reason=bad_request` | The callback arrived without a `code`, or without the transient state/nonce/PKCE cookies. Usually a cookie that was blocked or expired (the cookies live 10 minutes), or the callback URL was opened directly. |
+| Login redirect lands on `/auth/error?reason=sso_not_configured` | The connection was disabled or deleted between the login redirect and the callback. |
+| Login redirect lands on `/auth/error?reason=access_denied` (or another OAuth code) | The IdP sent back an `error` instead of a `code`. The callback forwards the value after reducing it to `[A-Za-z0-9_-]` (40 characters at most); the error page has its own message for `access_denied`, `server_error`, `temporarily_unavailable`, `login_required`, `consent_required` and `interaction_required`, and a generic one for any other code. |
+
+The error page reads one query parameter, `reason`, for the SSO callback and the GitHub OAuth callback alike. Each known code has a user-facing message (`frontend/src/app/auth/error/messages.ts`); an unknown or malformed code shows the generic "Something went wrong during authentication" text, and only a code made of letters, digits, `_` and `-` (40 characters at most) is shown as the "Reference".
 
 ## Rotating or removing SSO
 
