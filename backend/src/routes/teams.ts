@@ -284,9 +284,8 @@ teamRouter.post("/teams/:id/sync", async (c) => {
             description: repo.description ?? undefined,
             // GitHub's own spelling keeps the binding in step with every later
             // exact comparison (the `push` sync lookup in
-            // services/github-webhook.ts). Written only when it differs: a
-            // write of the column bumps the grounding fence, which refuses it
-            // under an active fence.
+            // services/github-webhook.ts). Written only when it differs, so the
+            // row's fenced columns stay unchanged on a plain re-sync.
             ...(existingProject.githubRepo !== repo.full_name
               ? { githubRepo: repo.full_name }
               : {}),

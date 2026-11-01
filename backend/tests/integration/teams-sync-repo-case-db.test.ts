@@ -171,7 +171,7 @@ describe("POST /teams/:id/sync on real Postgres", () => {
     expect(touched).toEqual([{ id: older.id, githubRepo: "LanNguyenSi/agent-tasks" }]);
   });
 
-  it("does not rewrite githubRepo under an active fence when the spelling already matches", async () => {
+  it("syncs an exact-spelling binding under an active fence without a skip", async () => {
     const { userId, teamId } = await seedTeam();
     await seedProject(teamId, "LanNguyenSi/fenced");
     const intentId = randomUUID();
