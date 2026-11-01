@@ -18,6 +18,18 @@ import { summarizeWorkflowDiff } from "../services/workflow-diff.js";
 import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
 import { canonicalGroundingJson, GroundingAccessError } from "../services/grounding-context.js";
 import { lockGroundingAuthority } from "../services/grounding-direct-authority.js";
+import {
+  NO_STRANDING,
+  RESERVED_STATE_NAMES,
+  checkStrandedTasks,
+  followedDefinition,
+  strandedConflictBody,
+  strandingReportFields,
+  type FollowerGroup,
+  type StrandedCheck,
+} from "../services/workflow-stranding.js";
+
+export { RESERVED_STATE_NAMES };
 
 type ContextWorkflowResult<T> = T & { changed: boolean };
 
@@ -51,6 +63,14 @@ function findFirstDefaultRow(db: WorkflowDb, projectId: string) {
   return db.workflow.findFirst({ where: { projectId, isDefault: true }, orderBy: FIRST_DEFAULT_ROW_ORDER });
 }
 
+/**
+ * The row the readers pick as the project default once `excludedId` is no
+ * longer one: the oldest other default row, else none (the built-in definition).
+ */
+function findNextDefaultRow(db: WorkflowDb, projectId: string, excludedId: string) {
+  return db.workflow.findFirst({ where: { projectId, isDefault: true, id: { not: excludedId } }, orderBy: FIRST_DEFAULT_ROW_ORDER });
+}
+
 function inheritedTaskIds(db: Parameters<Parameters<typeof mutateGroundingContext>[1]["selectAndAuthorize"]>[0], projectId: string) {
   return db.task.findMany({ where: { projectId, workflowId: null }, select: { id: true } }).then(tasks => tasks.map(task => task.id));
 }
@@ -79,9 +99,6 @@ export function buildForkedFromDefaultSnapshot(
 }
 
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
-
-/** At most this many task ids are named in the apply-template 409. */
-const STRANDED_TASK_ID_LIMIT = 50;
 
 // State names must match the task.status storage format: lowercase letters,
 // digits, and underscores only. This mirrors the frontend editor's
@@ -134,7 +151,6 @@ const workflowTransitionSchema = z.object({
 //     fallbacks assume one) and the initial state is not terminal (a task
 //     created in a terminal state could never be claimed).
 export const WORKFLOW_INITIAL_STATE = "open";
-export const RESERVED_STATE_NAMES = ["backlog", "abandoned"] as const;
 const RESERVED_STATE_NAME_SET = new Set<string>(RESERVED_STATE_NAMES);
 
 export const workflowDefinitionSchema = z
@@ -407,6 +423,7 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
   }
 
   let workflow;
+  let terminalOutside;
   try {
     const result = await workflowContextMutation(projectId, actor, "workflow_template_apply_grounding_context", async db => {
       const existing = await findFirstDefaultRow(db, projectId);
@@ -416,52 +433,42 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
     }, async db => {
       const existing = await findFirstDefaultRow(db, projectId);
       const definitionChanged = !existing || canonicalGroundingJson(existing.definition) !== canonicalGroundingJson(template.definition);
-      // Applying a template moves no task. A task whose status is not a state of
-      // the template (backlog and abandoned live outside every workflow) would
-      // be left on a status the new workflow does not know, so refuse and name
-      // the tasks. Runs inside the project-locked transaction with the task rows
-      // locked; a status write that read the previous workflow before this
-      // commit can still land afterwards (status writers take no project
-      // lock), an accepted residual of every workflow write route. An unchanged definition (a
-      // repeated apply) changes nothing and is not checked. Only the tasks that
-      // follow the replaced default row count: a task pinned to another
-      // workflow keeps that workflow.
+      // Applying a template moves no task: the shared check
+      // (services/workflow-stranding.ts) refuses when a task that follows the
+      // replaced default row (no workflowId, or pinned to that row) is on a
+      // status the template lacks and is not in a terminal state of the
+      // definition it follows; those terminal tasks are reported in the
+      // response instead. A task pinned to another workflow keeps that
+      // workflow. An unchanged definition (a repeated apply) changes nothing
+      // and is not checked.
+      let check: StrandedCheck = NO_STRANDING;
       if (definitionChanged) {
-        const stranded = await db.task.findMany({
-          where: {
-            projectId,
-            status: { notIn: [...template.definition.states.map((st) => st.name), ...RESERVED_STATE_NAMES] },
-            OR: [{ workflowId: null }, ...(existing ? [{ workflowId: existing.id }] : [])],
-          },
-          select: { id: true },
-          orderBy: { id: "asc" },
-          take: STRANDED_TASK_ID_LIMIT + 1,
-        });
+        check = await checkStrandedTasks(db, projectId, [{
+          workflowIds: [null, ...(existing ? [existing.id] : [])],
+          before: followedDefinition(existing),
+          after: template.definition,
+        }]);
         // Reported through the result, not thrown: the grounding transaction
         // turns an unknown error into a 503.
-        if (stranded.length > 0) return { changed: false, workflow: null, strandedTaskIds: stranded.map((t) => t.id) };
+        if (check.strandedTaskIds.length > 0) return { changed: false, workflow: null, check };
       }
       const next = existing
         ? await db.workflow.update({ where: { id: existing.id }, data: { name: template.name, definition: template.definition as object } })
         : await db.workflow.create({ data: { projectId, name: template.name, isDefault: true, definition: template.definition as object } });
-      return { changed: definitionChanged, workflow: next, strandedTaskIds: [] as string[] };
+      return { changed: definitionChanged, workflow: next, check };
     });
-    if (result.strandedTaskIds.length > 0) {
-      const ids = result.strandedTaskIds;
-      const shown = ids.slice(0, STRANDED_TASK_ID_LIMIT);
+    if (result.check.strandedTaskIds.length > 0) {
       return c.json(
-        {
-          error: "stranded_tasks",
-          message:
-            `Template "${template.slug}" not applied: ${ids.length > STRANDED_TASK_ID_LIMIT ? `more than ${STRANDED_TASK_ID_LIMIT}` : ids.length} ` +
-            `task(s) have a status that is not a state of the template (${template.definition.states.map((st) => st.name).join(", ")}). ` +
-            `Applying a template moves no task; finish or move these tasks first.`,
-          taskIds: shown,
-          truncated: ids.length > shown.length,
-        },
+        strandedConflictBody({
+          subject: `Template "${template.slug}" not applied`,
+          verb: "Applying a template",
+          target: "the template",
+          check: result.check,
+        }),
         409,
       );
     }
+    terminalOutside = strandingReportFields(result.check);
     workflow = result.workflow!;
   } catch (err) {
     if (err instanceof GroundingAccessError) {
@@ -490,6 +497,7 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
       source: "custom" as const,
       workflowId: workflow.id,
       definition: workflow.definition,
+      ...terminalOutside,
     },
     201,
   );
@@ -512,12 +520,32 @@ workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
       return tasks.map(task => task.id);
     }, async db => {
       const existing = await findFirstDefaultRow(db, projectId);
-      if (!existing) return { changed: false, missing: true, affectedTaskCount: 0, previousWorkflowId: "" };
+      if (!existing) return { changed: false, missing: true, affectedTaskCount: 0, previousWorkflowId: "", check: NO_STRANDING };
+      // Every task that followed the dropped row (pinned to it, or following it
+      // as the project default) follows the next default row afterwards, else
+      // the built-in definition.
+      const check = await checkStrandedTasks(db, projectId, [{
+        workflowIds: [null, existing.id],
+        before: followedDefinition(existing),
+        after: followedDefinition(await findNextDefaultRow(db, projectId, existing.id)),
+      }]);
+      if (check.strandedTaskIds.length > 0) return { changed: false, missing: false, affectedTaskCount: 0, previousWorkflowId: existing.id, check };
       const updateResult = await db.task.updateMany({ where: { projectId, workflowId: existing.id }, data: { workflowId: null } });
       await db.workflow.delete({ where: { id: existing.id } });
-      return { changed: true, missing: false, affectedTaskCount: updateResult.count, previousWorkflowId: existing.id };
+      return { changed: true, missing: false, affectedTaskCount: updateResult.count, previousWorkflowId: existing.id, check };
     });
     if (result.missing) return c.json({ error: "not_found", message: "This project has no custom workflow to reset" }, 404);
+    if (result.check.strandedTaskIds.length > 0) {
+      return c.json(
+        strandedConflictBody({
+          subject: "Workflow not reset",
+          verb: "Resetting a workflow",
+          target: "the default workflow after the reset",
+          check: result.check,
+        }),
+        409,
+      );
+    }
 
     void logAuditEvent({
     action: "workflow.reset",
@@ -533,6 +561,7 @@ workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
     source: "default" as const,
     workflowId: null,
     definition: defaultWorkflowDefinition(),
+    ...strandingReportFields(result.check),
     });
   } catch (err) {
     if (err instanceof GroundingAccessError) {
@@ -578,13 +607,40 @@ workflowRouter.post(
 
     const body = c.req.valid("json");
     let workflow;
+    let check: StrandedCheck;
     try {
       const result = await workflowContextMutation(projectId, actor, "workflow_create_grounding_context", db => body.isDefault ? inheritedTaskIds(db, projectId) : Promise.resolve([]), async db => {
-        if (body.isDefault) await db.workflow.updateMany({ where: { projectId, isDefault: true }, data: { isDefault: false } });
-        const next = await db.workflow.create({ data: { projectId, name: body.name, isDefault: body.isDefault ?? false, definition: body.definition as object } });
-        return { changed: body.isDefault ?? false, workflow: next };
+        if (body.isDefault) {
+          // The new row becomes the project default, so the tasks with no
+          // workflow of their own move from the previous default (or the
+          // built-in one) to its definition. Tasks pinned to the previous
+          // default row keep that row.
+          const check = await checkStrandedTasks(db, projectId, [{
+            workflowIds: [null],
+            before: followedDefinition(await findFirstDefaultRow(db, projectId)),
+            after: body.definition,
+          }]);
+          if (check.strandedTaskIds.length > 0) return { changed: false, workflow: null, check };
+          await db.workflow.updateMany({ where: { projectId, isDefault: true }, data: { isDefault: false } });
+          const next = await db.workflow.create({ data: { projectId, name: body.name, isDefault: true, definition: body.definition as object } });
+          return { changed: true, workflow: next, check };
+        }
+        const next = await db.workflow.create({ data: { projectId, name: body.name, isDefault: false, definition: body.definition as object } });
+        return { changed: false, workflow: next, check: NO_STRANDING };
       });
-      workflow = result.workflow;
+      if (result.check.strandedTaskIds.length > 0) {
+        return c.json(
+          strandedConflictBody({
+            subject: "Workflow not created as the project default",
+            verb: "Making a workflow the project default",
+            target: "the new definition",
+            check: result.check,
+          }),
+          409,
+        );
+      }
+      check = result.check;
+      workflow = result.workflow!;
     } catch (err) {
       if (err instanceof GroundingAccessError) {
         if (err.code === "not_found") return notFound(c);
@@ -605,7 +661,7 @@ workflowRouter.post(
       },
     });
 
-    return c.json({ workflow }, 201);
+    return c.json({ workflow, ...strandingReportFields(check) }, 201);
   },
 );
 
@@ -628,6 +684,41 @@ workflowRouter.get("/workflows/:id", async (c) => {
 
 // ── Update workflow ───────────────────────────────────────────────────────────
 
+/**
+ * The groups of tasks whose followed definition changes when `body` is applied
+ * to `current`, for the stranded-task check:
+ *   - tasks pinned to the row follow its definition, whether or not the row is
+ *     the project default;
+ *   - tasks with no workflow of their own follow the project default row, so
+ *     they are affected when the row is (or becomes) the default and its
+ *     definition changes, when it becomes the default over another row, and
+ *     when it stops being the default (they fall back to the next default row,
+ *     else the built-in definition).
+ * A change that alters nothing for a group (an identical definition, a name
+ * change) yields no group.
+ */
+async function followerGroupsOfUpdate(
+  db: WorkflowDb,
+  current: { id: string; projectId: string; isDefault: boolean; definition: unknown },
+  body: { definition?: WorkflowDefinitionShape; isDefault?: boolean },
+): Promise<FollowerGroup[]> {
+  const currentDefinition = followedDefinition(current);
+  const definitionChanged = body.definition !== undefined && canonicalGroundingJson(body.definition) !== canonicalGroundingJson(current.definition);
+  const groups: FollowerGroup[] = [];
+  if (definitionChanged) groups.push({ workflowIds: [current.id], before: currentDefinition, after: body.definition! });
+  const projectDefault = await findFirstDefaultRow(db, current.projectId);
+  const isProjectDefault = projectDefault?.id === current.id;
+  if (body.isDefault === true || (body.isDefault === undefined && isProjectDefault)) {
+    if (!isProjectDefault || definitionChanged) {
+      groups.push({ workflowIds: [null], before: followedDefinition(projectDefault), after: body.definition ?? currentDefinition });
+    }
+  } else if (body.isDefault === false && isProjectDefault) {
+    const next = await findNextDefaultRow(db, current.projectId, current.id);
+    groups.push({ workflowIds: [null], before: currentDefinition, after: followedDefinition(next) });
+  }
+  return groups;
+}
+
 workflowRouter.put(
   "/workflows/:id",
   zValidate("json", updateWorkflowSchema, { message: true }),
@@ -647,6 +738,7 @@ workflowRouter.put(
     const body = c.req.valid("json");
     let updated;
     let before = workflow;
+    let check: StrandedCheck;
     try {
       const result = await workflowContextMutation(workflow.projectId, actor, "workflow_update_grounding_context", async db => {
         const current = await db.workflow.findUnique({ where: { id: workflow.id } });
@@ -667,11 +759,25 @@ workflowRouter.put(
         const current = await db.workflow.findUnique({ where: { id: workflow.id } });
         if (!current) throw new GroundingAccessError("not_found", 404);
         before = current;
+        const check = await checkStrandedTasks(db, current.projectId, await followerGroupsOfUpdate(db, current, body));
+        if (check.strandedTaskIds.length > 0) return { changed: false, workflow: null, check };
         if (body.isDefault) await db.workflow.updateMany({ where: { projectId: current.projectId, isDefault: true }, data: { isDefault: false } });
         const next = await db.workflow.update({ where: { id: current.id }, data: { ...(body.name ? { name: body.name } : {}), ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}), ...(body.definition ? { definition: body.definition as object } : {}) } });
-        return { changed: (body.definition !== undefined && canonicalGroundingJson(body.definition) !== canonicalGroundingJson(current.definition)) || (body.isDefault !== undefined && body.isDefault !== current.isDefault), workflow: next };
+        return { changed: (body.definition !== undefined && canonicalGroundingJson(body.definition) !== canonicalGroundingJson(current.definition)) || (body.isDefault !== undefined && body.isDefault !== current.isDefault), workflow: next, check };
       });
-      updated = result.workflow;
+      if (result.check.strandedTaskIds.length > 0) {
+        return c.json(
+          strandedConflictBody({
+            subject: "Workflow not updated",
+            verb: "Updating a workflow",
+            target: "the workflow those tasks follow afterwards",
+            check: result.check,
+          }),
+          409,
+        );
+      }
+      check = result.check;
+      updated = result.workflow!;
     } catch (err) {
       if (err instanceof GroundingAccessError) {
         if (err.code === "not_found") return notFound(c);
@@ -708,7 +814,7 @@ workflowRouter.put(
       },
     });
 
-    return c.json({ workflow: updated });
+    return c.json({ workflow: updated, ...strandingReportFields(check) });
   },
 );
 
