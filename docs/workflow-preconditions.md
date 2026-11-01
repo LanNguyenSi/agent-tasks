@@ -334,16 +334,33 @@ rules.
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `GET` | `/api/workflow-templates` | List available workflow templates: `{templates: [{slug, name, description, stateCount, initialState}]}`. |
-| `POST` | `/api/projects/:projectId/workflow/apply-template/:slug` | Admin-only. Creates (or overwrites) a custom workflow from a predefined template. Returns `201` with the new workflow. Returns `404` if the template slug is unknown. Returns `409` (`stranded_tasks`, with `taskIds`, at most 50) when tasks that follow the replaced default workflow have a status that is not a state of the template; backlog and abandoned tasks never count, and re-applying an identical definition is not checked. |
+| `POST` | `/api/projects/:projectId/workflow/apply-template/:slug` | Admin-only. Creates (or overwrites) a custom workflow from a predefined template. Returns `201` with the new workflow. Returns `404` if the template slug is unknown. Returns `409` (`stranded_tasks`, with `taskIds`, at most 50) when the template drops a non-terminal state that a task following the replaced default workflow is in; backlog and abandoned tasks never count, a task in a terminal state of the workflow it follows or on a status that workflow does not have does not block and is listed in the `201` body as `terminalOutsideWorkflow` or `outsideWorkflow`, and re-applying an identical definition is not checked. |
 | `GET` | `/api/workflow-rules` | Catalog of built-in rules: `{rules: [{id, label, description, failureMessage}]}`. Used by the UI to render rule checkboxes without hardcoding any IDs on the frontend. |
 | `GET` | `/api/projects/:projectId/effective-workflow` | Returns the workflow currently in force for the project: `{source: "custom"\|"default", workflowId, definition}`. Stored legacy definitions are sanitized with the same view used by task transition writes: backlog edges are removed and the safe legacy start edge is remapped from open. Valid definitions are unchanged. The stored row is never rewritten; editor reads retain it. |
 | `POST` | `/api/workflows/:id/validate-transition` | Checks transition existence and `requiredRole` in the sanitized stored definition. This advisory endpoint does not evaluate transition preconditions. |
 | `POST` | `/api/projects/:projectId/workflow/customize` | Admin-only. Forks the hardcoded default into a new `Workflow` row marked `isDefault: true`. Returns `201` with the new workflow. Returns `409` if the project already has a custom workflow. |
-| `DELETE` | `/api/projects/:projectId/workflow` | Admin-only. Drops the custom `Workflow` row, unlinks any tasks that referenced it (`workflowId` set to `NULL`), and reverts the project to the hardcoded default. Returns `404` if there's nothing to delete. |
+| `DELETE` | `/api/projects/:projectId/workflow` | Admin-only. Drops the custom `Workflow` row, unlinks any tasks that referenced it (`workflowId` set to `NULL`), and reverts the project to the hardcoded default. Returns `404` if there's nothing to delete. Returns `409` (`stranded_tasks`) when a task that followed the dropped row is in a non-terminal state of it that the workflow the tasks follow afterwards (the next default row if the project holds one, else the built-in default) lacks, with the same exceptions as apply-template; the `200` body lists the other tasks as `terminalOutsideWorkflow` and `outsideWorkflow`. |
 
 Once a custom workflow exists, the full edit surface is the existing
 `PUT /api/workflows/:id` endpoint — the UI writes the whole
 `definition` (states + transitions + initialState) back on every save.
+
+`PUT /api/workflows/:id` and `POST /api/projects/:projectId/workflows` with
+`isDefault: true` use the same stranded-task check as apply-template and
+reset: they answer `409` (`stranded_tasks`) when the change strands a task, that
+is, a task in a non-terminal state of the definition it follows now that the
+definition it follows afterwards lacks (for `PUT`: the tasks pinned to the row
+when its definition changes, and the tasks without a workflow of their own when
+the row is or becomes the default or stops being it). A name-only update, an
+identical definition and a non-default creation are not checked. Two kinds of
+task are not stranded by the change and never block it: a task in a terminal
+state of the definition it follows (finished work), and a task on a status that
+definition does not have (a legacy status, or a terminal task an earlier change
+left behind). Both keep their status and the `2xx` body lists them as
+`terminalOutsideWorkflow` and `outsideWorkflow` (`{id, status}`, at most 50 each,
+with `terminalOutsideTruncated` and `outsideTruncated`). When a `PUT` has two
+groups with different targets (it demotes the default row and changes its
+definition), the `409` message gives one state list per group.
 
 ## Managing workflows in the UI
 
@@ -560,9 +577,14 @@ Applying a template replaces the project's custom workflow (or creates
 one if none exists). Applying moves no task, so the call is refused with
 `409` (`stranded_tasks`) while any task that follows the replaced workflow
 (no workflow of its own, or pinned to the replaced default row) has a status
-that is not a state of the template; `backlog` and `abandoned` never count,
-and a task pinned to another workflow keeps that workflow. The response names
-the task ids (at most 50). Finish or move those tasks, then apply again. The
+that is a non-terminal state the template lacks; `backlog` and `abandoned`
+never count, and a task pinned to another workflow keeps that workflow. A task
+in a terminal state of the workflow it follows (for example a custom `shipped`)
+is finished work that cannot be moved, and a task on a status that workflow does
+not have is already outside it; neither blocks, both keep their status, and the
+`201` response lists them as `terminalOutsideWorkflow` and `outsideWorkflow`.
+The `409` names the task ids (at most 50). Finish or move those tasks, then
+apply again. The
 registered templates use the four built-in states (`open`, `in_progress`,
 `review`, `done`), so a project whose tasks sit on those names (or on
 `backlog` / `abandoned`) is never refused; only the transitions, gates, and
