@@ -264,7 +264,7 @@ const QA_FLOW = flow(
   [["open", "work"], ["work", "qa"], ["qa", "shipped"], ["qa", "work"], ["work", "wontfix"]],
 );
 
-type Key = "mine" | "priority" | "review" | "done";
+type Key = "mine" | "priority" | "review" | "done" | "open";
 
 /** The calls of one widget's request (the widgets differ in their filters). */
 async function callsOf(key: Key) {
@@ -275,6 +275,7 @@ async function callsOf(key: Key) {
       if (key === "mine") return o.mine === true;
       if (key === "priority") return o.priority === "CRITICAL,HIGH";
       if (key === "done") return o.recency === "recent";
+      if (key === "open") return !o.mine && !o.priority && !o.recency && o.limit === 500;
       return !o.mine && !o.priority && !o.recency && o.status?.startsWith("review");
     })
     .map((o) => o.status);
@@ -325,6 +326,7 @@ const FLOWS_BY_PROJECT = (projectId: string) => (projectId === "p1" ? [PIPELINE]
 
 describe("home page: Mine, In Review and Done widgets follow the project workflows", () => {
   const ACTIONABLE = "open,in_progress,review,spec,plan,implement,test,work,qa";
+  const ACTIVE_NAMES = "open,in_progress,spec,plan,implement,test,work";
 
   it("asks each widget for its own names once the workflows are known, and no widget twice more", async () => {
     const dataset = SCOPED_DATASET();
@@ -339,8 +341,11 @@ describe("home page: Mine, In Review and Done widgets follow the project workflo
     expect(await callsOf("priority")).toEqual(["open,in_progress,review", ACTIONABLE]);
     expect(await callsOf("review")).toEqual(["review", "review,qa"]);
     expect(await callsOf("done")).toEqual(["done", "done,shipped,wontfix"]);
-    // Six first requests, then one more for each of the four widgets whose names grew.
-    expect(mockGetTeamTasks).toHaveBeenCalledTimes(10);
+    // qa is review-like in both flows, shipped/wontfix terminal, so the
+    // active request adds the open work states and nothing else.
+    expect(await callsOf("open")).toEqual(["open,in_progress", ACTIVE_NAMES]);
+    // Six first requests, then one more for each of the five widgets whose names grew.
+    expect(mockGetTeamTasks).toHaveBeenCalledTimes(11);
   });
 
   it("My Tasks lists my rows in custom open states and drops custom terminal ones", async () => {
@@ -419,6 +424,31 @@ describe("home page: Mine, In Review and Done widgets follow the project workflo
     expect(has(widgetTitles("My Tasks"), "my spec")).toBe(false);
     expect(has(widgetTitles("In Review"), "p2 review name")).toBe(true);
     expect(has(widgetTitles(/^Done/), "p2 done name")).toBe(true);
+  });
+});
+
+describe("home page: Active widget follows the project workflows", () => {
+  it("lists custom open work states, hides review-like and terminal ones, and links with the active names", async () => {
+    const dataset = SCOPED_DATASET();
+    mockGetTeamTasks.mockImplementation(async (_t, opts) => serveScoped(dataset, opts ?? {}));
+    mockGetWorkflows.mockImplementation(async (projectId) => FLOWS_BY_PROJECT(projectId));
+    await renderHome();
+    await vi.waitFor(() => {
+      expect(widgetTitles("Active Tasks").some((t) => t.startsWith("pipeline spec"))).toBe(true);
+    });
+    const titles = widgetTitles("Active Tasks");
+    expect(has(titles, "pipeline spec")).toBe(true); // p1 custom work state
+    expect(has(titles, "my open")).toBe(true);
+    expect(has(titles, "qa gate")).toBe(false); // review-like in p2
+    expect(has(titles, "pipeline review")).toBe(false); // review-like in p1
+    expect(has(titles, "qa shipped")).toBe(false); // terminal in p2
+    const card = screen
+      .getByRole("heading", { level: 2, name: "Active Tasks" })
+      .closest(".home-widget-card") as HTMLElement;
+    const link = card.querySelector(".home-widget-header a") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe(
+      "/tasks?teamId=team-1&scope=open&status=open,in_progress,spec,plan,implement,test,work",
+    );
   });
 });
 

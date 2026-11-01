@@ -7,11 +7,13 @@ import {
   getCurrentUser,
   getProjects,
   getTasks,
+  getWorkflows,
   createProject,
   deleteProject,
   syncTeamFromGitHub,
   type User,
   type Project,
+  type Workflow,
 } from "../../lib/api";
 import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
 import {
@@ -48,7 +50,7 @@ import {
   type ProjectSortColumn,
   type SortDirection,
 } from "../../lib/projectSort";
-import { isActiveTask } from "../home/widgetFilters";
+import { activeStatesResolver, isActiveTask } from "../home/widgetFilters";
 
 const PROJECT_PAGE_SIZE = 25;
 
@@ -526,17 +528,32 @@ export default function ProjectsPage() {
     if (projects.length === 0) return;
     let cancelled = false;
 
+    // One getTasks and one getWorkflows per project, in flight together: the
+    // active count follows each project's own workflow, the same rule as
+    // Home's "Your projects" strip. A workflow list that cannot be read
+    // (403 included) leaves the project out of the map, which reads as the
+    // built-in workflow (open, in_progress).
     async function fetchTaskCounts() {
       const results = await Promise.allSettled(
         projects.map(async (p) => {
-          const tasks = await getTasks(p.id);
-          return [p.id, tasks.filter(isActiveTask).length] as const;
+          const [tasks, workflows] = await Promise.all([
+            getTasks(p.id),
+            getWorkflows(p.id).catch(() => null),
+          ]);
+          return [p.id, tasks, workflows] as const;
         }),
       );
       if (cancelled) return;
+      const byProject = new Map<string, readonly Workflow[]>();
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value[2]) byProject.set(r.value[0], r.value[2]);
+      }
+      const activeStatesOf = activeStatesResolver(byProject);
       const counts: Record<string, number> = {};
       for (const r of results) {
-        if (r.status === "fulfilled") counts[r.value[0]] = r.value[1];
+        if (r.status === "fulfilled") {
+          counts[r.value[0]] = r.value[1].filter((t) => isActiveTask(t, activeStatesOf)).length;
+        }
       }
       setTaskCounts(counts);
     }

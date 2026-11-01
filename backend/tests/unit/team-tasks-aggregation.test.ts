@@ -107,9 +107,9 @@ beforeEach(() => {
     { id: "t-2", projectId: "p-2", title: "Task 2", status: "review", priority: "LOW", labels: [], updatedAt: new Date() },
   ]);
   // Default count-stack: groupBy returns one row per status; count() is
-  // invoked five times, in this order — filteredTotal, priority, mine,
-  // doneRecent, doneOlder. Tests that need other shapes call .mockReset()
-  // and re-prime explicitly.
+  // invoked six times, in this order: filteredTotal, priority, mine,
+  // doneRecent, doneOlder, active. Tests that need other shapes call
+  // .mockReset() and re-prime explicitly.
   prismaMocks.taskGroupBy.mockResolvedValue([
     { status: "open", _count: { _all: 70 } },
     { status: "in_progress", _count: { _all: 5 } },
@@ -121,7 +121,8 @@ beforeEach(() => {
     .mockResolvedValueOnce(12) // priority
     .mockResolvedValueOnce(3) // mine
     .mockResolvedValueOnce(100) // doneRecent
-    .mockResolvedValueOnce(678); // doneOlder
+    .mockResolvedValueOnce(678) // doneOlder
+    .mockResolvedValueOnce(42); // active (counts.open)
 });
 
 describe("GET /teams/:teamId/tasks (aggregation)", () => {
@@ -252,8 +253,9 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
           total: number;
         };
       };
-      // open widget bucket = open + in_progress = 70 + 5
-      expect(body.counts.open).toBe(75);
+      // open (the active tile) is the workflow-derived active count(), not a
+      // groupBy bucket sum (see the active count tests below).
+      expect(body.counts.open).toBe(42);
       expect(body.counts.review).toBe(1);
       expect(body.counts.done).toBe(778);
       // priority + mine come from the two count() calls (12 then 3)
@@ -341,6 +343,107 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
       expect(body.counts.backlog).toBe(9);
       // total sums every status bucket from groupBy, backlog included.
       expect(body.counts.total).toBe(70 + 5 + 1 + 778 + 9);
+    });
+
+    // counts.open is the team-wide active count: a state of the task's own
+    // effective workflow that is neither terminal nor review-like, and never
+    // a backlog draft or abandoned (see the "active" kind in
+    // services/workflow-status-filter.ts). Kept in sync with the frontend's
+    // isActiveTask/activeStatusParam (home/widgetFilters.ts). The count is
+    // the sixth taskCount() call; the workflow rows come from the same
+    // workflowFindMany read priorityCount uses.
+    const CUSTOM_WF = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "plan", label: "Plan", terminal: false },
+        { name: "build", label: "Build", terminal: false },
+        { name: "qa", label: "QA", terminal: false },
+        { name: "shipped", label: "Shipped", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "plan" },
+        { from: "plan", to: "build" },
+        { from: "build", to: "qa" },
+        { from: "qa", to: "shipped" },
+        { from: "qa", to: "build" },
+      ],
+    };
+    const FOUR_STATE_WF = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "review" },
+        { from: "review", to: "done" },
+        { from: "review", to: "in_progress" },
+      ],
+    };
+
+    it("active count with no stored workflows asks for the built-in active states only", async () => {
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as { counts: { open: number } };
+      expect(body.counts.open).toBe(42); // the sixth count() in the beforeEach stack
+      const activeWhere = prismaMocks.taskCount.mock.calls[5]![0]!.where;
+      expect(activeWhere).toEqual({
+        projectId: { in: ["p-1", "p-2"] },
+        AND: [{ OR: [{ workflowId: null, status: { in: ["in_progress", "open"] } }] }],
+      });
+    });
+
+    it("active count follows a project's custom workflow: plan and build count, qa and shipped do not", async () => {
+      // p-1 gets the custom default (open, plan, build, qa, shipped; qa is
+      // review-like, shipped terminal), p-2 keeps the built-in workflow.
+      prismaMocks.workflowFindMany.mockResolvedValueOnce([
+        { id: "w-4", projectId: "p-1", isDefault: true, definition: CUSTOM_WF },
+      ]);
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as { counts: { open: number } };
+      expect(body.counts.open).toBe(42);
+      const activeWhere = prismaMocks.taskCount.mock.calls[5]![0]!.where;
+      expect(activeWhere).toEqual({
+        projectId: { in: ["p-1", "p-2"] },
+        AND: [
+          {
+            OR: [
+              // Tasks pinned to the custom workflow: its non-terminal,
+              // non-review-like states only (build and plan are in; qa,
+              // shipped and any name outside the workflow are not).
+              { workflowId: { in: ["w-4"] }, status: { in: ["build", "open", "plan"] } },
+              // Unpinned p-1 tasks resolve to the same row as project default.
+              { workflowId: null, projectId: { in: ["p-1"] }, status: { in: ["build", "open", "plan"] } },
+              // Everything else reads as the built-in workflow.
+              { workflowId: null, projectId: { notIn: ["p-1"] }, status: { in: ["in_progress", "open"] } },
+            ],
+          },
+        ],
+      });
+    });
+
+    it("active count for four-state projects is exactly open + in_progress (today's numbers)", async () => {
+      prismaMocks.workflowFindMany.mockResolvedValueOnce([
+        { id: "w-1", projectId: "p-1", isDefault: true, definition: FOUR_STATE_WF },
+        { id: "w-2", projectId: "p-2", isDefault: true, definition: FOUR_STATE_WF },
+      ]);
+      await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const activeWhere = prismaMocks.taskCount.mock.calls[5]![0]!.where;
+      expect(activeWhere).toEqual({
+        projectId: { in: ["p-1", "p-2"] },
+        AND: [
+          {
+            OR: [
+              { workflowId: { in: ["w-1", "w-2"] }, status: { in: ["in_progress", "open"] } },
+              { workflowId: null, projectId: { in: ["p-1", "p-2"] }, status: { in: ["in_progress", "open"] } },
+              { workflowId: null, projectId: { notIn: ["p-1", "p-2"] }, status: { in: ["in_progress", "open"] } },
+            ],
+          },
+        ],
+      });
     });
   });
 

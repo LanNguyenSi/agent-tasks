@@ -40,6 +40,8 @@ import { SharedProjectsList } from "../../components/projects/SharedProjectsList
 import {
   WIDGET_LIMIT,
   WIDGET_REQUESTS,
+  activeStatesResolver,
+  activeStatusParam,
   isActiveTask,
   isBacklogTask,
   isActionableTask,
@@ -238,7 +240,8 @@ interface ProjectsStripProps {
    * `getTeamTasks` projects order); the component caps the rendering. */
   projects: TeamTasksProject[];
   teamId: string;
-  /** Active (open + in_progress) task count per project. Present only when
+  /** Active task count per project (a non-terminal, non-review-like state of
+   * the task's own workflow). Present only when
    * the team aggregation is known to be complete — see the truncation
    * guard in the page — so a count is never shown when it could be wrong. */
   activeCounts: Map<string, number> | null;
@@ -483,7 +486,11 @@ export default function HomeDashboardPage() {
   // rules applied again to what came back, so a response that ignores a
   // filter cannot put a task into the wrong widget.
 
-  const openTasks = useMemo(() => widgetRows.open.filter(isActiveTask), [widgetRows.open]);
+  const activeStatesOf = useMemo(() => activeStatesResolver(workflowsByProject), [workflowsByProject]);
+  const openTasks = useMemo(
+    () => widgetRows.open.filter((t) => isActiveTask(t, activeStatesOf)),
+    [widgetRows.open, activeStatesOf],
+  );
 
   const terminalStatesOf = useMemo(() => terminalStatesResolver(workflowsByProject), [workflowsByProject]);
   const reviewStatesOf = useMemo(() => reviewStatesResolver(workflowsByProject), [workflowsByProject]);
@@ -540,7 +547,8 @@ export default function HomeDashboardPage() {
   // Per-project active counts come from the active widget's rows, which the
   // backend caps (ACTIVE_FETCH_LIMIT, at most 500 per request). Those rows
   // are provably complete only when counts is present AND counts.open (the
-  // team-wide active count: open + in_progress) <= the rows loaded; while the
+  // team-wide active count: each task's own workflow without its terminal,
+  // review-like, backlog and abandoned states) <= the rows loaded; while the
   // active scope is truncated the rows miss tasks, so no per-project count
   // is shown at all (never a wrong one).
   const activeCounts = useMemo(() => {
@@ -557,6 +565,13 @@ export default function HomeDashboardPage() {
   }
 
   const teamId = selectedTeam?.id ?? "";
+
+  // The active scope's link target on /tasks. The scope=open preset there is
+  // the fixed built-in pair, so the link carries the explicit status list:
+  // the active names of the projects' workflows (activeStatusParam), which
+  // equal the preset while every project is four-state and add the custom
+  // work states (open, plan, build, ...) once a custom workflow is loaded.
+  const activeScopeHref = `/tasks?teamId=${teamId}&scope=open&status=${activeStatusParam(workflowsByProject)}`;
 
   const projectsStrip = (
     <ProjectsStrip projects={stripProjects} teamId={teamId} activeCounts={activeCounts} />
@@ -584,7 +599,7 @@ export default function HomeDashboardPage() {
         <EmptyState
           title="Nothing assigned to you."
           action={
-            <Button href={`/tasks?teamId=${teamId}&scope=open`} variant="ghost" size="sm">
+            <Button href={activeScopeHref} variant="ghost" size="sm">
               Browse active tasks
             </Button>
           }
@@ -625,7 +640,11 @@ export default function HomeDashboardPage() {
       count: counts?.open ?? openTasks.length,
       tasks: openTasks,
       total: counts?.open,
-      href: `/tasks?teamId=${teamId}&scope=open`,
+      href: activeScopeHref,
+      // TaskWidget derives the "View all" link from the scope (scope=open,
+      // the fixed built-in preset on /tasks); override it with the same
+      // workflow-derived status list as the tile link.
+      moreHrefOverride: activeScopeHref,
       emptyState: (
         <EmptyState
           title="No active tasks."

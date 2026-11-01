@@ -31,6 +31,7 @@ vi.mock("../../src/lib/api", () => ({
   getTeamTasks: vi.fn(),
   getProjects: vi.fn(),
   getTasks: vi.fn(),
+  getWorkflows: vi.fn().mockResolvedValue([]),
   getAgentTokens: vi.fn(),
   getAvailableScopes: vi.fn(),
   createTeam: vi.fn(),

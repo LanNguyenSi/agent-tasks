@@ -89,7 +89,9 @@ describe("home scope strip", () => {
       "/tasks?teamId=team-1&scope=mine",
       "/tasks?teamId=team-1&scope=priority",
       "/tasks?teamId=team-1&status=backlog",
-      "/tasks?teamId=team-1&scope=open",
+      // The Active link carries the explicit status list (the workflow-derived
+      // active names; the built-in pair while no custom workflow is loaded).
+      "/tasks?teamId=team-1&scope=open&status=open,in_progress",
       "/tasks?teamId=team-1&scope=review",
       "/tasks?teamId=team-1&scope=done",
     ]);

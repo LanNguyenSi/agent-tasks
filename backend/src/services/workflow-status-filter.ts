@@ -27,7 +27,7 @@ import {
   type WorkflowDefinitionShape,
 } from "./default-workflow.js";
 
-export type WorkflowStateKind = "terminal" | "review";
+export type WorkflowStateKind = "terminal" | "review" | "active";
 
 type WorkflowReader = Pick<Prisma.TransactionClient, "workflow">;
 
@@ -38,8 +38,24 @@ export interface WorkflowRow {
   definition: unknown;
 }
 
+/**
+ * The two names that live outside every workflow definition (the backend's
+ * BACKLOG_STATE and the abandoned status of routes/tasks.ts): never active,
+ * whatever a stored definition says about them.
+ */
+const NEVER_ACTIVE_STATES = new Set(["backlog", "abandoned"]);
+
 function statesOfKind(def: WorkflowDefinitionShape, kind: WorkflowStateKind): string[] {
-  return kind === "terminal" ? terminalStates(def) : reviewStates(def);
+  if (kind === "terminal") return terminalStates(def);
+  if (kind === "review") return reviewStates(def);
+  // Active: the states of the definition that are neither terminal nor
+  // review-like (the initial state counts, review-like is the same
+  // `isReviewState` the gates use), minus the two names outside every
+  // definition. The built-in four-state workflow answers open, in_progress.
+  const finished = new Set([...terminalStates(def), ...reviewStates(def)]);
+  return def.states
+    .map((s) => s.name)
+    .filter((n) => !finished.has(n) && !NEVER_ACTIVE_STATES.has(n));
 }
 
 /**
@@ -53,7 +69,12 @@ function statesOfKind(def: WorkflowDefinitionShape, kind: WorkflowStateKind): st
  * definition whose `states` is a list but whose `transitions` is not therefore
  * keeps its own terminal states and falls back to the built-in `review` for the
  * review kind. A definition whose `states` is not a list falls back for both
- * kinds (`done` for terminal, `review` for review).
+ * kinds (`done` for terminal, `review` for review). The active kind judges a
+ * state review-like one by one, so it needs both lists like the review kind: a
+ * definition with unreadable transitions falls back to the built-in active
+ * names (open, in_progress) as a whole, and a readable one answers its own
+ * non-terminal, non-review-like states (the built-in workflow: open,
+ * in_progress).
  *
  * That fallback is fail-closed for each caller, and no weaker than the
  * literal `review` / `done` these filters used before:

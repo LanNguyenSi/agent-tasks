@@ -7,6 +7,7 @@ import type { Task, Workflow } from "../../lib/api";
 import {
   BUILT_IN_REVIEW_STATES,
   BUILT_IN_TERMINAL_STATES,
+  sanitizeStoredDefinition,
   storedReviewStates,
   storedTerminalStates,
   storedWorkStates,
@@ -162,23 +163,104 @@ export function isPriorityTask(
   return isActionableTask(t, terminalStatesOf);
 }
 
-// ── Active (open + in_progress) ───────────────────────────────────────────────
+// ── Active (a state of the task's workflow: not terminal, not review-like) ────
 
 /**
- * The one definition of "active" work: open and in progress. Review is its own
- * scope and a draft in backlog is not started, so neither counts. Home's
- * "Active" tile and widget, its "Your projects" strip and the "N active
- * tasks" on /projects all go through this list, so the same project shows the
- * same number everywhere. The backend's `counts.open` is the same two
- * statuses.
+ * The built-in answer to "active" work: open and in progress. A stored
+ * workflow derives its own list (activeStatesResolver, activeStatusParam): a
+ * state of the task's own workflow that is neither terminal nor review-like,
+ * and never a backlog draft or abandoned, so for the four-state workflow this
+ * is exactly the two names below. Home's "Active" tile and widget, its "Your
+ * projects" strip and the /projects "N active tasks" column all go through
+ * the workflow-derived rule, so a project shows the same number everywhere.
+ * The backend's `counts.open` is the same workflow-derived rule (the "active"
+ * kind in backend/src/services/workflow-status-filter.ts).
  */
 export const ACTIVE_STATUSES = ["open", "in_progress"] as const;
 
-/** `status` query value for a request that fetches the active scope. */
+/**
+ * `status` query value for a request that fetches the active scope before the
+ * workflows are known (activeStatusParam replaces it once they are).
+ */
 export const ACTIVE_STATUS_PARAM = ACTIVE_STATUSES.join(",");
 
-export function isActiveTask(t: Pick<Task, "status">): boolean {
-  return (ACTIVE_STATUSES as readonly string[]).includes(t.status);
+/** Active states of the built-in workflow (= ACTIVE_STATUSES). */
+const BUILT_IN_ACTIVE_SET: ReadonlySet<string> = new Set<string>(ACTIVE_STATUSES);
+
+/**
+ * The active state names of one stored workflow: its non-terminal states that
+ * are neither review-like nor backlog/abandoned. Mirrors the backend's
+ * "active" kind (services/workflow-status-filter.ts, safeStates): names that
+ * cannot be read read as the built-in workflow's. storedWorkStates answers an
+ * empty list for an unreadable states list, and an unreadable transitions
+ * list sends the backend's review-like judgement (and with it the whole
+ * active list) back to the built-in names, hence the transitions guard.
+ */
+function activeNames(workflow: Workflow): ReadonlySet<string> {
+  const work = storedWorkStates(workflow);
+  if (work.length === 0) return BUILT_IN_ACTIVE_SET;
+  try {
+    const def = sanitizeStoredDefinition(workflow.definition);
+    if (!Array.isArray((def as { transitions?: unknown }).transitions)) return BUILT_IN_ACTIVE_SET;
+  } catch {
+    return BUILT_IN_ACTIVE_SET;
+  }
+  const review = new Set(storedReviewStates(workflow));
+  return new Set(work.filter((n) => !review.has(n) && !NON_ACTIONABLE_STATUSES.has(n)));
+}
+
+/** The active state names of one task's own workflow. */
+export type ActiveStatesOf = StatesOf;
+
+/**
+ * Resolves a task's active states the way the backend's `counts.open` does:
+ * its workflow row (see workflowRowOf), else the built-in workflow
+ * (open, in_progress).
+ */
+export function activeStatesResolver(byProject: ReadonlyMap<string, readonly Workflow[]>): ActiveStatesOf {
+  return (task) => {
+    const row = workflowRowOf(byProject, task);
+    return row ? activeNames(row) : BUILT_IN_ACTIVE_SET;
+  };
+}
+
+/**
+ * `status` query value for a request that fetches the active scope: the built-in
+ * names first (so a project not in `byProject` is fetched), then the active
+ * names of every stored workflow, union across projects exactly like
+ * workflowStatusNames (a name active in one workflow and something else in
+ * another is asked for; the per-task predicate drops the rows where it means
+ * the other thing).
+ */
+export function activeStatusParam(byProject: ReadonlyMap<string, readonly Workflow[]>): string {
+  const names = new Set<string>(ACTIVE_STATUSES);
+  for (const rows of byProject.values()) {
+    for (const w of rows) for (const name of activeNames(w)) names.add(name);
+  }
+  return [...names].join(",");
+}
+
+/**
+ * Active work. With `activeStatesOf`, a state of the task's own workflow that
+ * is neither terminal nor review-like (and never backlog or abandoned); every
+ * page that counts active work (Home and /projects) passes the resolver.
+ * Without it, the built-in allowlist (open, in_progress) only, kept for the
+ * Array.filter call form. The typeof check is what keeps that call form safe
+ * at runtime: Array.filter hands the callback the row index as its second
+ * argument, and the overload set alone does not stop that argument from
+ * arriving.
+ */
+export function isActiveTask(t: Pick<Task, "status">): boolean;
+export function isActiveTask(
+  t: Pick<Task, "status"> & Partial<WorkflowTask>,
+  activeStatesOf: ActiveStatesOf,
+): boolean;
+export function isActiveTask(
+  t: Pick<Task, "status"> & Partial<WorkflowTask>,
+  activeStatesOf?: ActiveStatesOf,
+): boolean {
+  if (typeof activeStatesOf !== "function") return (ACTIVE_STATUSES as readonly string[]).includes(t.status);
+  return activeStatesOf({ projectId: t.projectId ?? "", workflowId: t.workflowId }).has(t.status);
 }
 
 // ── Widget requests ───────────────────────────────────────────────────────────
@@ -225,11 +307,13 @@ export const WIDGET_REQUESTS: Record<WidgetKey, WidgetRequest> = {
 /**
  * The request of one widget once the projects' workflows are known: the mine
  * and priority widgets ask for every actionable name, the review widget for
- * every review-like name and the done widget for every terminal name (the
- * `/tasks` presets of the same scopes resolve the same lists). Without any
- * workflow this is WIDGET_REQUESTS[key], the fixed built-in lists, which stay
- * the fallback when the workflows cannot be read. The widgets that are not
- * defined by a workflow (backlog, active) keep their fixed request.
+ * every review-like name, the done widget for every terminal name and the
+ * active (open) widget for every active name, the states of the stored
+ * workflows that are neither terminal nor review-like (the `/tasks` presets of
+ * the same scopes resolve the same lists). Without any workflow this is
+ * WIDGET_REQUESTS[key], the fixed built-in lists, which stay the fallback when
+ * the workflows cannot be read. The one widget that is not defined by a
+ * workflow (backlog) keeps its fixed request.
  */
 export function widgetRequest(
   key: WidgetKey,
@@ -241,5 +325,6 @@ export function widgetRequest(
   }
   if (key === "review") return { ...base, status: workflowStatusNames(byProject).review.join(",") };
   if (key === "done") return { ...base, status: workflowStatusNames(byProject).terminal.join(",") };
+  if (key === "open") return { ...base, status: activeStatusParam(byProject) };
   return base;
 }

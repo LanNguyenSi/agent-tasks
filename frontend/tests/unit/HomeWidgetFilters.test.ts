@@ -15,6 +15,8 @@ import { describe, it, expect } from "vitest";
 import {
   ACTIVE_STATUSES,
   ACTIVE_STATUS_PARAM,
+  activeStatesResolver,
+  activeStatusParam,
   isActiveTask,
   isBacklogTask,
   isPriorityTask,
@@ -92,9 +94,91 @@ describe("isActiveTask (the one definition of active work)", () => {
     expect(isActiveTask({ status: "abandoned" })).toBe(false);
   });
 
+  it("is safe as a bare Array.filter callback (the row index arrives as a second argument)", () => {
+    expect([{ status: "open" }, { status: "qa" }].filter(isActiveTask).length).toBe(1);
+  });
+
   it("builds the status request value from the same list", () => {
     expect(ACTIVE_STATUSES).toEqual(["open", "in_progress"]);
     expect(ACTIVE_STATUS_PARAM).toBe("open,in_progress");
+  });
+});
+
+describe("isActiveTask with a workflow resolver (active = not terminal, not review-like)", () => {
+  // QA_FLOW is defined further down (with the review-like fixtures); the
+  // resolver is built per call so collecting this block stays order-safe.
+  const on = (status: string, projectId = "p1") =>
+    isActiveTask({ status, projectId }, activeStatesResolver(new Map([["p1", [QA_FLOW]]])));
+
+  it("counts a non-terminal non-review-like state of the task's own workflow", () => {
+    expect(on("open")).toBe(true);
+    expect(on("work")).toBe(true);
+  });
+
+  it("does not count the review-like or terminal state of that workflow", () => {
+    expect(on("qa")).toBe(false); // review-like in QA_FLOW
+    expect(on("shipped")).toBe(false);
+    expect(on("wontfix")).toBe(false);
+  });
+
+  it("does not count a name that is no state of that workflow", () => {
+    // in_progress is active in the built-in workflow and in another project,
+    // but QA_FLOW has no such state: the task's own workflow decides.
+    expect(on("in_progress")).toBe(false);
+    expect(on("in_progress", "p2")).toBe(true); // p2 is not loaded: built-in
+  });
+
+  it("keeps backlog and abandoned out, whatever the workflow says", () => {
+    expect(on("backlog")).toBe(false);
+    expect(on("abandoned")).toBe(false);
+  });
+
+  it("does not count a stranded status its workflow does not define (intentional: a task left on a removed state is not active work)", () => {
+    // QA_FLOW has no `build` state; after the stranded-task change a task can
+    // sit on a status its own workflow does not have, and it stays out.
+    expect(on("build")).toBe(false);
+  });
+
+  it("is exactly open + in_progress for the four-state (built-in) workflow", () => {
+    const builtin = activeStatesResolver(new Map());
+    for (const status of ["open", "in_progress"]) {
+      expect(isActiveTask({ status, projectId: "p1" }, builtin)).toBe(true);
+    }
+    for (const status of ["review", "done", "backlog", "abandoned", "qa"]) {
+      expect(isActiveTask({ status, projectId: "p1" }, builtin)).toBe(false);
+    }
+  });
+
+  it("uses the pinned workflow of a task before the project default", () => {
+    const pinned = def(
+      "open",
+      [["open", false], ["build", false], ["audit", false], ["closed", true]],
+      [["open", "build"], ["build", "audit"], ["audit", "closed"]],
+      { id: "wf-pinned", isDefault: false },
+    );
+    const resolver = activeStatesResolver(new Map([["p1", [QA_FLOW, pinned]]]));
+    expect(isActiveTask({ status: "work", projectId: "p1" }, resolver)).toBe(true);
+    expect(isActiveTask({ status: "work", projectId: "p1", workflowId: "wf-pinned" }, resolver)).toBe(false);
+    expect(isActiveTask({ status: "build", projectId: "p1", workflowId: "wf-pinned" }, resolver)).toBe(true);
+    expect(isActiveTask({ status: "audit", projectId: "p1", workflowId: "wf-pinned" }, resolver)).toBe(false);
+  });
+
+  it("reads an unreadable stored definition as the built-in active names", () => {
+    const broken = { ...QA_FLOW, id: "wf-broken", definition: { states: "garbage" } } as unknown as Workflow;
+    const resolver = activeStatesResolver(new Map([["p1", [broken]]]));
+    expect(isActiveTask({ status: "open", projectId: "p1" }, resolver)).toBe(true);
+    expect(isActiveTask({ status: "in_progress", projectId: "p1" }, resolver)).toBe(true);
+    expect(isActiveTask({ status: "work", projectId: "p1" }, resolver)).toBe(false);
+    // A transitions list the backend cannot read sends its whole active list
+    // back to the built-in names too (the review-like judgement needs it).
+    const noTransitions = {
+      ...QA_FLOW,
+      id: "wf-notransitions",
+      definition: { ...(QA_FLOW.definition as object), transitions: "x" },
+    } as unknown as Workflow;
+    const resolver2 = activeStatesResolver(new Map([["p1", [noTransitions]]]));
+    expect(isActiveTask({ status: "work", projectId: "p1" }, resolver2)).toBe(false);
+    expect(isActiveTask({ status: "in_progress", projectId: "p1" }, resolver2)).toBe(true);
   });
 });
 
@@ -413,8 +497,38 @@ describe("widgetRequest", () => {
     expect(r.recency).toBe("recent");
   });
 
-  it("leaves the backlog and active widgets alone", () => {
+  it("asks the active widget for the active names of the stored workflows", () => {
+    // work is open work in QA_FLOW, qa is review-like and shipped/wontfix are
+    // terminal, so only work is added to the built-in active pair.
+    expect(widgetRequest("open", byProject)).toEqual({
+      ...WIDGET_REQUESTS.open,
+      status: "open,in_progress,work",
+    });
+  });
+
+  it("leaves the backlog widget alone", () => {
     expect(widgetRequest("backlog", byProject)).toEqual(WIDGET_REQUESTS.backlog);
-    expect(widgetRequest("open", byProject)).toEqual(WIDGET_REQUESTS.open);
+  });
+});
+
+describe("activeStatusParam", () => {
+  it("is the built-in active pair while no workflow is known", () => {
+    expect(activeStatusParam(new Map())).toBe("open,in_progress");
+    expect(activeStatusParam(new Map())).toBe(ACTIVE_STATUS_PARAM);
+  });
+
+  it("adds the active states of every stored workflow, never its review-like or terminal ones", () => {
+    expect(activeStatusParam(new Map([["p1", [QA_FLOW]]]))).toBe("open,in_progress,work");
+  });
+
+  it("lists the seven-stage active states (review is review-like there)", () => {
+    expect(activeStatusParam(new Map([["p1", [SEVEN_STAGE]]]))).toBe(
+      "open,in_progress,spec,plan,implement,test",
+    );
+  });
+
+  it("never asks for backlog or abandoned, even if a stored definition names them", () => {
+    const odd = def("open", [["open", false], ["backlog", false], ["abandoned", false], ["triage", false], ["done", true]], [["open", "triage"], ["triage", "done"]], { id: "wf-odd" });
+    expect(activeStatusParam(new Map([["p1", [odd]]]))).toBe("open,in_progress,triage");
   });
 });
