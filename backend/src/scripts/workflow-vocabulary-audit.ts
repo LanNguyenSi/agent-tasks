@@ -3,8 +3,8 @@
  *
  * Counts the stored `Workflow` rows that carry
  *   - a `backlog` state, an edge from or to `backlog`, or `initialState`
- *     `backlog` (the shape of the retired coding-agent template; the reads
- *     sanitize such a row, see `sanitizeStoredDefinition`), and/or
+ *     `backlog` (the shape of the earlier backlog-based coding-agent definition;
+ *     the reads sanitize such a row, see `sanitizeStoredDefinition`), and/or
  *   - state names outside the four built-ins (`open`, `in_progress`,
  *     `review`, `done`), which the workflow API accepts since custom state
  *     names were unlocked.
@@ -12,7 +12,8 @@
  * The two headings are counted separately: `backlog` never counts as an
  * "other" name, so a row is in `rowsWithOtherNames` only for a name that is
  * neither `backlog` nor one of the four. For each affected row the report
- * also gives the number of tasks pinned to it (`Task.workflowId`).
+ * also gives two task counts (see `AffectedWorkflowRow`): tasks pinned to it
+ * explicitly and, for a default row, tasks that follow it implicitly.
  *
  * Run:
  *   npm run audit:workflow-vocabulary --workspace=backend
@@ -20,7 +21,8 @@
  *
  * Writes nothing: only `findMany` and `count` calls, safe against production.
  */
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { prisma } from "../lib/prisma.js";
 
 export const BUILT_IN_STATE_NAMES = ["open", "in_progress", "review", "done"] as const;
@@ -43,8 +45,15 @@ export interface AffectedWorkflowRow {
   hasBacklog: boolean;
   /** State names other than `backlog` that are not one of the four built-ins, sorted. */
   outsideBuiltIns: string[];
-  /** Tasks whose `workflowId` is this row. Filled in by `auditWorkflowVocabulary`. */
+  /** Tasks whose `workflowId` is explicitly this row. Filled in by `auditWorkflowVocabulary`. */
   pinnedTasks: number;
+  /**
+   * Tasks that follow this row without naming it: for a default row, the tasks
+   * of its project with no `workflowId` (they resolve to the project's default
+   * workflow; with several default rows only the oldest is read, so this can
+   * overstate for the others). Always 0 for a non-default row.
+   */
+  implicitTasks: number;
 }
 
 export interface WorkflowVocabularyAudit {
@@ -63,8 +72,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-/** Classifies one stored row; null when the definition is not readable. */
-export function classifyWorkflowRow(row: WorkflowRowInput): Omit<AffectedWorkflowRow, "pinnedTasks"> | null | "unreadable" {
+/**
+ * Classifies one stored row: the affected shape (without task counts), `null`
+ * when the row is not affected, or `"unreadable"` when the definition is not
+ * an object with `states` and `transitions` arrays.
+ */
+export function classifyWorkflowRow(
+  row: WorkflowRowInput,
+): Omit<AffectedWorkflowRow, "pinnedTasks" | "implicitTasks"> | null | "unreadable" {
   const def = asRecord(row.definition);
   if (!def || !Array.isArray(def.states) || !Array.isArray(def.transitions)) return "unreadable";
   const names = def.states.flatMap((s) => {
@@ -83,7 +98,7 @@ export function classifyWorkflowRow(row: WorkflowRowInput): Omit<AffectedWorkflo
 
 interface AuditClient {
   workflow: { findMany(args: { select: Record<string, true>; orderBy: Record<string, "asc"> }): Promise<WorkflowRowInput[]> };
-  task: { count(args: { where: { workflowId: string } }): Promise<number> };
+  task: { count(args: { where: { workflowId: string | null; projectId?: string } }): Promise<number> };
 }
 
 export async function auditWorkflowVocabulary(client: AuditClient = prisma as unknown as AuditClient): Promise<WorkflowVocabularyAudit> {
@@ -97,7 +112,11 @@ export async function auditWorkflowVocabulary(client: AuditClient = prisma as un
     const verdict = classifyWorkflowRow(row);
     if (verdict === "unreadable") unreadableRows++;
     else if (verdict) {
-      affected.push({ ...verdict, pinnedTasks: await client.task.count({ where: { workflowId: row.id } }) });
+      affected.push({
+        ...verdict,
+        pinnedTasks: await client.task.count({ where: { workflowId: row.id } }),
+        implicitTasks: row.isDefault ? await client.task.count({ where: { projectId: row.projectId, workflowId: null } }) : 0,
+      });
     }
   }
   return {
@@ -123,7 +142,8 @@ export function formatAudit(audit: WorkflowVocabularyAudit): string {
   for (const r of audit.affected) {
     lines.push(
       `- workflow ${r.id} (project ${r.projectId}, "${r.name}", ${r.isDefault ? "default" : "non-default"}): ` +
-        `backlog=${r.hasBacklog ? "yes" : "no"}, other names=[${r.outsideBuiltIns.join(", ")}], pinned tasks=${r.pinnedTasks}`,
+        `backlog=${r.hasBacklog ? "yes" : "no"}, other names=[${r.outsideBuiltIns.join(", ")}], ` +
+        `pinned tasks=${r.pinnedTasks}, implicit tasks=${r.implicitTasks}`,
     );
   }
   return lines.join("\n");
@@ -136,9 +156,22 @@ async function main(): Promise<void> {
   await prisma.$disconnect();
 }
 
+/**
+ * Whether this module is the script being run. Compares real paths on both
+ * sides, so running it through a symlink (or a path that differs from the
+ * module's resolved location) still counts, and an unresolvable path does not.
+ */
+export function isInvokedDirectly(argv1: string | undefined, moduleUrl: string): boolean {
+  if (!argv1) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
 // Run only when invoked directly (tsx/node), not when imported by a test.
-const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (invokedDirectly) {
+if (isInvokedDirectly(process.argv[1], import.meta.url)) {
   main().catch(async (err) => {
     console.error(err);
     await prisma.$disconnect();

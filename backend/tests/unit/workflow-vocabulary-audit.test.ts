@@ -3,8 +3,12 @@
  * guarantee that the audit only reads (a client without any write method
  * suffices).
  */
-import { describe, expect, it, vi } from "vitest";
-import { auditWorkflowVocabulary, classifyWorkflowRow } from "../../src/scripts/workflow-vocabulary-audit.js";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { describe, expect, it } from "vitest";
+import { auditWorkflowVocabulary, classifyWorkflowRow, isInvokedDirectly } from "../../src/scripts/workflow-vocabulary-audit.js";
 import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
 
 const row = (definition: unknown) => ({ id: "w1", projectId: "p1", name: "W", isDefault: true, definition });
@@ -55,16 +59,75 @@ describe("classifyWorkflowRow", () => {
 });
 
 describe("auditWorkflowVocabulary", () => {
-  it("only calls findMany and count", async () => {
-    const findMany = vi.fn().mockResolvedValue([row(def("backlog", ["backlog", "spec"])), { ...row(defaultWorkflowDefinition()), id: "w2" }]);
-    const count = vi.fn().mockResolvedValue(3);
-    const client = { workflow: { findMany }, task: { count } };
-    const audit = await auditWorkflowVocabulary(client);
-    expect(audit).toMatchObject({ totalRows: 2, affectedRows: 1, rowsWithBacklog: 1, rowsWithOtherNames: 1 });
-    expect(audit.affected[0]).toMatchObject({ id: "w1", pinnedTasks: 3 });
-    expect(count).toHaveBeenCalledTimes(1);
-    expect(count).toHaveBeenCalledWith({ where: { workflowId: "w1" } });
-    expect(Object.keys(client.workflow)).toEqual(["findMany"]);
-    expect(Object.keys(client.task)).toEqual(["count"]);
+  /** A client whose every property access is recorded, so a write method would show up in `touched`. */
+  function recordingClient(rows: unknown[], taskCount: (where: Record<string, unknown>) => number) {
+    const touched: string[] = [];
+    const calls: Array<Record<string, unknown>> = [];
+    const guard = (table: string, impl: Record<string, (...args: never[]) => unknown>) =>
+      new Proxy(impl, {
+        get(target, prop) {
+          touched.push(`${table}.${String(prop)}`);
+          return Reflect.get(target, prop);
+        },
+      });
+    const client = {
+      workflow: guard("workflow", { findMany: (async () => rows) as never }),
+      task: guard("task", {
+        count: (async (args: { where: Record<string, unknown> }) => {
+          calls.push(args.where);
+          return taskCount(args.where);
+        }) as never,
+      }),
+    };
+    return { client, touched, calls };
+  }
+
+  it("only reads: findMany and count are the only properties it touches", async () => {
+    const { client, touched } = recordingClient([row(def("backlog", ["backlog", "spec"]))], () => 0);
+    await auditWorkflowVocabulary(client as never);
+    expect([...new Set(touched)].sort()).toEqual(["task.count", "workflow.findMany"]);
+  });
+
+  it("counts explicit pins by workflowId and, for a default row, implicit followers by project", async () => {
+    const rows = [
+      row(def("backlog", ["backlog", "spec"])),
+      { ...row(def("open", ["open", "qa", "done"])), id: "w2", projectId: "p2", isDefault: false },
+      { ...row(defaultWorkflowDefinition()), id: "w3" },
+    ];
+    const { client, calls } = recordingClient(rows, (where) => (where.workflowId === null ? 4 : 3));
+    const audit = await auditWorkflowVocabulary(client as never);
+    expect(audit).toMatchObject({ totalRows: 3, affectedRows: 2, rowsWithBacklog: 1, rowsWithOtherNames: 2 });
+    expect(audit.affected.map((r) => [r.id, r.pinnedTasks, r.implicitTasks])).toEqual([
+      ["w1", 3, 4],
+      ["w2", 3, 0],
+    ]);
+    expect(calls).toEqual([{ workflowId: "w1" }, { projectId: "p1", workflowId: null }, { workflowId: "w2" }]);
+  });
+});
+
+describe("isInvokedDirectly", () => {
+  const moduleUrl = pathToFileURL(resolve("src/scripts/workflow-vocabulary-audit.ts")).href;
+  const modulePath = resolve("src/scripts/workflow-vocabulary-audit.ts");
+
+  it("is true for the module's own path", () => {
+    expect(isInvokedDirectly(modulePath, moduleUrl)).toBe(true);
+  });
+
+  it("is true when started through a symlink to the module", () => {
+    const dir = mkdtempSync(join(tmpdir(), "audit-link-"));
+    const link = join(dir, "run-audit.ts");
+    try {
+      symlinkSync(modulePath, link);
+      expect(isInvokedDirectly(link, moduleUrl)).toBe(true);
+    } finally {
+      rmSync(link, { force: true });
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("is false for another file, a missing path and no path", () => {
+    expect(isInvokedDirectly(resolve("src/scripts/shadow-report.ts"), moduleUrl)).toBe(false);
+    expect(isInvokedDirectly(join(tmpdir(), "does-not-exist-audit.ts"), moduleUrl)).toBe(false);
+    expect(isInvokedDirectly(undefined, moduleUrl)).toBe(false);
   });
 });

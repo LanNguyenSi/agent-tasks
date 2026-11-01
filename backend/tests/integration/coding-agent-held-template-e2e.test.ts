@@ -1,15 +1,22 @@
 /**
- * End-to-end test of the registered `coding-agent` workflow template against a
- * real database: the template is listed, applied through the workflow API, and
- * a task then runs through its seven stages (open, spec, plan, implement, test,
- * review, done) with the real task, review, merge and webhook handlers.
+ * End-to-end test of the HELD `coding-agent` definition against a real
+ * database. The definition is not a registered template (the templates list
+ * does not offer it and apply-template cannot find it), so a project gets it the
+ * way any custom workflow arrives: `POST /projects/:projectId/workflows` with
+ * `isDefault`. A task then runs through its seven stages (open, spec, plan,
+ * implement, test, review, done) with the real task, review, merge and webhook
+ * handlers.
  *
- * Pins how the engine behaves for the template's own state names: start moves
+ * Pins how the engine behaves for the definition's own state names: start moves
  * a task into `spec`, the gated edges answer 422 until the branch / PR exist,
  * a work-claim finish leaves `test` for `review` (and is refused from the
  * stages without an edge into `review`), review approve ends in `done`, request
  * changes returns to `implement`, the merge gate and the webhook hand-over use
- * `review` / `done`, and the retired `backlog` stage cannot be reached.
+ * `review` / `done`, and the earlier `backlog` stage cannot be reached.
+ *
+ * The "dead end" case is the reason the template stays held: an agent token
+ * that starts a task is in `spec` and its `task_finish` is refused. Registration
+ * waits for a v2 verb that advances the non-test stages; that case then turns.
  */
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
@@ -102,9 +109,11 @@ import { githubRouter } from "../../src/routes/github.js";
 import { workflowRouter } from "../../src/routes/workflows.js";
 import { handlePullRequestEvent } from "../../src/services/github-webhook.js";
 import { checkTaskStatusForMerge } from "../../src/services/gates/task-status-for-merge.js";
-import { findWorkflowTemplate } from "../../src/services/workflow-templates.js";
+import { HELD_WORKFLOW_TEMPLATES, WORKFLOW_TEMPLATES, findWorkflowTemplate } from "../../src/services/workflow-templates.js";
+import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 
 const SLUG = "coding-agent";
+const HELD = HELD_WORKFLOW_TEMPLATES.find((t) => t.slug === SLUG)!;
 const STAGES = ["open", "spec", "plan", "implement", "test", "review", "done"];
 const JSON_HEADERS = { "content-type": "application/json" };
 const PR_FIELDS = { branchName: "feat/x", prUrl: "https://github.com/acme/thing/pull/1", prNumber: 1 };
@@ -225,21 +234,39 @@ beforeEach(async () => {
   admin = { type: "human", userId: adminId, teamId };
 });
 
-describe("the template endpoints", () => {
-  it("lists the template with its seven stages and `open` as the initial state", async () => {
-    const res = await call(admin, "GET", "/workflow-templates");
-    expect(res.status).toBe(200);
-    const listed = res.body.templates.find((t: { slug: string }) => t.slug === SLUG);
-    expect(listed).toMatchObject({ slug: SLUG, name: "AI Coding Agent Pipeline", stateCount: 7, initialState: "open" });
+/** Gives the project the held definition as its default custom workflow, as an admin would through the workflow API. */
+async function createHeldWorkflow() {
+  const res = await post(admin, `/projects/${projectId}/workflows`, { name: HELD.name, isDefault: true, definition: JSON.parse(JSON.stringify(HELD.definition)) });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res;
+}
+
+describe("the held definition is not a template", () => {
+  it("is not registered: findWorkflowTemplate and the registry do not know the slug", () => {
+    expect(findWorkflowTemplate(SLUG)).toBeUndefined();
+    expect(WORKFLOW_TEMPLATES.map((t) => t.slug)).not.toContain(SLUG);
   });
 
-  it("applies cleanly: 201, the stored row is the template definition, and the project reads it back", async () => {
+  it("GET /workflow-templates does not list it", async () => {
+    const res = await call(admin, "GET", "/workflow-templates");
+    expect(res.status).toBe(200);
+    expect(res.body.templates.map((t: { slug: string }) => t.slug)).not.toContain(SLUG);
+  });
+
+  it("apply-template cannot find it: 404, and the project keeps no workflow row", async () => {
     const res = await post(admin, `/projects/${projectId}/workflow/apply-template/${SLUG}`);
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(res.body.source).toBe("custom");
-    const template = findWorkflowTemplate(SLUG)!;
+    expect(res.status).toBe(404);
+    expect(await db.workflow.count({ where: { projectId } })).toBe(0);
+  });
+
+  it("the definition itself validates and persists when POSTed as a custom workflow", async () => {
+    expect(workflowDefinitionSchema.safeParse(HELD.definition).success).toBe(true);
+    const created = await createHeldWorkflow();
     const stored = await db.workflow.findFirstOrThrow({ where: { projectId, isDefault: true } });
-    expect(stored.definition).toEqual(JSON.parse(JSON.stringify(template.definition)));
+    // The API stores the parsed definition (defaults such as requiredRole filled in).
+    expect(stored.definition).toEqual(workflowDefinitionSchema.parse(HELD.definition));
+    expect(stored.definition).toMatchObject(JSON.parse(JSON.stringify(HELD.definition)));
+    expect(created.body.id ?? created.body.workflow?.id).toBeTruthy();
 
     const effective = await call(admin, "GET", `/projects/${projectId}/effective-workflow`);
     expect(effective.status).toBe(200);
@@ -247,17 +274,11 @@ describe("the template endpoints", () => {
     expect(effective.body.definition.states.map((s: { name: string }) => s.name)).toEqual(STAGES);
     expect(effective.body.definition.initialState).toBe("open");
   });
-
-  it("an unknown slug still answers 404", async () => {
-    const res = await post(admin, `/projects/${projectId}/workflow/apply-template/no-such-template`);
-    expect(res.status).toBe(404);
-  });
 });
 
-describe("a task through the applied template", () => {
+describe("a task through the held definition as a custom workflow", () => {
   beforeEach(async () => {
-    const applied = await post(admin, `/projects/${projectId}/workflow/apply-template/${SLUG}`);
-    expect(applied.status).toBe(201);
+    await createHeldWorkflow();
   });
 
   it("create: a human-created task starts in the initial state `open`", async () => {
@@ -283,6 +304,21 @@ describe("a task through the applied template", () => {
     const after = await row(taskId);
     expect(after.status).toBe("spec");
     expect(after.claimedByUserId).toBe(authorId);
+  });
+
+  it("dead end today: an agent token that starts a task is in `spec` and its task_finish is refused", async () => {
+    const taskId = await createTask();
+    const agent = await seedAgent();
+    const start = await post(agent, `/tasks/${taskId}/start`);
+    expect(start.status, JSON.stringify(start.body)).toBe(200);
+    expect((await row(taskId)).status).toBe("spec");
+
+    const finish = await post(agent, `/tasks/${taskId}/finish`, { result: "spec written" });
+    expect(finish.status).toBe(400);
+    expect(finish.body.message).toMatch(/^Transition from 'spec' to 'review' is not allowed by workflow/);
+    const after = await row(taskId);
+    expect(after.status).toBe("spec");
+    expect(after.claimedByAgentId).toBe(agent.tokenId);
   });
 
   it("spec -> open releases the task back to the initial state; spec -> backlog does not exist", async () => {
@@ -415,7 +451,7 @@ describe("a task through the applied template", () => {
     });
 
     it("the status gate accepts exactly `review` and `done` among the template's states", () => {
-      const definition = findWorkflowTemplate(SLUG)!.definition;
+      const definition = HELD.definition;
       const accepted = STAGES.filter((status) => checkTaskStatusForMerge({ status }, definition).ok);
       expect(accepted).toEqual(["review", "done"]);
     });

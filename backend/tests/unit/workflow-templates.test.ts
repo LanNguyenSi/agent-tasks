@@ -11,6 +11,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 import {
+  HELD_WORKFLOW_TEMPLATES,
   WORKFLOW_TEMPLATES,
   findWorkflowTemplate,
 } from "../../src/services/workflow-templates.js";
@@ -295,16 +296,31 @@ describe("release-ops-no-pr template", () => {
   });
 });
 
-describe("coding-agent template", () => {
-  const template = findWorkflowTemplate("coding-agent");
-
-  it("is registered", () => {
-    expect(template).toBeDefined();
+describe("held templates", () => {
+  it("lists the coding-agent definition", () => {
+    expect(HELD_WORKFLOW_TEMPLATES.map((t) => t.slug)).toEqual(["coding-agent"]);
   });
 
-  // Same guard as above: a missing registration fails "is registered" cleanly.
-  if (!template) return;
-  const def = template.definition;
+  it("keeps every held definition out of the registry and out of findWorkflowTemplate", () => {
+    const registered = new Set(WORKFLOW_TEMPLATES.map((t) => t.slug));
+    for (const held of HELD_WORKFLOW_TEMPLATES) {
+      expect(registered.has(held.slug), held.slug).toBe(false);
+      expect(findWorkflowTemplate(held.slug), held.slug).toBeUndefined();
+    }
+  });
+
+  it("every held definition still passes workflowDefinitionSchema and names only known rules", () => {
+    for (const held of HELD_WORKFLOW_TEMPLATES) {
+      expect(workflowDefinitionSchema.safeParse(held.definition).success, held.slug).toBe(true);
+      for (const tr of held.definition.transitions) {
+        for (const rule of tr.requires ?? []) expect(isKnownRule(rule), `${held.slug}: ${rule}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe("held coding-agent definition", () => {
+  const def = HELD_WORKFLOW_TEMPLATES.find((t) => t.slug === "coding-agent")!.definition;
 
   it("has the seven stages in pipeline order, with `done` as the only terminal state", () => {
     expect(def.states.map((s) => s.name)).toEqual([

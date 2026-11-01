@@ -21,11 +21,22 @@ export interface WorkflowTemplate {
   definition: WorkflowDefinitionShape;
 }
 
-// ── AI Coding Agent Pipeline ────────────────────────────────────────────────
+// ── AI Coding Agent Pipeline (HELD, not registered) ─────────────────────────
 //
 // 7-stage pipeline modeled after the keshrath/agent-tasks competitive
 // benchmark (April 2026). Designed for solo AI coding agents that move
 // tasks through open → spec → plan → implement → test → review → done.
+//
+// HELD: the definition is valid (it passes `workflowDefinitionSchema` and can
+// be created as a custom workflow through `POST /projects/:projectId/workflows`)
+// but it is deliberately NOT in `WORKFLOW_TEMPLATES`, so the templates list does
+// not offer it and `apply-template` cannot find it. On the default v2 MCP
+// surface an agent cannot leave `spec`: `task_finish` with a work claim reaches
+// `review` only from `test`, the verb that moves a task along the other stages
+// (`tasks_transition`) is a hidden legacy verb, and a released task cannot be
+// picked up again. Registration waits for a v2 verb that advances the
+// non-test stages. `HELD_WORKFLOW_TEMPLATES` below keeps it importable for the
+// tests that pin that dead end, so the follow-up has a red/green anchor.
 //
 // The first stage is `open`, the engine's initial state, and not `backlog`:
 // `backlog` is a reserved name (written only by the dedicated demote route),
@@ -34,7 +45,7 @@ export interface WorkflowTemplate {
 // not a direct target of `open`), so a work-claim finish from `test` lands in
 // it and review approve ends in `done`; the earlier work states have no edge
 // into `review`, so a finish from them is refused as a transition the workflow
-// does not allow, by design.
+// does not allow.
 
 const codingAgentDefinition: WorkflowDefinitionShape = {
   states: [
@@ -333,19 +344,11 @@ const releaseOpsNoPrDefinition: WorkflowDefinitionShape = {
 
 // ── Template registry ───────────────────────────────────────────────────────
 //
-// Every template here passes `workflowDefinitionSchema`: state names are free
-// (`[a-z0-9_]+`) apart from the reserved `backlog` and `abandoned`, and
-// `initialState` is `open`. The pipeline template uses custom state names; the
-// other two vary only transitions, gates and labels within the built-in four.
+// Every registered template passes `workflowDefinitionSchema` and keeps the
+// four built-in state names, varying only transitions, gates and labels.
+// Held definitions (see the coding-agent block above) are listed separately.
 
 export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
-  {
-    slug: "coding-agent",
-    name: "AI Coding Agent Pipeline",
-    description:
-      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. Starting a task moves it to spec; plan to implement needs a branch, test to review needs a branch and a PR, and review approves into done or sends the task back to implement. Uses custom state names, so the board shows one column per stage.",
-    definition: codingAgentDefinition,
-  },
   {
     slug: "branch-pr-merge-gated",
     name: "Branch, PR & Merge Gated",
@@ -359,6 +362,21 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     description:
       "The default four-state workflow, minus the branchPresent/prPresent gates on in_progress → review and in_progress → done. For task classes that legitimately never produce a branch or a PR (tag-only releases, config/ops actions). Stays per-task auditable only when assigned via task_create({workflowId}) against a non-default Workflow row; applying it here via apply-template makes it the project's DEFAULT workflow, relaxing these gates for every task in the project, not just release/ops ones — for a mixed project, create a non-default named workflow from this definition instead. Review stays a normal, non-skippable-by-default stage; only the branch/PR preconditions on the two in_progress edges are gone.",
     definition: releaseOpsNoPrDefinition,
+  },
+] as const;
+
+/**
+ * Definitions that exist and validate but are held back from the registry:
+ * not listed by `GET /workflow-templates`, not found by `apply-template`.
+ * See the coding-agent block above for why and what lifts the hold.
+ */
+export const HELD_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  {
+    slug: "coding-agent",
+    name: "AI Coding Agent Pipeline",
+    description:
+      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. Held: not registered until a v2 verb can advance the stages between spec and test.",
+    definition: codingAgentDefinition,
   },
 ] as const;
 

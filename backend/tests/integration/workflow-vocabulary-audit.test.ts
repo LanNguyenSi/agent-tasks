@@ -8,7 +8,7 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditWorkflowVocabulary, formatAudit } from "../../src/scripts/workflow-vocabulary-audit.js";
 import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
-import { findWorkflowTemplate } from "../../src/services/workflow-templates.js";
+import { HELD_WORKFLOW_TEMPLATES } from "../../src/services/workflow-templates.js";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
@@ -39,14 +39,15 @@ beforeAll(async () => {
   // Built-in four states: not affected.
   await seedWorkflow("builtin", await seedProject(teamId), defaultWorkflowDefinition());
   // Registered template with custom names and no backlog.
-  const template = JSON.parse(JSON.stringify(findWorkflowTemplate("coding-agent")!.definition));
+  const template = JSON.parse(JSON.stringify(HELD_WORKFLOW_TEMPLATES[0]!.definition));
   const templateProject = await seedProject(teamId);
   await seedWorkflow("template", templateProject, template);
   await db.task.create({
     data: { projectId: templateProject, workflowId: ids.template, title: "Pinned", status: "spec", createdByUserId: userId },
   });
-  // Retired shape: backlog state, backlog initialState, edges to and from backlog, custom names.
-  await seedWorkflow("legacy", await seedProject(teamId), {
+  // Earlier backlog-shaped definition: backlog state, backlog initialState, edges to and from backlog, custom names.
+  const legacyProject = await seedProject(teamId);
+  await seedWorkflow("legacy", legacyProject, {
     initialState: "backlog",
     states: [
       { name: "backlog", label: "Backlog", terminal: false },
@@ -59,6 +60,10 @@ beforeAll(async () => {
       { from: "spec", to: "done" },
     ],
   });
+  // Two tasks of the legacy project follow its default row without naming it; a backlog task counts too.
+  for (const status of ["spec", "backlog"]) {
+    await db.task.create({ data: { projectId: legacyProject, title: "Implicit", status, createdByUserId: userId } });
+  }
   // Built-in names but an edge to backlog and no backlog state: backlog only.
   await seedWorkflow("edge-only", await seedProject(teamId), {
     initialState: "open",
@@ -102,11 +107,12 @@ describe("auditWorkflowVocabulary", () => {
       hasBacklog: false,
       outsideBuiltIns: ["implement", "plan", "spec", "test"],
       pinnedTasks: 1,
+      implicitTasks: 0,
       isDefault: true,
     });
-    expect(byId.get(ids.legacy!)).toMatchObject({ hasBacklog: true, outsideBuiltIns: ["spec"], pinnedTasks: 0 });
+    expect(byId.get(ids.legacy!)).toMatchObject({ hasBacklog: true, outsideBuiltIns: ["spec"], pinnedTasks: 0, implicitTasks: 2 });
     expect(byId.get(ids["edge-only"]!)).toMatchObject({ hasBacklog: true, outsideBuiltIns: [] });
-    expect(byId.get(ids["custom-only"]!)).toMatchObject({ hasBacklog: false, outsideBuiltIns: ["shipped"], isDefault: false });
+    expect(byId.get(ids["custom-only"]!)).toMatchObject({ hasBacklog: false, outsideBuiltIns: ["shipped"], isDefault: false, pinnedTasks: 0, implicitTasks: 0 });
   });
 
   it("writes nothing: the row and task counts and the stored definitions are unchanged", async () => {
@@ -122,6 +128,8 @@ describe("auditWorkflowVocabulary", () => {
   it("prints a summary with the counts and one line per affected row", async () => {
     const text = formatAudit(await auditWorkflowVocabulary(db as never));
     expect(text).toContain("workflow rows:");
+    expect(text).toContain("pinned tasks=1, implicit tasks=0");
+    expect(text).toContain("pinned tasks=0, implicit tasks=2");
     expect(text).toContain(`workflow ${ids.legacy} `);
     expect(text).not.toContain(`workflow ${ids.builtin} `);
     expect(text.match(/^- workflow /gm)).toHaveLength(4);

@@ -68,7 +68,7 @@ Adding `merged`, `deployed`, `verified` as default states would:
 - Create a false expectation that all tasks go through deployment
 - Duplicate what the Activity timeline already shows
 
-No registered template adds them either: two templates vary only transitions and gates within the four built-in states, and the `coding-agent` template adds `spec`, `plan`, `implement` and `test` before `review` (`backend/src/services/workflow-templates.ts`).
+A workflow template cannot add them either: every registered template varies transitions and gates within the four built-in states (`backend/src/services/workflow-templates.ts`).
 
 ## Summary
 

@@ -80,6 +80,9 @@ export function buildForkedFromDefaultSnapshot(
 
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
 
+/** At most this many task ids are named in the apply-template 409. */
+const STRANDED_TASK_ID_LIMIT = 50;
+
 // State names must match the task.status storage format: lowercase letters,
 // digits, and underscores only. This mirrors the frontend editor's
 // `STATE_NAME_RE` — enforcing it server-side so a malicious or buggy client
@@ -412,12 +415,51 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
     }, async db => {
       const existing = await findFirstDefaultRow(db, projectId);
       const definitionChanged = !existing || canonicalGroundingJson(existing.definition) !== canonicalGroundingJson(template.definition);
+      // Applying a template moves no task. A task whose status is not a state of
+      // the template (backlog and abandoned live outside every workflow) would
+      // be left on a status the new workflow does not know, so refuse and name
+      // the tasks. Runs inside the project-locked transaction, so a task cannot
+      // slip in between the check and the write; an unchanged definition (a
+      // repeated apply) changes nothing and is not checked. Only the tasks that
+      // follow the replaced default row count: a task pinned to another
+      // workflow keeps that workflow.
+      if (definitionChanged) {
+        const stranded = await db.task.findMany({
+          where: {
+            projectId,
+            status: { notIn: [...template.definition.states.map((st) => st.name), ...RESERVED_STATE_NAMES] },
+            OR: [{ workflowId: null }, ...(existing ? [{ workflowId: existing.id }] : [])],
+          },
+          select: { id: true },
+          orderBy: { id: "asc" },
+          take: STRANDED_TASK_ID_LIMIT + 1,
+        });
+        // Reported through the result, not thrown: the grounding transaction
+        // turns an unknown error into a 503.
+        if (stranded.length > 0) return { changed: false, workflow: null, strandedTaskIds: stranded.map((t) => t.id) };
+      }
       const next = existing
         ? await db.workflow.update({ where: { id: existing.id }, data: { name: template.name, definition: template.definition as object } })
         : await db.workflow.create({ data: { projectId, name: template.name, isDefault: true, definition: template.definition as object } });
-      return { changed: definitionChanged, workflow: next };
+      return { changed: definitionChanged, workflow: next, strandedTaskIds: [] as string[] };
     });
-    workflow = result.workflow;
+    if (result.strandedTaskIds.length > 0) {
+      const ids = result.strandedTaskIds;
+      const shown = ids.slice(0, STRANDED_TASK_ID_LIMIT);
+      return c.json(
+        {
+          error: "stranded_tasks",
+          message:
+            `Template "${template.slug}" not applied: ${ids.length > STRANDED_TASK_ID_LIMIT ? `more than ${STRANDED_TASK_ID_LIMIT}` : ids.length} ` +
+            `task(s) have a status that is not a state of the template (${template.definition.states.map((st) => st.name).join(", ")}). ` +
+            `Applying a template moves no task; finish or move these tasks first.`,
+          taskIds: shown,
+          truncated: ids.length > shown.length,
+        },
+        409,
+      );
+    }
+    workflow = result.workflow!;
   } catch (err) {
     if (err instanceof GroundingAccessError) {
       if (err.code === "not_found") return notFound(c);
