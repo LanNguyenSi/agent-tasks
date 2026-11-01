@@ -156,8 +156,8 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
  * directly; never through a workflow edge or a workflow's initial state.
  * `workflowDefinitionSchema` (routes/workflows.ts) rejects any such
  * definition on save, but definitions stored before that lock can still
- * carry one (the retired coding-agent template: initialState backlog and
- * edges such as spec -> backlog). Read as stored, they let
+ * carry one (the earlier backlog-shaped coding-agent definition: initialState
+ * backlog and edges such as spec -> backlog). Read as stored, they let
  * POST /tasks/:id/transition, the claim-abandon and release routes and the
  * grounding direct writers move a task into or out of backlog.
  *
@@ -379,8 +379,10 @@ export function isTerminalState(def: WorkflowDefinitionShape, stateName: string)
  *   3. Has at least one transition to a terminal state
  *   4. Is NOT a direct transition target of the initial state
  *
- * For the default workflow: "review" qualifies (review→done, open does NOT →review).
- * For coding-agent: "review" qualifies (review→done, backlog does NOT →review).
+ * For the default workflow: "review" qualifies (review→done, open has no edge
+ * to it, only open→in_progress).
+ * For the held coding-agent definition: "review" qualifies (review→done, open
+ * has no edge to it, only open→spec).
  */
 export function isReviewState(def: WorkflowDefinitionShape, stateName: string): boolean {
   if (isInitialState(def, stateName) || isTerminalState(def, stateName)) return false;

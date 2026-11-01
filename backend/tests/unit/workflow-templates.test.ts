@@ -11,6 +11,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 import {
+  HELD_WORKFLOW_TEMPLATES,
   WORKFLOW_TEMPLATES,
   findWorkflowTemplate,
 } from "../../src/services/workflow-templates.js";
@@ -18,7 +19,14 @@ import {
   evaluateTransitionRules,
   isKnownRule,
 } from "../../src/services/transition-rules.js";
-import type { WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
+import {
+  approveTarget,
+  finishTargetFrom,
+  reachableReviewState,
+  requestChangesTarget,
+  reviewStates,
+  type WorkflowDefinitionShape,
+} from "../../src/services/default-workflow.js";
 
 // `prMerged` is an async rule that queries GitHub. Mock the fetch layer so
 // the gate-behaviour tests are deterministic; everything else stays real so
@@ -285,5 +293,90 @@ describe("release-ops-no-pr template", () => {
         "review→in_progress:Request changes",
       ].sort(),
     );
+  });
+});
+
+describe("held templates", () => {
+  it("lists the coding-agent definition", () => {
+    expect(HELD_WORKFLOW_TEMPLATES.map((t) => t.slug)).toEqual(["coding-agent"]);
+  });
+
+  it("keeps every held definition out of the registry and out of findWorkflowTemplate", () => {
+    const registered = new Set(WORKFLOW_TEMPLATES.map((t) => t.slug));
+    for (const held of HELD_WORKFLOW_TEMPLATES) {
+      expect(registered.has(held.slug), held.slug).toBe(false);
+      expect(findWorkflowTemplate(held.slug), held.slug).toBeUndefined();
+    }
+  });
+
+  it("every held definition still passes workflowDefinitionSchema and names only known rules", () => {
+    for (const held of HELD_WORKFLOW_TEMPLATES) {
+      expect(workflowDefinitionSchema.safeParse(held.definition).success, held.slug).toBe(true);
+      for (const tr of held.definition.transitions) {
+        for (const rule of tr.requires ?? []) expect(isKnownRule(rule), `${held.slug}: ${rule}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe("held coding-agent definition", () => {
+  const def = HELD_WORKFLOW_TEMPLATES.find((t) => t.slug === "coding-agent")!.definition;
+
+  it("has the seven stages in pipeline order, with `done` as the only terminal state", () => {
+    expect(def.states.map((s) => s.name)).toEqual([
+      "open",
+      "spec",
+      "plan",
+      "implement",
+      "test",
+      "review",
+      "done",
+    ]);
+    expect(def.states.filter((s) => s.terminal).map((s) => s.name)).toEqual(["done"]);
+  });
+
+  it("starts in `open` and declares neither a `backlog` state nor an edge to or from it", () => {
+    expect(def.initialState).toBe("open");
+    expect(def.states.some((s) => s.name === "backlog")).toBe(false);
+    for (const t of def.transitions) {
+      expect(t.from).not.toBe("backlog");
+      expect(t.to).not.toBe("backlog");
+    }
+  });
+
+  it("gives every state non-empty agentInstructions", () => {
+    for (const s of def.states) {
+      expect(s.agentInstructions, `state "${s.name}"`).toBeTruthy();
+      expect(s.agentInstructions!.length).toBeGreaterThan(10);
+    }
+  });
+
+  it("releases from spec back to `open` (the former spec -> backlog edge)", () => {
+    const release = transition(def, "spec", "open");
+    expect(release).toBeDefined();
+    expect(release?.label).toBe("Release");
+    expect(release?.requires).toBeUndefined();
+  });
+
+  it("gates plan -> implement on a branch and test -> review on a branch and a PR", () => {
+    expect(transition(def, "plan", "implement")?.requires).toEqual(["branchPresent"]);
+    expect(transition(def, "test", "review")?.requires).toEqual(["branchPresent", "prPresent"]);
+    // The other edges are ungated.
+    const gated = def.transitions.filter((t) => (t.requires ?? []).length > 0).map((t) => `${t.from}->${t.to}`);
+    expect(gated.sort()).toEqual(["plan->implement", "test->review"]);
+  });
+
+  it("has exactly one review-like state, `review`, and `done` as its approve target", () => {
+    expect(reviewStates(def)).toEqual(["review"]);
+    expect(approveTarget(def, "review")).toBe("done");
+    expect(requestChangesTarget(def, "review")).toBe("implement");
+  });
+
+  it("finishes into `review` from `test` only: earlier stages have no edge into a review state", () => {
+    expect(finishTargetFrom(def, "test")).toBe("review");
+    // No direct edge: the workflow-wide fallback, which the gate lookup then refuses.
+    for (const from of ["spec", "plan", "implement"]) {
+      expect(reachableReviewState(def, from), from).toBeUndefined();
+    }
   });
 });

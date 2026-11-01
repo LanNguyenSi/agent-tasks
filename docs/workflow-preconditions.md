@@ -334,7 +334,7 @@ rules.
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `GET` | `/api/workflow-templates` | List available workflow templates: `{templates: [{slug, name, description, stateCount, initialState}]}`. |
-| `POST` | `/api/projects/:projectId/workflow/apply-template/:slug` | Admin-only. Creates (or overwrites) a custom workflow from a predefined template. Returns `201` with the new workflow. Returns `404` if the template slug is unknown. |
+| `POST` | `/api/projects/:projectId/workflow/apply-template/:slug` | Admin-only. Creates (or overwrites) a custom workflow from a predefined template. Returns `201` with the new workflow. Returns `404` if the template slug is unknown. Returns `409` (`stranded_tasks`, with `taskIds`, at most 50) when tasks that follow the replaced default workflow have a status that is not a state of the template; backlog and abandoned tasks never count, and re-applying an identical definition is not checked. |
 | `GET` | `/api/workflow-rules` | Catalog of built-in rules: `{rules: [{id, label, description, failureMessage}]}`. Used by the UI to render rule checkboxes without hardcoding any IDs on the frontend. |
 | `GET` | `/api/projects/:projectId/effective-workflow` | Returns the workflow currently in force for the project: `{source: "custom"\|"default", workflowId, definition}`. Stored legacy definitions are sanitized with the same view used by task transition writes: backlog edges are removed and the safe legacy start edge is remapped from open. Valid definitions are unchanged. The stored row is never rewritten; editor reads retain it. |
 | `POST` | `/api/workflows/:id/validate-transition` | Checks transition existence and `requiredRole` in the sanitized stored definition. This advisory endpoint does not evaluate transition preconditions. |
@@ -557,10 +557,51 @@ applied to a project in one click. Templates are defined in code at
 and are versioned with the backend.
 
 Applying a template replaces the project's custom workflow (or creates
-one if none exists). Existing tasks are not migrated, and the registered
-templates use the four built-in states (`open`, `in_progress`, `review`,
-`done`), so their `status` values stay valid; only the transitions,
-gates, and labels change.
+one if none exists). Applying moves no task, so the call is refused with
+`409` (`stranded_tasks`) while any task that follows the replaced workflow
+(no workflow of its own, or pinned to the replaced default row) has a status
+that is not a state of the template; `backlog` and `abandoned` never count,
+and a task pinned to another workflow keeps that workflow. The response names
+the task ids (at most 50). Finish or move those tasks, then apply again. The
+registered templates use the four built-in states (`open`, `in_progress`,
+`review`, `done`), so a project whose tasks sit on those names (or on
+`backlog` / `abandoned`) is never refused; only the transitions, gates, and
+labels change.
+
+### Held: AI Coding Agent Pipeline (`coding-agent`)
+
+A seven-stage definition (`open`, `spec`, `plan`, `implement`, `test`,
+`review`, `done`) is defined in `workflow-templates.ts`
+(`HELD_WORKFLOW_TEMPLATES`) but **not registered**: `GET /api/workflow-templates`
+does not list it and `apply-template/coding-agent` answers `404`. The
+definition is valid, so an admin can still create it as a custom workflow with
+`POST /api/projects/:projectId/workflows`.
+
+It is held because an agent on the default v2 MCP surface cannot leave
+`spec`: `task_start` moves an open task there, but a work-claim `task_finish`
+reaches `review` only from `test`, which has the one direct edge into the
+review-like state. The stages between have no v2 verb that advances them
+(`POST /tasks/:id/transition` is a REST endpoint and a hidden legacy MCP
+verb). Registration waits for such a verb. The definition itself:
+
+| From | To | Label | Requires |
+| ---- | -- | ----- | -------- |
+| `open` | `spec` | Start scoping | *(none)* |
+| `spec` | `plan` | Spec complete | *(none)* |
+| `spec` | `open` | Release | *(none)* |
+| `plan` | `implement` | Start implementing | `branchPresent` |
+| `plan` | `spec` | Revisit spec | *(none)* |
+| `implement` | `test` | Ready for testing | *(none)* |
+| `implement` | `plan` | Revisit plan | *(none)* |
+| `test` | `review` | Submit for review | `branchPresent`, `prPresent` |
+| `test` | `implement` | Fix failures | *(none)* |
+| `review` | `done` | Approve | *(none)* |
+| `review` | `implement` | Request changes | *(none)* |
+
+Its first stage is `open` and not `backlog`, which is reserved (no workflow
+may declare it as a state or use it as an edge end). Review approve ends in
+`done` and request changes returns to `implement`; the merge gate accepts
+`review` and `done`.
 
 ### Branch, PR & Merge Gated (`branch-pr-merge-gated`)
 

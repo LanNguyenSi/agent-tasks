@@ -21,20 +21,41 @@ export interface WorkflowTemplate {
   definition: WorkflowDefinitionShape;
 }
 
-// ── AI Coding Agent Pipeline ────────────────────────────────────────────────
+// ── AI Coding Agent Pipeline (HELD, not registered) ─────────────────────────
 //
 // 7-stage pipeline modeled after the keshrath/agent-tasks competitive
 // benchmark (April 2026). Designed for solo AI coding agents that move
-// tasks through backlog → spec → plan → implement → test → review → done.
+// tasks through open → spec → plan → implement → test → review → done.
+//
+// HELD: the definition is valid (it passes `workflowDefinitionSchema` and can
+// be created as a custom workflow through `POST /projects/:projectId/workflows`)
+// but it is deliberately NOT in `WORKFLOW_TEMPLATES`, so the templates list does
+// not offer it and `apply-template` cannot find it. On the default v2 MCP
+// surface an agent cannot leave `spec`: `task_finish` with a work claim reaches
+// `review` only from `test`, the verb that moves a task along the other stages
+// (`tasks_transition`) is a hidden legacy verb, so the only v2 way out of
+// `spec` is `task_abandon`, which resets the task to `open`, where it is
+// picked up and started into `spec` again. Registration waits for a v2 verb that advances the
+// non-test stages. `HELD_WORKFLOW_TEMPLATES` below keeps it importable for the
+// tests that pin that dead end, so the follow-up has a red/green anchor.
+//
+// The first stage is `open`, the engine's initial state, and not `backlog`:
+// `backlog` is a reserved name (written only by the dedicated demote route),
+// and `initialState` must be `open`. The spec → open edge is therefore the
+// release edge. `review` is the review-like state (it leads to `done` and is
+// not a direct target of `open`), so a work-claim finish from `test` lands in
+// it and review approve ends in `done`; the earlier work states have no edge
+// into `review`, so a finish from them is refused as a transition the workflow
+// does not allow.
 
 const codingAgentDefinition: WorkflowDefinitionShape = {
   states: [
     {
-      name: "backlog",
-      label: "Backlog",
+      name: "open",
+      label: "Open",
       terminal: false,
       agentInstructions:
-        "This task is in the backlog. Claim it and move to spec to begin scoping.",
+        "This task is open. Claim it and move to spec to begin scoping.",
     },
     {
       name: "spec",
@@ -80,13 +101,13 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
     },
   ],
   transitions: [
-    // backlog → spec: claim and start scoping
-    { from: "backlog", to: "spec", label: "Start scoping", requiredRole: "any" },
+    // open → spec: claim and start scoping
+    { from: "open", to: "spec", label: "Start scoping", requiredRole: "any" },
 
     // spec → plan: spec is written
     { from: "spec", to: "plan", label: "Spec complete" },
-    // spec → backlog: release back
-    { from: "spec", to: "backlog", label: "Release" },
+    // spec → open: release back
+    { from: "spec", to: "open", label: "Release" },
 
     // plan → implement: plan is ready, branch created
     { from: "plan", to: "implement", label: "Start implementing", requires: ["branchPresent"] },
@@ -108,7 +129,7 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
     // review → implement: changes requested
     { from: "review", to: "implement", label: "Request changes" },
   ],
-  initialState: "backlog",
+  initialState: "open",
 };
 
 // ── Branch / PR / Merge Gated ───────────────────────────────────────────────
@@ -324,14 +345,9 @@ const releaseOpsNoPrDefinition: WorkflowDefinitionShape = {
 
 // ── Template registry ───────────────────────────────────────────────────────
 //
-// The "AI Coding Agent Pipeline" template (backlog → spec → plan →
-// implement → test → review → done) was retired when the state
-// vocabulary was locked to {open, in_progress, review, done}. Its 7
-// custom state names would now fail `workflowDefinitionSchema` validation.
-// The definition is kept above for reference but no longer registered.
-// Templates that vary only transitions / gates / labels within the fixed
-// state set are valid — `branch-pr-merge-gated` below is the first one.
-void codingAgentDefinition;
+// Every registered template passes `workflowDefinitionSchema` and keeps the
+// four built-in state names, varying only transitions, gates and labels.
+// Held definitions (see the coding-agent block above) are listed separately.
 
 export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   {
@@ -347,6 +363,21 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     description:
       "The default four-state workflow, minus the branchPresent/prPresent gates on in_progress → review and in_progress → done. For task classes that legitimately never produce a branch or a PR (tag-only releases, config/ops actions). Stays per-task auditable only when assigned via task_create({workflowId}) against a non-default Workflow row; applying it here via apply-template makes it the project's DEFAULT workflow, relaxing these gates for every task in the project, not just release/ops ones — for a mixed project, create a non-default named workflow from this definition instead. Review stays a normal, non-skippable-by-default stage; only the branch/PR preconditions on the two in_progress edges are gone.",
     definition: releaseOpsNoPrDefinition,
+  },
+] as const;
+
+/**
+ * Definitions that exist and validate but are held back from the registry:
+ * not listed by `GET /workflow-templates`, not found by `apply-template`.
+ * See the coding-agent block above for why and what lifts the hold.
+ */
+export const HELD_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  {
+    slug: "coding-agent",
+    name: "AI Coding Agent Pipeline",
+    description:
+      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. Held: not registered until a v2 verb can advance the stages between spec and test.",
+    definition: codingAgentDefinition,
   },
 ] as const;
 

@@ -18,7 +18,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push && prisma db execute --schema prisma/schema.prisma --file prisma/grounding-github-fence.sql && prisma db execute --schema prisma/schema.prisma --file prisma/clear-terminal-claims.sql",
     "db:seed": "tsx prisma/seed.ts",
-    "shadow:report": "tsx src/scripts/shadow-report.ts"
+    "shadow:report": "tsx src/scripts/shadow-report.ts",
+    "audit:workflow-vocabulary": "tsx src/scripts/workflow-vocabulary-audit.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
