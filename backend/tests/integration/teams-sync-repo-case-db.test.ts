@@ -207,6 +207,44 @@ describe("POST /teams/:id/sync on real Postgres", () => {
     expect(r.body).toMatchObject({ created: 1, fenced: 1, pruned: 0 });
     expect((await rows(teamId)).map((x) => x.githubRepo).sort()).toEqual(["LanNguyenSi/other2", "lannguyensi/fenced2"]);
   });
+
+  it("defers the whole prune (200, nothing removed) when a stale binding sits under an active fence, and a later sync prunes it", async () => {
+    const { userId, teamId } = await seedTeam();
+    const keep = await seedProject(teamId, "LanNguyenSi/keep3");
+    const fencedStale = await seedProject(teamId, "lannguyensi/stale-fenced3");
+    const freeStale = await seedProject(teamId, "lannguyensi/stale-free3");
+    const intentId = randomUUID();
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_fence_intents (id, repo, kind, state) VALUES ('${intentId}', 'lannguyensi/stale-fenced3', 'MERGE', 'ACTIVE')`,
+    );
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_repository_fences (repo, version, "ownerId") VALUES ('lannguyensi/stale-fenced3', 1, '${intentId}') ON CONFLICT (repo) DO UPDATE SET "ownerId" = EXCLUDED."ownerId"`,
+    );
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/keep3")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ pruned: 0, pruneDeferred: true, skippedPrune: false });
+    expect(String(r.body.message)).toContain("postponed");
+    expect((await rows(teamId)).map((x) => x.id).sort()).toEqual([keep.id, fencedStale.id, freeStale.id].sort());
+
+    await db.$executeRawUnsafe(`DELETE FROM grounding_github_repository_fences WHERE repo = 'lannguyensi/stale-fenced3'`);
+    await db.$executeRawUnsafe(`UPDATE grounding_github_fence_intents SET state = 'DONE' WHERE id = '${intentId}'`);
+    const again = await sync(userId, teamId);
+    expect(again.body).toMatchObject({ pruned: 2, pruneDeferred: false });
+    expect((await rows(teamId)).map((x) => x.id)).toEqual([keep.id]);
+  });
+
+  it("reports pruneDeferred false on a plain prune", async () => {
+    const { userId, teamId } = await seedTeam();
+    await seedProject(teamId, "lannguyensi/gone4");
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here4")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ created: 1, pruned: 1, pruneDeferred: false });
+  });
 });
 
 describe("githubRepoEqualsInsensitive (the legacy webhook project filter) on real Postgres", () => {
