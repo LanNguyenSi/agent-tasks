@@ -9,6 +9,8 @@ import { forbidden, notFound } from "../middleware/error.js";
 import { logAuditEvent } from "../services/audit.js";
 import { listUserRepos } from "../services/github-sync.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
+import { githubRepoEqualsInsensitive } from "../lib/github-repo-match.js";
+import { isGithubFenceConflict } from "../services/grounding-github-fence.js";
 
 export const teamRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -253,59 +255,76 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   let updated = 0;
   let pruned = 0;
 
+  let fenced = 0;
+
   for (const repo of repos) {
     // GitHub repository names are case-insensitive, while `project.githubRepo`
     // keeps whatever case the binding was written in, so an exact match missed
-    // the project and a duplicate was created (then pruned). Same
-    // `{ equals, mode: "insensitive" }` filter as the legacy webhook lookups
-    // (`githubRepoFilter` in services/github-webhook.ts); nothing else about
-    // the match is relaxed: the stored value must still be exactly
-    // `owner/repo` (no trimming, no clone URL).
-    const existingProject = await prisma.project.findFirst({
-      where: { teamId, githubRepo: { equals: repo.full_name, mode: "insensitive" } },
-    });
+    // the project and a duplicate was created (then pruned). The exact
+    // spelling wins when it exists; otherwise the case-insensitive match
+    // (LIKE-escaped, so `my_repo` never selects `my-repo`, see
+    // lib/github-repo-match.ts), oldest first so two rows that differ only in
+    // case resolve deterministically.
+    const existingProject =
+      (await prisma.project.findFirst({
+        where: { teamId, githubRepo: repo.full_name },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      })) ??
+      (await prisma.project.findFirst({
+        where: { teamId, githubRepo: githubRepoEqualsInsensitive(repo.full_name) },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      }));
 
-    if (existingProject) {
-      await prisma.project.update({
-        where: { id: existingProject.id },
-        // Rewriting `githubRepo` with GitHub's own spelling keeps the binding
-        // in step with every later exact comparison (the `push` sync lookup in
-        // services/github-webhook.ts) after a case-insensitive match.
+    try {
+      if (existingProject) {
+        await prisma.project.update({
+          where: { id: existingProject.id },
+          data: {
+            name: repo.name,
+            description: repo.description ?? undefined,
+            // GitHub's own spelling keeps the binding in step with every later
+            // exact comparison (the `push` sync lookup in
+            // services/github-webhook.ts). Written only when it differs: a
+            // write of the column bumps the grounding fence, which refuses it
+            // under an active fence.
+            ...(existingProject.githubRepo !== repo.full_name
+              ? { githubRepo: repo.full_name }
+              : {}),
+            githubSyncAt: now,
+          },
+        });
+        await ensureDefaultBoardForProject(existingProject.id);
+        updated += 1;
+        continue;
+      }
+
+      const slug = await ensureUniqueProjectSlug(teamId, repo.name);
+      const project = await prisma.project.create({
         data: {
+          teamId,
           name: repo.name,
+          slug,
           description: repo.description ?? undefined,
           githubRepo: repo.full_name,
           githubSyncAt: now,
         },
       });
-      await ensureDefaultBoardForProject(existingProject.id);
-      updated += 1;
-      continue;
+
+      await ensureDefaultBoardForProject(project.id);
+      created += 1;
+    } catch (err) {
+      // An active repository fence refuses the write. Skip this repo and keep
+      // syncing the others; the next sync retries it.
+      if (!isGithubFenceConflict(err)) throw err;
+      fenced += 1;
     }
-
-    const slug = await ensureUniqueProjectSlug(teamId, repo.name);
-    const project = await prisma.project.create({
-      data: {
-        teamId,
-        name: repo.name,
-        slug,
-        description: repo.description ?? undefined,
-        githubRepo: repo.full_name,
-        githubSyncAt: now,
-      },
-    });
-
-    await ensureDefaultBoardForProject(project.id);
-    created += 1;
   }
 
-  // The prune compares lowercased in code instead of trusting `mode` next to
-  // `notIn`: the generated client types (`StringNullableFilter`,
-  // node_modules/.prisma/client/index.d.ts) keep `mode` as a filter-level
-  // sibling of `notIn`, and nothing shows the Postgres engine applying it to a
-  // list operator. If it did not, this DELETE would silently remove a binding
-  // that only differs in letter case, so the comparison is done here and the
-  // stale rows are deleted by id.
+  // Stale bindings are picked in code (lowercased) and deleted by id. The
+  // DELETE repeats the team scope and the case-insensitive `notIn` as defense
+  // in depth: `mode` applies to `notIn` on the Postgres engine (checked against
+  // a real database), so a binding that differs from a listed repo only in
+  // letter case is never removed even if the id list were wrong.
   if (repoFullNames.length > 0) {
     const listed = new Set(repoFullNames.map((fullName) => fullName.toLowerCase()));
     const boundProjects = await prisma.project.findMany({
@@ -320,7 +339,13 @@ teamRouter.post("/teams/:id/sync", async (c) => {
       .map((project) => project.id);
 
     if (staleIds.length > 0) {
-      const deleted = await prisma.project.deleteMany({ where: { id: { in: staleIds } } });
+      const deleted = await prisma.project.deleteMany({
+        where: {
+          id: { in: staleIds },
+          teamId,
+          githubRepo: { not: null, notIn: repoFullNames, mode: "insensitive" },
+        },
+      });
       pruned = deleted.count;
     }
   }
@@ -332,9 +357,13 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     created,
     updated,
     pruned,
+    fenced,
     skippedPrune,
     message: skippedPrune
       ? "GitHub sync returned 0 repositories; prune was skipped for safety."
-      : `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)`,
+      : `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)` +
+        (fenced > 0
+          ? `; ${fenced} skipped because a repository operation is in flight, sync again shortly`
+          : ""),
   });
 });

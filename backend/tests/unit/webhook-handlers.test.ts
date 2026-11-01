@@ -1115,6 +1115,16 @@ describe("legacy webhook handlers match the bound repo case-insensitively", () =
     });
   });
 
+  it("issues.opened: LIKE-escapes the repo name so my_repo cannot select a project bound to my-repo", async () => {
+    await handleIssuesEvent({
+      action: "opened",
+      repository: { full_name: "acme/my_repo" },
+      issue: { number: 7, title: "Something", body: "Details", html_url: "https://github.com/acme/my_repo/issues/7", state: "open" },
+    });
+
+    expect(boundRepos()).toEqual([{ equals: "acme/my\\_repo", mode: "insensitive" }]);
+  });
+
   it("pull_request merged: matches the bound project case-insensitively and transitions the task", async () => {
     mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
 

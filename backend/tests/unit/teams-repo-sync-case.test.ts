@@ -121,23 +121,43 @@ beforeEach(() => {
 });
 
 describe("POST /teams/:id/sync: lookup of the already-bound project", () => {
-  it("matches githubRepo case-insensitively and updates the project instead of creating a duplicate", async () => {
-    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
-    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-existing", githubRepo: STORED_REPO });
+  it("looks for the exact spelling first, then matches case-insensitively with LIKE-escaping, and updates instead of creating a duplicate", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo("LanNguyenSi/agent_tasks")]);
+    prismaMocks.projectFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "p-existing", githubRepo: "lannguyensi/agent_tasks" });
 
     const { status, body } = await sync();
 
     expect(status).toBe(200);
     expect(body).toMatchObject({ synced: 1, created: 0, updated: 1 });
-    expect(prismaMocks.projectFindFirst).toHaveBeenCalledWith({
-      where: { teamId: TEAM_ID, githubRepo: { equals: GITHUB_REPO, mode: "insensitive" } },
+    const orderBy = [{ createdAt: "asc" }, { id: "asc" }];
+    expect(prismaMocks.projectFindFirst).toHaveBeenNthCalledWith(1, {
+      where: { teamId: TEAM_ID, githubRepo: "LanNguyenSi/agent_tasks" },
+      orderBy,
+    });
+    expect(prismaMocks.projectFindFirst).toHaveBeenNthCalledWith(2, {
+      where: { teamId: TEAM_ID, githubRepo: { equals: "LanNguyenSi/agent\\_tasks", mode: "insensitive" } },
+      orderBy,
     });
     expect(prismaMocks.projectCreate).not.toHaveBeenCalled();
   });
 
+  it("prefers the exact-spelling row and never runs the insensitive lookup when it exists", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValueOnce({ id: "p-exact", githubRepo: GITHUB_REPO });
+
+    await sync();
+
+    expect(prismaMocks.projectFindFirst).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "p-exact" } }));
+  });
+
   it("normalises the stored binding to GitHub's spelling on the update", async () => {
     githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
-    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-existing", githubRepo: STORED_REPO });
+    prismaMocks.projectFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "p-existing", githubRepo: STORED_REPO });
 
     await sync();
 
@@ -149,16 +169,42 @@ describe("POST /teams/:id/sync: lookup of the already-bound project", () => {
     );
   });
 
-  it("still updates an exactly-matching binding, and writes the same spelling back", async () => {
+  it("leaves githubRepo out of the update when it already has GitHub's spelling", async () => {
     githubMocks.listUserRepos.mockResolvedValue([repo(STORED_REPO)]);
     prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-existing", githubRepo: STORED_REPO });
 
     const { body } = await sync();
 
     expect(body).toMatchObject({ synced: 1, created: 0, updated: 1 });
-    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ githubRepo: STORED_REPO }) }),
+    const data = prismaMocks.projectUpdate.mock.calls[0]![0].data as Record<string, unknown>;
+    expect(data).not.toHaveProperty("githubRepo");
+    expect(data).toHaveProperty("githubSyncAt");
+  });
+
+  it("skips a repo whose write hits an active repository fence, keeps syncing the rest and reports it", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo("LanNguyenSi/fenced"), repo("LanNguyenSi/other")]);
+    prismaMocks.projectFindFirst.mockResolvedValueOnce({ id: "p-fenced", githubRepo: "lannguyensi/fenced" });
+    prismaMocks.projectFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.projectFindFirst.mockResolvedValue(null);
+    prismaMocks.projectUpdate.mockRejectedValueOnce(
+      Object.assign(new Error("grounding_github_fence_conflict"), { code: "P2010" }),
     );
+
+    const { status, body } = await sync();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ created: 1, updated: 0, fenced: 1 });
+    expect((body as unknown as { message: string }).message).toContain("sync again shortly");
+  });
+
+  it("rethrows an update error that is not a fence conflict", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo(STORED_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-existing", githubRepo: STORED_REPO });
+    prismaMocks.projectUpdate.mockRejectedValueOnce(new Error("connection lost"));
+
+    const res = await makeApp(HUMAN);
+
+    expect(res.status).toBe(500);
   });
 
   it("creates a project for a repo that is bound on no project", async () => {
@@ -213,7 +259,9 @@ describe("POST /teams/:id/sync: prune", () => {
 
   it("prunes a project bound to a repo that is no longer listed, and keeps every case of the listed ones", async () => {
     githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
-    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-existing", githubRepo: STORED_REPO });
+    prismaMocks.projectFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "p-existing", githubRepo: STORED_REPO });
     prismaMocks.projectFindMany.mockResolvedValue([
       { id: "p-existing", githubRepo: STORED_REPO },
       { id: "p-gone-lower", githubRepo: "lannguyensi/retired" },
@@ -224,7 +272,11 @@ describe("POST /teams/:id/sync: prune", () => {
 
     expect(body).toMatchObject({ pruned: 2, skippedPrune: false });
     expect(prismaMocks.projectDeleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["p-gone-lower", "p-gone-mixed"] } },
+      where: {
+        id: { in: ["p-gone-lower", "p-gone-mixed"] },
+        teamId: TEAM_ID,
+        githubRepo: { not: null, notIn: [GITHUB_REPO], mode: "insensitive" },
+      },
     });
   });
 
@@ -238,7 +290,11 @@ describe("POST /teams/:id/sync: prune", () => {
     // A prefix match is not a match: the repo names differ beyond case.
     expect(body.pruned).toBe(1);
     expect(prismaMocks.projectDeleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["p-other-repo"] } },
+      where: {
+        id: { in: ["p-other-repo"] },
+        teamId: TEAM_ID,
+        githubRepo: { not: null, notIn: ["LanNguyenSi/agent-tasks"], mode: "insensitive" },
+      },
     });
   });
 
