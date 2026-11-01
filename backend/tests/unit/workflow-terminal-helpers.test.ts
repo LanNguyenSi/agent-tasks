@@ -209,6 +209,26 @@ describe("isStatusOfKind with kind 'active' (the Active counts rule)", () => {
     }
   });
 
+  it("does not count a stranded status the task's own workflow does not have (intentional: a task left on a removed state is not active work)", () => {
+    const noBuild: WorkflowRow = {
+      id: "wf-no-build",
+      projectId: "p1",
+      isDefault: true,
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "ship", label: "Ship", terminal: true },
+        ],
+        transitions: [{ from: "open", to: "ship" }],
+      },
+    };
+    const stranded = { workflowId: "wf-no-build", projectId: "p1", status: "build" };
+    expect(isStatusOfKind([noBuild], stranded, "active")).toBe(false);
+    // The workflow itself keeps answering its own states.
+    expect(isStatusOfKind([noBuild], { ...stranded, status: "open" }, "active")).toBe(true);
+  });
+
   it("is exactly open + in_progress for the built-in workflow", () => {
     for (const status of ["open", "in_progress"]) {
       expect(isStatusOfKind([], task("p1", status), "active")).toBe(true);

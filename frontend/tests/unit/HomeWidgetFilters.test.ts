@@ -133,6 +133,12 @@ describe("isActiveTask with a workflow resolver (active = not terminal, not revi
     expect(on("abandoned")).toBe(false);
   });
 
+  it("does not count a stranded status its workflow does not define (intentional: a task left on a removed state is not active work)", () => {
+    // QA_FLOW has no `build` state; after the stranded-task change a task can
+    // sit on a status its own workflow does not have, and it stays out.
+    expect(on("build")).toBe(false);
+  });
+
   it("is exactly open + in_progress for the four-state (built-in) workflow", () => {
     const builtin = activeStatesResolver(new Map());
     for (const status of ["open", "in_progress"]) {

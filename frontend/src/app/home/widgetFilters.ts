@@ -170,10 +170,10 @@ export function isPriorityTask(
  * workflow derives its own list (activeStatesResolver, activeStatusParam): a
  * state of the task's own workflow that is neither terminal nor review-like,
  * and never a backlog draft or abandoned, so for the four-state workflow this
- * is exactly the two names below. Home's "Active" tile and widget and its
- * "Your projects" strip go through the workflow-derived rule; /projects still
- * calls isActiveTask without a resolver, which keeps this built-in list. The
- * backend's `counts.open` is the same workflow-derived rule (the "active"
+ * is exactly the two names below. Home's "Active" tile and widget, its "Your
+ * projects" strip and the /projects "N active tasks" column all go through
+ * the workflow-derived rule, so a project shows the same number everywhere.
+ * The backend's `counts.open` is the same workflow-derived rule (the "active"
  * kind in backend/src/services/workflow-status-filter.ts).
  */
 export const ACTIVE_STATUSES = ["open", "in_progress"] as const;
@@ -242,12 +242,13 @@ export function activeStatusParam(byProject: ReadonlyMap<string, readonly Workfl
 
 /**
  * Active work. With `activeStatesOf`, a state of the task's own workflow that
- * is neither terminal nor review-like (and never backlog or abandoned).
- * Without it, the built-in allowlist (open, in_progress) only, which is also
- * the overload /projects passes straight to Array.filter. The typeof check is
- * what keeps that call form safe at runtime: Array.filter hands the callback
- * the row index as its second argument, and the overload set alone does not
- * stop that argument from arriving.
+ * is neither terminal nor review-like (and never backlog or abandoned); every
+ * page that counts active work (Home and /projects) passes the resolver.
+ * Without it, the built-in allowlist (open, in_progress) only, kept for the
+ * Array.filter call form. The typeof check is what keeps that call form safe
+ * at runtime: Array.filter hands the callback the row index as its second
+ * argument, and the overload set alone does not stop that argument from
+ * arriving.
  */
 export function isActiveTask(t: Pick<Task, "status">): boolean;
 export function isActiveTask(
