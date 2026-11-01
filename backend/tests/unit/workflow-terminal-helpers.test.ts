@@ -175,6 +175,78 @@ describe("isStatusOfKind", () => {
   });
 });
 
+describe("isStatusOfKind with kind 'active' (the Active counts rule)", () => {
+  // active = a state of the task's own workflow that is neither terminal nor
+  // review-like, and never backlog or abandoned. The custom vocabulary below
+  // is open -> plan -> build -> qa -> shipped with qa review-like, so its
+  // active states are open, plan and build; the built-in four-state workflow
+  // answers exactly open + in_progress.
+  const customDefault: WorkflowRow = {
+    id: "wf-custom",
+    projectId: "p1",
+    isDefault: true,
+    definition: CUSTOM_VOCABULARY_DEFINITION,
+  };
+  const task = (projectId: string, status: string): { workflowId: null; projectId: string; status: string } => ({
+    workflowId: null,
+    projectId,
+    status,
+  });
+
+  it("a build task of the custom workflow counts as active, a shipped one does not", () => {
+    expect(isStatusOfKind([customDefault], task("p1", "build"), "active")).toBe(true);
+    expect(isStatusOfKind([customDefault], task("p1", "shipped"), "active")).toBe(false);
+  });
+
+  it("counts every non-terminal non-review-like state of the custom workflow", () => {
+    for (const status of ["open", "plan", "build"]) {
+      expect(isStatusOfKind([customDefault], task("p1", status), "active")).toBe(true);
+    }
+    // qa is review-like, shipped terminal, backlog/abandoned never count,
+    // and a name that is no state of the workflow never counts either.
+    for (const status of ["qa", "shipped", "backlog", "abandoned", "triage_legacy", "done"]) {
+      expect(isStatusOfKind([customDefault], task("p1", status), "active")).toBe(false);
+    }
+  });
+
+  it("is exactly open + in_progress for the built-in workflow", () => {
+    for (const status of ["open", "in_progress"]) {
+      expect(isStatusOfKind([], task("p1", status), "active")).toBe(true);
+    }
+    for (const status of ["review", "done", "backlog", "abandoned", "build"]) {
+      expect(isStatusOfKind([], task("p1", status), "active")).toBe(false);
+    }
+  });
+
+  it("falls back to the built-in active names when the transitions are unreadable", () => {
+    const broken: WorkflowRow = {
+      id: "wf-broken",
+      projectId: "p1",
+      isDefault: true,
+      definition: {
+        initialState: "open",
+        states: CUSTOM_VOCABULARY_DEFINITION.states,
+        transitions: "x",
+      },
+    };
+    // The review-like judgement needs the transitions; without them the
+    // whole active list falls back, like safeStates does per kind.
+    expect(isStatusOfKind([broken], { workflowId: "wf-broken", projectId: "p1", status: "build" }, "active")).toBe(false);
+    expect(isStatusOfKind([broken], { workflowId: "wf-broken", projectId: "p1", status: "in_progress" }, "active")).toBe(true);
+  });
+
+  it("builds one active condition per workflow plus the built-in branch", () => {
+    const filter = buildTaskStatusFilter([customDefault], { kind: "active", match: "in" });
+    expect(filter).toEqual({
+      OR: [
+        { workflowId: { in: ["wf-custom"] }, status: { in: ["build", "open", "plan"] } },
+        { workflowId: null, projectId: { in: ["p1"] }, status: { in: ["build", "open", "plan"] } },
+        { workflowId: null, projectId: { notIn: ["p1"] }, status: { in: ["in_progress", "open"] } },
+      ],
+    });
+  });
+});
+
 describe("claim fields", () => {
   it("clears every holder and timestamp, and the all-claims set is the two together", () => {
     expect(clearWork).toEqual({ claimedByUserId: null, claimedByAgentId: null, claimedAt: null });

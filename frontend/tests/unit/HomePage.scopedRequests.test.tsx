@@ -330,7 +330,7 @@ describe("home page: header View all links of all six widgets", () => {
     ["My Tasks", "/tasks?teamId=team-1&scope=mine"],
     ["Priority (High / Critical)", "/tasks?teamId=team-1&scope=priority"],
     ["Backlog", "/tasks?teamId=team-1&status=backlog"],
-    ["Active Tasks", "/tasks?teamId=team-1&scope=open"],
+    ["Active Tasks", "/tasks?teamId=team-1&scope=open&status=open,in_progress"],
     ["In Review", "/tasks?teamId=team-1&scope=review"],
     ["Done · 14 days", "/tasks?teamId=team-1&scope=done&recency=recent"],
   ];

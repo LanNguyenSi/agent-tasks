@@ -907,8 +907,14 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   const workflowRows = await loadWorkflowRows(prisma, { projectId: { in: projectIds } });
   const terminalStatus = buildTaskStatusFilter(workflowRows, { kind: "terminal", match: "in" });
   const notTerminalStatus = buildTaskStatusFilter(workflowRows, { kind: "terminal", match: "notIn" });
+  // "Active" (the home "Active" tile, `counts.open`): a state of the task's
+  // own workflow that is neither terminal nor review-like, and never a
+  // backlog draft or abandoned. The built-in four-state workflow answers
+  // open + in_progress, so standard projects keep today's numbers.
+  // Keep in sync with isActiveTask/activeStatusParam (home/widgetFilters.ts).
+  const activeStatus = buildTaskStatusFilter(workflowRows, { kind: "active", match: "in" });
 
-  const [tasks, filteredTotal, statusGroups, priorityCount, mineCount, doneRecent, doneOlder] =
+  const [tasks, filteredTotal, statusGroups, priorityCount, mineCount, doneRecent, doneOlder, activeCount] =
     await Promise.all([
       prisma.task.findMany({
         where,
@@ -953,13 +959,19 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
       prisma.task.count({
         where: { ...countWhere, AND: [terminalStatus], updatedAt: { lt: doneBoundary } },
       }),
+      // Active tasks across the team's projects, each judged by its own
+      // effective workflow (one query, same workflow rows as priorityCount).
+      prisma.task.count({ where: { ...countWhere, AND: [activeStatus] } }),
     ]);
 
   const byStatus: Record<string, number> = Object.fromEntries(
     statusGroups.map((g) => [g.status, g._count._all]),
   );
   const counts = {
-    open: (byStatus.open ?? 0) + (byStatus.in_progress ?? 0),
+    // The API contract name for the team-wide active count stays `open`; the
+    // number is workflow-derived (see activeStatus above), not the two
+    // built-in status buckets, so a task in a custom work state counts.
+    open: activeCount,
     review: byStatus.review ?? 0,
     // The two windows partition the terminal tasks, so their sum is the count.
     done: doneRecent + doneOlder,
