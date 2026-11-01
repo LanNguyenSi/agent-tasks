@@ -256,6 +256,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   let pruned = 0;
 
   let fenced = 0;
+  let pruneDeferred = false;
 
   for (const repo of repos) {
     // GitHub repository names are case-insensitive, while `project.githubRepo`
@@ -338,14 +339,23 @@ teamRouter.post("/teams/:id/sync", async (c) => {
       .map((project) => project.id);
 
     if (staleIds.length > 0) {
-      const deleted = await prisma.project.deleteMany({
-        where: {
-          id: { in: staleIds },
-          teamId,
-          githubRepo: { not: null, notIn: repoFullNames, mode: "insensitive" },
-        },
-      });
-      pruned = deleted.count;
+      try {
+        const deleted = await prisma.project.deleteMany({
+          where: {
+            id: { in: staleIds },
+            teamId,
+            githubRepo: { not: null, notIn: repoFullNames, mode: "insensitive" },
+          },
+        });
+        pruned = deleted.count;
+      } catch (err) {
+        // A stale binding under an active grounding fence rejects the whole
+        // statement (one transaction, nothing removed). The loop above has
+        // already written, so answer 200 and let the next sync retry the
+        // prune instead of turning the sync into a 500.
+        if (!isGithubFenceConflict(err)) throw err;
+        pruneDeferred = true;
+      }
     }
   }
 
@@ -357,12 +367,16 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     updated,
     pruned,
     fenced,
+    pruneDeferred,
     skippedPrune,
     message: skippedPrune
       ? "GitHub sync returned 0 repositories; prune was skipped for safety."
       : `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)` +
         (fenced > 0
           ? `; ${fenced} skipped because a repository operation is in flight, sync again shortly`
+          : "") +
+        (pruneDeferred
+          ? "; removal of stale projects was postponed because a repository operation is in flight, sync again shortly"
           : ""),
   });
 });

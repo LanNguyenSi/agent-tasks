@@ -21,6 +21,7 @@ import {
   type TeamsViewMode,
 } from "../../lib/teamsPrefs";
 import { needsOnboarding } from "../../lib/access";
+import { teamSyncFeedback } from "../../lib/teamSyncFeedback";
 import { accessContextForTeams, usePageTeams } from "../../lib/teamList";
 import { useCurrentTeam } from "../../lib/teamSwitch";
 import { SharedProjectsList } from "../../components/projects/SharedProjectsList";
@@ -732,30 +733,7 @@ export default function ProjectsPage() {
                     // The user switched teams meanwhile: the outcome
                     // belongs to the team that was left.
                     if (activeTeamRef.current !== syncedTeamId) return;
-                    if (result.skippedPrune) {
-                      setFeedback({
-                        tone: "warning",
-                        title: "Sync completed",
-                        message: result.message,
-                      });
-                    } else if (
-                      result.created === 0 &&
-                      result.updated === 0 &&
-                      result.pruned === 0
-                    ) {
-                      setFeedback({
-                        tone: "success",
-                        title: "Already up to date",
-                        message:
-                          "No projects were created, updated, or pruned.",
-                      });
-                    } else {
-                      setFeedback({
-                        tone: "success",
-                        title: "Sync completed",
-                        message: `${result.created} created, ${result.updated} updated, ${result.pruned} pruned.`,
-                      });
-                    }
+                    setFeedback(teamSyncFeedback(result));
                   } catch (err) {
                     if (activeTeamRef.current !== syncedTeamId) return;
                     setFeedback({

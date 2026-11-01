@@ -625,14 +625,20 @@ export async function syncProject(id: string): Promise<Project> {
   return data.project;
 }
 
-export async function syncTeamFromGitHub(teamId: string): Promise<{
+export interface TeamSyncResult {
   synced: number;
   created: number;
   updated: number;
   pruned: number;
+  /** Repos skipped because an active grounding fence rejected their write. */
+  fenced?: number;
+  /** True when the prune was postponed because a stale binding is fenced. */
+  pruneDeferred?: boolean;
   skippedPrune: boolean;
   message: string;
-}> {
+}
+
+export async function syncTeamFromGitHub(teamId: string): Promise<TeamSyncResult> {
   return request(`/api/teams/${teamId}/sync`, { method: "POST" });
 }
 
