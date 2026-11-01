@@ -25,16 +25,24 @@ export interface WorkflowTemplate {
 //
 // 7-stage pipeline modeled after the keshrath/agent-tasks competitive
 // benchmark (April 2026). Designed for solo AI coding agents that move
-// tasks through backlog → spec → plan → implement → test → review → done.
+// tasks through open → spec → plan → implement → test → review → done.
+//
+// The first stage is `open`, the engine's initial state, and not `backlog`:
+// `backlog` is a reserved name (written only by the dedicated demote route),
+// and `initialState` must be `open`. The spec → open edge is therefore the
+// release edge. `review` is the review-like state (it leads to `done` and is
+// not a direct target of `open`), so a work-claim finish from `test` lands in
+// it and review approve ends in `done`; the earlier work states have no edge
+// into `review`, so a finish from them answers no_transition by design.
 
 const codingAgentDefinition: WorkflowDefinitionShape = {
   states: [
     {
-      name: "backlog",
-      label: "Backlog",
+      name: "open",
+      label: "Open",
       terminal: false,
       agentInstructions:
-        "This task is in the backlog. Claim it and move to spec to begin scoping.",
+        "This task is open. Claim it and move to spec to begin scoping.",
     },
     {
       name: "spec",
@@ -80,13 +88,13 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
     },
   ],
   transitions: [
-    // backlog → spec: claim and start scoping
-    { from: "backlog", to: "spec", label: "Start scoping", requiredRole: "any" },
+    // open → spec: claim and start scoping
+    { from: "open", to: "spec", label: "Start scoping", requiredRole: "any" },
 
     // spec → plan: spec is written
     { from: "spec", to: "plan", label: "Spec complete" },
-    // spec → backlog: release back
-    { from: "spec", to: "backlog", label: "Release" },
+    // spec → open: release back
+    { from: "spec", to: "open", label: "Release" },
 
     // plan → implement: plan is ready, branch created
     { from: "plan", to: "implement", label: "Start implementing", requires: ["branchPresent"] },
@@ -108,7 +116,7 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
     // review → implement: changes requested
     { from: "review", to: "implement", label: "Request changes" },
   ],
-  initialState: "backlog",
+  initialState: "open",
 };
 
 // ── Branch / PR / Merge Gated ───────────────────────────────────────────────
@@ -324,16 +332,19 @@ const releaseOpsNoPrDefinition: WorkflowDefinitionShape = {
 
 // ── Template registry ───────────────────────────────────────────────────────
 //
-// The "AI Coding Agent Pipeline" template (backlog → spec → plan →
-// implement → test → review → done) was retired when the state
-// vocabulary was locked to {open, in_progress, review, done}. Its 7
-// custom state names would now fail `workflowDefinitionSchema` validation.
-// The definition is kept above for reference but no longer registered.
-// Templates that vary only transitions / gates / labels within the fixed
-// state set are valid — `branch-pr-merge-gated` below is the first one.
-void codingAgentDefinition;
+// Every template here passes `workflowDefinitionSchema`: state names are free
+// (`[a-z0-9_]+`) apart from the reserved `backlog` and `abandoned`, and
+// `initialState` is `open`. The pipeline template uses custom state names; the
+// other two vary only transitions, gates and labels within the built-in four.
 
 export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  {
+    slug: "coding-agent",
+    name: "AI Coding Agent Pipeline",
+    description:
+      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. Starting a task moves it to spec; plan to implement needs a branch, test to review needs a branch and a PR, and review approves into done or sends the task back to implement. Uses custom state names, so the board shows one column per stage.",
+    definition: codingAgentDefinition,
+  },
   {
     slug: "branch-pr-merge-gated",
     name: "Branch, PR & Merge Gated",

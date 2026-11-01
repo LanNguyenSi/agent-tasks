@@ -557,10 +557,53 @@ applied to a project in one click. Templates are defined in code at
 and are versioned with the backend.
 
 Applying a template replaces the project's custom workflow (or creates
-one if none exists). Existing tasks are not migrated, and the registered
+one if none exists). Existing tasks are not migrated. Two registered
 templates use the four built-in states (`open`, `in_progress`, `review`,
-`done`), so their `status` values stay valid; only the transitions,
-gates, and labels change.
+`done`), so the `status` values of existing tasks stay valid; only the
+transitions, gates, and labels change. The `coding-agent` template uses
+custom state names, and tasks are not moved to them: a task whose status
+is not a state of the template (for example `in_progress`) keeps that
+status, so apply it to a project without work in flight.
+
+### AI Coding Agent Pipeline (`coding-agent`)
+
+Seven stages for a solo coding agent: `open`, `spec`, `plan`, `implement`,
+`test`, `review`, `done`. `open` is the initial state and `done` the only
+terminal one. The first stage is `open` rather than `backlog`: `backlog` is
+a reserved name that no workflow may declare as a state or use as an edge
+end.
+
+| From | To | Label | Requires |
+| ---- | -- | ----- | -------- |
+| `open` | `spec` | Start scoping | *(none)* |
+| `spec` | `plan` | Spec complete | *(none)* |
+| `spec` | `open` | Release | *(none)* |
+| `plan` | `implement` | Start implementing | `branchPresent` |
+| `plan` | `spec` | Revisit spec | *(none)* |
+| `implement` | `test` | Ready for testing | *(none)* |
+| `implement` | `plan` | Revisit plan | *(none)* |
+| `test` | `review` | Submit for review | `branchPresent`, `prPresent` |
+| `test` | `implement` | Fix failures | *(none)* |
+| `review` | `done` | Approve | *(none)* |
+| `review` | `implement` | Request changes | *(none)* |
+
+How the engine reads it:
+
+- **`task_start` moves an open task to `spec`** (the first edge out of the
+  initial state) and takes the work claim.
+- **`review` is the review-like state**: it leads to the terminal `done` and
+  is not a direct target of `open`. `task_finish` with a work claim moves a
+  task to the review-like state its current state has a direct edge to, so it
+  works from `test` (and answers the `branchPresent` / `prPresent` gates
+  there) and is refused from `spec`, `plan` and `implement`, which have no
+  edge into `review`. Move a task along the earlier stages with
+  `POST /tasks/:id/transition`.
+- **Review approve ends in `done`; request changes returns to `implement`.**
+  The merge gate (`POST /tasks/:id/merge`, the GitHub PR merge route) accepts
+  a task in `review` or `done`, and a merged-PR webhook hands a task to
+  `review` (confirmation required) or ends it in `done` (`AUTONOMOUS`).
+- There is no `merged`, `deployed` or `verified` stage; see
+  [deploy-verify-strategy.md](deploy-verify-strategy.md).
 
 ### Branch, PR & Merge Gated (`branch-pr-merge-gated`)
 

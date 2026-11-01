@@ -1,7 +1,8 @@
 /**
  * The merge status gate and the webhook's merge-target choice read review and
  * terminal semantics from a workflow definition. Pins (a) that every shippable
- * four-state workflow keeps accepting exactly {review, done}, and (b) that a
+ * workflow (the built-in default and each registered template, whatever its
+ * state count) keeps accepting exactly {review, done}, and (b) that a
  * workflow with its own state names is judged on its own states.
  */
 import { describe, expect, it } from "vitest";
@@ -24,7 +25,7 @@ const SHIPPABLE_DEFINITIONS = [
   ...WORKFLOW_TEMPLATES.map((t) => ({ name: `template ${t.slug}`, definition: t.definition })),
 ];
 
-describe("template safety: every shippable four-state workflow accepts exactly {review, done}", () => {
+describe("template safety: every shippable workflow accepts exactly {review, done} for the merge gate", () => {
   it("covers the built-in default and at least one template", () => {
     expect(SHIPPABLE_DEFINITIONS.length).toBeGreaterThan(1);
   });
