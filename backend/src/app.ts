@@ -137,6 +137,14 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   app.use("/api/agent/signals/*", authMiddleware);
   app.use("/api/agent/signals", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
+  // workflowRouter and boardRouter also serve /workflows/:id and /boards/:id
+  // (read, update, validate-transition), which are keyed by the workflow or
+  // board id and not by a /projects/:id prefix. Their handlers read the
+  // actor, so without this mount they threw on the missing actor and
+  // answered 500 for every caller. /api/workflow-rules and
+  // /api/workflow-templates stay public: static catalogs, no actor read.
+  app.use("/api/workflows/*", authMiddleware);
+  app.use("/api/boards/*", authMiddleware);
   app.use("/api/invites/*", authMiddleware);
   app.use("/api/admin/*", authMiddleware);
   app.use("/api/github/*", authMiddleware);

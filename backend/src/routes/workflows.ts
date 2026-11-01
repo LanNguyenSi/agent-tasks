@@ -265,7 +265,7 @@ export const updateWorkflowSchema = createWorkflowSchema
   .partial()
   .extend({ isDefault: z.boolean().optional() });
 
-// ── Rules catalog (public-ish: needs auth but no role) ──────────────────────
+// ── Rules catalog (public: static catalog, reads no actor) ──────────────────
 
 workflowRouter.get("/workflow-rules", (c) => {
   return c.json({ rules: RULE_CATALOG });
@@ -369,8 +369,9 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
 // ── Workflow templates ──────────────────────────────────────────────────────
 
 /**
- * List available workflow templates. No auth required beyond project access
- * — templates are public metadata, not secrets.
+ * List available workflow templates. Public: a static catalog that reads no
+ * actor and sits outside every authMiddleware mount; templates are public
+ * metadata, not secrets.
  */
 workflowRouter.get("/workflow-templates", (c) => {
   return c.json({
@@ -629,7 +630,7 @@ workflowRouter.get("/workflows/:id", async (c) => {
 
 workflowRouter.put(
   "/workflows/:id",
-  zValidate("json", updateWorkflowSchema),
+  zValidate("json", updateWorkflowSchema, { message: true }),
   async (c) => {
     const actor = c.get("actor");
 
