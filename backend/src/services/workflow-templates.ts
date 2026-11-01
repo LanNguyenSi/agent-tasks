@@ -33,7 +33,8 @@ export interface WorkflowTemplate {
 // release edge. `review` is the review-like state (it leads to `done` and is
 // not a direct target of `open`), so a work-claim finish from `test` lands in
 // it and review approve ends in `done`; the earlier work states have no edge
-// into `review`, so a finish from them answers no_transition by design.
+// into `review`, so a finish from them is refused as a transition the workflow
+// does not allow, by design.
 
 const codingAgentDefinition: WorkflowDefinitionShape = {
   states: [
