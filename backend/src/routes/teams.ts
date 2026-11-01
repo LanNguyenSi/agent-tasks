@@ -254,16 +254,27 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   let pruned = 0;
 
   for (const repo of repos) {
+    // GitHub repository names are case-insensitive, while `project.githubRepo`
+    // keeps whatever case the binding was written in, so an exact match missed
+    // the project and a duplicate was created (then pruned). Same
+    // `{ equals, mode: "insensitive" }` filter as the legacy webhook lookups
+    // (`githubRepoFilter` in services/github-webhook.ts); nothing else about
+    // the match is relaxed: the stored value must still be exactly
+    // `owner/repo` (no trimming, no clone URL).
     const existingProject = await prisma.project.findFirst({
-      where: { teamId, githubRepo: repo.full_name },
+      where: { teamId, githubRepo: { equals: repo.full_name, mode: "insensitive" } },
     });
 
     if (existingProject) {
       await prisma.project.update({
         where: { id: existingProject.id },
+        // Rewriting `githubRepo` with GitHub's own spelling keeps the binding
+        // in step with every later exact comparison (the `push` sync lookup in
+        // services/github-webhook.ts) after a case-insensitive match.
         data: {
           name: repo.name,
           description: repo.description ?? undefined,
+          githubRepo: repo.full_name,
           githubSyncAt: now,
         },
       });
@@ -288,17 +299,30 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     created += 1;
   }
 
+  // The prune compares lowercased in code instead of trusting `mode` next to
+  // `notIn`: the generated client types (`StringNullableFilter`,
+  // node_modules/.prisma/client/index.d.ts) keep `mode` as a filter-level
+  // sibling of `notIn`, and nothing shows the Postgres engine applying it to a
+  // list operator. If it did not, this DELETE would silently remove a binding
+  // that only differs in letter case, so the comparison is done here and the
+  // stale rows are deleted by id.
   if (repoFullNames.length > 0) {
-    const deleted = await prisma.project.deleteMany({
-      where: {
-        teamId,
-        githubRepo: {
-          not: null,
-          notIn: repoFullNames,
-        },
-      },
+    const listed = new Set(repoFullNames.map((fullName) => fullName.toLowerCase()));
+    const boundProjects = await prisma.project.findMany({
+      where: { teamId, githubRepo: { not: null } },
+      select: { id: true, githubRepo: true },
     });
-    pruned = deleted.count;
+    const staleIds = boundProjects
+      .filter(
+        (project) =>
+          project.githubRepo !== null && !listed.has(project.githubRepo.toLowerCase()),
+      )
+      .map((project) => project.id);
+
+    if (staleIds.length > 0) {
+      const deleted = await prisma.project.deleteMany({ where: { id: { in: staleIds } } });
+      pruned = deleted.count;
+    }
   }
 
   const skippedPrune = repoFullNames.length === 0;
