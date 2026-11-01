@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-11-01T09:07:49Z
+timestamp: 2026-11-01T09:05:38Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -74,7 +74,7 @@ contract](../grounding-receipt-contract.md).
 
 **Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry. The separate legacy finish gate (ADR 0013) requires an attached `groundingSessionId` and at least one ledger entry and does not check the session phase; the phase allowlist (the pinned wrapper's `claim-evaluation` and terminal `complete`) applies only to LEGACY_LOCAL cohort completion and migration, and that phase compatibility is not an evaluated-outcome result.
 
-**Auth middleware** (`backend/src/middleware/auth.ts`): `authMiddleware` reads `Authorization: Bearer <token>`, SHA-256-hashes it (`hashToken`, `createHash("sha256")`) and looks up `AgentToken.tokenHash` (unique). A hit yields an `AgentActor{ tokenId, teamId, scopes, userId }` (also checks `revokedAt`/`expiresAt`, updates `lastUsedAt`). A miss falls through to `verifySessionToken` (session JWT, e.g. server-to-server callers with no cookie jar) → `HumanActor`. No bearer header falls back to the session cookie (`extractSessionCookie`). `requireScope(scope)` is the per-route scope gate; `hashToken` is exported for reuse.
+**Auth middleware** (`backend/src/middleware/auth.ts`): `authMiddleware` reads `Authorization: Bearer <token>`, SHA-256-hashes it (`hashToken`, `createHash("sha256")`) and looks up `AgentToken.tokenHash` (unique). A hit yields an `AgentActor{ tokenId, teamId, scopes, userId }` (also checks `revokedAt`/`expiresAt`, updates `lastUsedAt`). A miss falls through to `verifySessionToken` (session JWT, e.g. server-to-server callers with no cookie jar) → `HumanActor`. No bearer header falls back to the session cookie (`extractSessionCookie`). `app.ts` mounts the middleware per path prefix (`/api/tasks/*`, `/api/projects/*`, `/api/teams/*`, `/api/workflows/*`, `/api/boards/*`, `/api/mcp` and others), not on all of `/api`; a router that serves a path outside those prefixes needs its own mount, because its handlers read the actor from the context (`/api/workflow-rules`, `/api/workflow-templates` and the docs routes stay public). `requireScope(scope)` is the per-route scope gate; `hashToken` is exported for reuse.
 
 Related: `architecture.md`, `claim-model.md`, `workflow-gates.md`, `governance-merge.md`, `confidence-scorer.md`.
 
