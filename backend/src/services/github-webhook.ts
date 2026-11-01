@@ -16,6 +16,7 @@ import { emitTaskAvailableSignal } from "./task-signal.js";
 import { createInitialStatus } from "./task-status-input.js";
 import { STATUS_VERSION_BUMP, taskStatusVersionWhere } from "./task-status-cas.js";
 import { logger } from "../lib/logger.js";
+import { githubRepoEqualsInsensitive } from "../lib/github-repo-match.js";
 import {
   GovernanceMode,
   resolveGovernanceMode,
@@ -347,12 +348,14 @@ export function verifyWebhookSignature(
  * Matched case-insensitively: GitHub sends `repository.full_name` in the case
  * of the repo's own name, while `project.githubRepo` keeps whatever case the
  * operator pasted, so an exact match silently linked the delivery to no project
- * and every merge did nothing. Nothing else about the match is relaxed: the
- * stored value must still be exactly `owner/repo` (no trimming, no clone URL),
- * and the `push` sync lookup (`updateProjectSyncAt`) keeps its exact match.
+ * and every merge did nothing. The value is LIKE-escaped (`_` and `%` match
+ * only themselves, see lib/github-repo-match.ts), so a delivery for
+ * `acme/my_repo` never selects a project bound to `acme/my-repo`. The stored
+ * value must still be exactly `owner/repo` (no trimming, no clone URL), and
+ * the `push` sync lookup (`updateProjectSyncAt`) keeps its exact match.
  */
 function githubRepoFilter(repoFullName: string): Prisma.ProjectWhereInput["githubRepo"] {
-  return { equals: repoFullName, mode: "insensitive" };
+  return githubRepoEqualsInsensitive(repoFullName);
 }
 
 /** Process a GitHub issues event — create or transition tasks */
