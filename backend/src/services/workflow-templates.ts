@@ -33,8 +33,9 @@ export interface WorkflowTemplate {
 // not offer it and `apply-template` cannot find it. On the default v2 MCP
 // surface an agent cannot leave `spec`: `task_finish` with a work claim reaches
 // `review` only from `test`, the verb that moves a task along the other stages
-// (`tasks_transition`) is a hidden legacy verb, and a released task cannot be
-// picked up again. Registration waits for a v2 verb that advances the
+// (`tasks_transition`) is a hidden legacy verb, so the only v2 way out of
+// `spec` is `task_abandon`, which resets the task to `open`, where it is
+// picked up and started into `spec` again. Registration waits for a v2 verb that advances the
 // non-test stages. `HELD_WORKFLOW_TEMPLATES` below keeps it importable for the
 // tests that pin that dead end, so the follow-up has a red/green anchor.
 //

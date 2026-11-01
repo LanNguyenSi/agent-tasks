@@ -418,8 +418,10 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
       // Applying a template moves no task. A task whose status is not a state of
       // the template (backlog and abandoned live outside every workflow) would
       // be left on a status the new workflow does not know, so refuse and name
-      // the tasks. Runs inside the project-locked transaction, so a task cannot
-      // slip in between the check and the write; an unchanged definition (a
+      // the tasks. Runs inside the project-locked transaction with the task rows
+      // locked; a status write that read the previous workflow before this
+      // commit can still land afterwards (status writers take no project
+      // lock), an accepted residual of every workflow write route. An unchanged definition (a
       // repeated apply) changes nothing and is not checked. Only the tasks that
       // follow the replaced default row count: a task pinned to another
       // workflow keeps that workflow.
