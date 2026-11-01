@@ -3,7 +3,7 @@ type: module
 title: "frontend: Next.js UI"
 description: "App-router structure, the two independently-authored task list views, the backlog board column, and the hand-maintained confidence-scorer mirror."
 tags: [frontend, nextjs, ui, confidence, backlog]
-timestamp: 2026-10-31T14:49:08Z
+timestamp: 2026-11-01T09:29:08Z
 sources:
   - frontend/src/app
   - frontend/src/app/tasks/page.tsx
@@ -22,6 +22,9 @@ sources:
   - frontend/src/components/TaskDetail.tsx
   - frontend/src/app/tasks/_components/columns.tsx
   - frontend/src/app/tasks/[id]/page.tsx
+  - frontend/src/app/projects/[id]/workflow/page.tsx
+  - frontend/src/app/projects/[id]/workflow/_components/StatesTable.tsx
+  - frontend/src/app/projects/[id]/workflow/_components/stateRules.ts
 ---
 
 Next.js 15 app router (`frontend/package.json`: `next@^15`). Route segments under `frontend/src/app/`: `tasks`, `dashboard` (a client redirect to the board), `projects` (the `/projects` list page plus the project hub, whose `[id]/board` tab is the board), `teams` (only `tokens`, a redirect to `/settings/team`; the legacy `/teams` list URL is a query-preserving `redirects()` rule in `next.config.mjs` pointing at `/projects`), `settings` (personal settings, with `team` for team settings), `onboarding`, `invite`, `auth`, `home`, `dev`. `frontend/src/app/api/` holds exactly two route handlers (`auth/github/route.ts`, `auth/github/connect/route.ts`) for the GitHub OAuth redirect dance, everything else talks to the backend over HTTP, there is no BFF layer.
@@ -45,3 +48,5 @@ Next.js 15 app router (`frontend/package.json`: `next@^15`). Route segments unde
 **Admin claim reassign picker** (`frontend/src/components/task-detail/ClaimReassignPicker.tsx`, rendered by `frontend/src/components/task-detail/TaskMetaSidebar.tsx`, API client `getEligibleActors` and `adminReassignClaim` in `frontend/src/lib/api.ts`): a human project admin gets a `Reassign` control on the work claim (next to `Release (admin)`) and on the review claim (next to its `Release`); the button's accessible name is `Reassign work claim` or `Reassign review claim`, so the two are told apart, and `TaskMetaSidebar` takes `onClaimReassigned` as a required prop. Opening it loads `GET /projects/:id/eligible-actors`, offers every eligible human and agent except the current holder, and `Assign` calls `POST /tasks/:id/admin-reassign` for that claim; the updated task goes back through `TaskDetail`'s `onUpdate`. A 403, 409 or 400 from either call is shown inline with the server's message and leaves the picker open. Unlike the disabled-with-reason release controls it is hidden, not disabled, when `isProjectAdmin` is false, when there is no signed-in `user`, and on a `done` task. Styles are the `.td-reassign*` rules in `frontend/src/app/globals.css`.
 
 Related: `confidence-scorer.md`, `architecture.md`.
+
+**Workflow editor states** (`frontend/src/app/projects/[id]/workflow/page.tsx`, `frontend/src/app/projects/[id]/workflow/_components/StatesTable.tsx`, `frontend/src/app/projects/[id]/workflow/_components/stateRules.ts`): a project admin on a custom workflow adds, renames, removes and marks terminal states in the draft; a non-admin or a default workflow sees the list read-only. `stateRules.ts` restates the backend's rules from `backend/src/routes/workflows.ts` (`[a-z0-9_]+`, 64 characters, no duplicate, `backlog` and `abandoned` reserved, initial state `open`, a terminal state) and `frontend/tests/unit/StateRules.test.ts` pins the constants against that file. The name input forwards a name only when it passes those rules (otherwise it shows the error with `aria-invalid` and `aria-describedby`), so a rename always rewrites the `from` and `to` of every transition and the initial state; `open` has no name input. The initial state's Remove button and Terminal checkbox are disabled with an `aria-describedby` reason (the checkbox stays enabled to unmark a stored terminal initial state). The page refuses, with an error banner and no draft change, removing the only terminal state or a state transitions still reference, and unmarking the last terminal state. Removing a state with tasks in it is allowed in the draft and left to the server's answer on save, which is shown as the server worded it (the answer's `message`; the generic "Request failed" shows when the server sends none). The remove column header is visually hidden, focus moves to the new row after Add state and to a neighbouring row or the Add state button after a removal, and open instruction rows are keyed by row index and re-indexed on removal, so each stays with its state.

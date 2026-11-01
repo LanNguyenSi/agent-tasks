@@ -15,7 +15,7 @@
  * warnings) and is mirrored by the backend's `workflowDefinitionSchema`
  * The frontend is UX; the backend is the source of truth.
  *
- * Stage F2 changes vs. the original /projects/workflow page:
+ * Changes vs. the original /projects/workflow page:
  *  - Route: lives at /projects/[id]/workflow (hub layout, useParams).
  *  - State-diagram strip above tables.
  *  - Tables rebuilt on ui/Table primitive with gate toggle chips.
@@ -54,12 +54,12 @@ import { Skeleton, SkeletonList } from "../../../../components/ui/Skeleton";
 import {
   cloneDefinition,
   definitionsEqual,
-  STATE_NAME_RE,
   validateDefinition,
   type ValidationResult,
 } from "../../../../lib/workflow-draft";
 import { WorkflowDiagram, WorkflowDiagramSkeleton } from "./_components/WorkflowDiagram";
 import { StatesTable } from "./_components/StatesTable";
+import { validateStateRules } from "./_components/stateRules";
 import { TransitionsTable } from "./_components/TransitionsTable";
 
 // ── Page ────────────────────────────────────────────────────────────────────
@@ -141,10 +141,14 @@ export default function WorkflowEditorPage() {
 
   const activeDef = draft ?? workflow?.definition ?? null;
   const isDirty = draft !== null;
-  const validation: ValidationResult = useMemo(
-    () => (activeDef ? validateDefinition(activeDef) : { errors: [], warnings: [] }),
-    [activeDef],
-  );
+  // Structural checks plus the backend's state rules (reserved names, pinned
+  // initial state, a terminal state), so a refusal the server would give is
+  // already an error here.
+  const validation: ValidationResult = useMemo(() => {
+    if (!activeDef) return { errors: [], warnings: [] };
+    const base = validateDefinition(activeDef);
+    return { errors: [...base.errors, ...validateStateRules(activeDef)], warnings: base.warnings };
+  }, [activeDef]);
 
   // Cmd/Ctrl+S triggers Save when there's a dirty draft.
   useEffect(() => {
@@ -199,22 +203,33 @@ export default function WorkflowEditorPage() {
     field: K,
     value: WorkflowState[K],
   ) {
+    if (field === "terminal" && activeDef) {
+      const current = activeDef.states[index];
+      if (current && value === false && current.terminal) {
+        if (activeDef.states.filter((st) => st.terminal).length === 1) {
+          setError(
+            `Cannot unmark "${current.name}" as terminal: the workflow needs at least one terminal state.`,
+          );
+          return;
+        }
+      }
+    }
     mutateDraft((d) => {
       const s = d.states[index];
       if (!s) return d;
 
+      // The name input only forwards names that pass the state rules, so a
+      // rename always rewrites every edge (and the initial state) that
+      // referenced the old name. The row keeps its index, which is its
+      // identity, while the name changes.
       if (field === "name" && typeof value === "string" && value !== s.name) {
         const oldName = s.name;
         const newName = value;
-        const nameIsValid = STATE_NAME_RE.test(newName);
-        const nameCollides = d.states.some((other, j) => j !== index && other.name === newName);
-        if (nameIsValid && !nameCollides) {
-          for (const t of d.transitions) {
-            if (t.from === oldName) t.from = newName;
-            if (t.to === oldName) t.to = newName;
-          }
-          if (d.initialState === oldName) d.initialState = newName;
+        for (const t of d.transitions) {
+          if (t.from === oldName) t.from = newName;
+          if (t.to === oldName) t.to = newName;
         }
+        if (d.initialState === oldName) d.initialState = newName;
       }
 
       s[field] = value;
@@ -235,6 +250,12 @@ export default function WorkflowEditorPage() {
     if (!activeDef) return;
     const s = activeDef.states[index];
     if (!s) return;
+    if (s.terminal && activeDef.states.filter((st) => st.terminal).length === 1) {
+      setError(
+        `Cannot remove state "${s.name}": it is the only terminal state. Mark another state as terminal first.`,
+      );
+      return;
+    }
     const refs = activeDef.transitions.filter((t) => t.from === s.name || t.to === s.name);
     if (refs.length > 0) {
       setError(
@@ -242,15 +263,17 @@ export default function WorkflowEditorPage() {
       );
       return;
     }
-    if (activeDef.initialState === s.name) {
-      setError(`Cannot remove state "${s.name}": it is the initial state. Change the initial state first.`);
-      return;
-    }
     mutateDraft((d) => { d.states.splice(index, 1); return d; });
-  }
-
-  function setInitialState(name: string) {
-    mutateDraft((d) => { d.initialState = name; return d; });
+    // Expanded-instructions rows are keyed by index: keep each open row on the
+    // state it was open for.
+    setExpandedInstructions((prev) => {
+      const next = new Set<number>();
+      for (const i of prev) {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      }
+      return next;
+    });
   }
 
   function addTransition() {
@@ -581,13 +604,11 @@ export default function WorkflowEditorPage() {
       <StatesTable
         def={activeDef}
         canEdit={canEdit}
-        statesLocked={true}
         saving={saving}
         expandedInstructions={expandedInstructions}
         onAddState={addState}
         onRemoveState={removeState}
         onUpdateStateField={updateStateField}
-        onSetInitialState={setInitialState}
         onToggleInstructionsExpanded={toggleInstructionsExpanded}
       />
 

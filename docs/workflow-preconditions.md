@@ -374,11 +374,16 @@ and the dashboard gear icon. Non-admins see a read-only view.
 2. Either click **Customize this workflow** to fork the built-in default,
    or click a **template button** (e.g. "Branch, PR & Merge Gated") to
    apply a predefined workflow with transitions and gates pre-configured.
-3. Edit states: the editor shows the state list read-only (the
-   four built-in states `open`, `in_progress`, `review` and `done`,
-   with `done` terminal and `open` initial) and notes that states
-   cannot be added, renamed or removed there. The backend does not
-   pin that list: see step 5 for what it accepts. Edit each state's
+3. Edit states: admins can **+ Add state**, rename a state (its
+   transitions follow the new name), remove one and tick **Terminal**.
+   The name input applies the backend's rules as you type (`[a-z0-9_]+`,
+   at most 64 characters, no duplicate, `backlog` and `abandoned`
+   reserved) and shows the error instead of changing the draft. `open`
+   is the fixed initial state: it has no name input, cannot be removed
+   and cannot be terminal. Removal is also refused for the only
+   terminal state and for a state that transitions still reference
+   (remove those transitions first). Tasks in a state you rename or
+   remove are not moved; the server decides on save. Edit each state's
    label inline, and click "Add instructions…" to open a textarea for
    the state's agent instructions.
 4. Edit transitions: `from` / `to` are state dropdowns, label is
@@ -388,10 +393,10 @@ and the dashboard gear icon. Non-admins see a read-only view.
    transition` adds a row for the first `from` / `to` pair, in state
    order, that has no transition yet.
 5. Validation errors block Save with an inline banner. In the editor
-   they come from an empty state label or a duplicate transition (same
-   `from` and `to`); the client checks on state names, transition
-   endpoints and `initialState` only fire for a stored definition
-   outside the four built-in states. The backend accepts any state
+   they come from an empty state label, a duplicate transition (same
+   `from` and `to`), and the backend's four rules below, which the
+   editor checks too (a stored definition that breaks one is flagged as
+   soon as you edit it). The backend accepts any state
    names matching `[a-z0-9_]+` and any terminal flags, and rejects a
    definition that breaks one of four rules: `initialState` must be
    `open` and one of the states, the names `backlog` and `abandoned`
