@@ -21,6 +21,12 @@ const backendSource = readFileSync(
   resolve(__dirname, "../../../backend/src/routes/workflows.ts"),
   "utf8",
 );
+// The reserved names live in the shared stranded-task service; workflows.ts
+// imports and re-exports them.
+const reservedSource = readFileSync(
+  resolve(__dirname, "../../../backend/src/services/workflow-stranding.ts"),
+  "utf8",
+);
 
 function def(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
   return {
@@ -39,9 +45,10 @@ function def(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
 }
 
 describe("restated backend constants", () => {
-  it("match backend/src/routes/workflows.ts", () => {
+  it("match backend/src/routes/workflows.ts and services/workflow-stranding.ts", () => {
     expect(backendSource).toContain(`export const STATE_NAME_MAX_LENGTH = ${STATE_NAME_MAX_LENGTH};`);
-    expect(backendSource).toContain(
+    expect(backendSource).toContain("export { RESERVED_STATE_NAMES };");
+    expect(reservedSource).toContain(
       `export const RESERVED_STATE_NAMES = [${RESERVED_STATE_NAMES.map((n) => `"${n}"`).join(", ")}] as const;`,
     );
     expect(backendSource).toContain(`export const WORKFLOW_INITIAL_STATE = "${WORKFLOW_INITIAL_STATE}";`);
