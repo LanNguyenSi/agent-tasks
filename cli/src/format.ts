@@ -90,13 +90,17 @@ export function formatPickup(result: import("./api.js").PickupResult, mode: Outp
 export function formatStart(result: import("./api.js").StartResult, mode: OutputMode): string {
   if (mode === "json") return JSON.stringify(result, null, 2);
   if (mode === "quiet") return result.task.id;
-  return [
+  const lines = [
     `Started ${result.kind} on ${result.task.id}`,
     `Title:               ${result.task.title}`,
     `Project:             ${result.project.slug}`,
     `Status:              ${result.task.status}`,
-    `expectedFinishState: ${result.expectedFinishState}`,
-  ].join("\n");
+    `expectedFinishState: ${result.expectedFinishState ?? "none (finish is refused from this stage)"}`,
+  ];
+  if (result.advanceTargets && result.advanceTargets.length > 0) {
+    lines.push(`advanceTargets:      ${result.advanceTargets.join(", ")}`);
+  }
+  return lines.join("\n");
 }
 
 // Minimal confidence renderer (D7): score/threshold, blocking status,

@@ -8,7 +8,7 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditWorkflowVocabulary, formatAudit } from "../../src/scripts/workflow-vocabulary-audit.js";
 import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
-import { HELD_WORKFLOW_TEMPLATES } from "../../src/services/workflow-templates.js";
+import { findWorkflowTemplate } from "../../src/services/workflow-templates.js";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
@@ -39,7 +39,7 @@ beforeAll(async () => {
   // Built-in four states: not affected.
   await seedWorkflow("builtin", await seedProject(teamId), defaultWorkflowDefinition());
   // Registered template with custom names and no backlog.
-  const template = JSON.parse(JSON.stringify(HELD_WORKFLOW_TEMPLATES[0]!.definition));
+  const template = JSON.parse(JSON.stringify(findWorkflowTemplate("coding-agent")!.definition));
   const templateProject = await seedProject(teamId);
   await seedWorkflow("template", templateProject, template);
   await db.task.create({

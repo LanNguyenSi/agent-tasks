@@ -87,6 +87,7 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 | `task_pickup` | Return the next pending signal, review-ready task or claimable open task (no confidence filter) |
 | `task_start` | Atomic claim + transition to `in_progress` |
 | `task_note` | Add a comment / progress note |
+| `task_advance` | Move a work-claimed task to the next work stage along one forward edge of a multi-stage workflow (such as the `coding-agent` template), keeping the claim; refused on the four-state workflows, where `task_finish` is the only move |
 | `task_submit_pr` | Record branch and PR metadata on the task after `gh pr create` (not a state transition) |
 | `task_finish` | Move the task to `review`, or to `done` with `autoMerge` in `AUTONOMOUS` projects; a reviewer finishes with `outcome: approve` or `request_changes` |
 | `task_merge` | Merge the bound PR via GitHub delegation; honours self-merge gate |

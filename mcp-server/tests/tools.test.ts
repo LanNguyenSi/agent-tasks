@@ -102,6 +102,7 @@ describe("buildTools", () => {
         "signals_ack",
         "signals_poll",
         "task_abandon",
+        "task_advance",
         "task_artifact_create",
         "task_artifact_get",
         "task_artifact_list",
@@ -144,6 +145,7 @@ describe("buildTools", () => {
         "signals_ack",
         "signals_poll",
         "task_abandon",
+        "task_advance",
         "task_artifact_create",
         "task_artifact_get",
         "task_artifact_list",
@@ -1676,11 +1678,92 @@ describe("buildTools", () => {
     { name: "task_finish", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { kind: "work", task: { id: "t1", status: "review" } } },
     { name: "task_merge", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "s", alreadyMerged: false } },
     { name: "task_abandon", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { task: { id: "t1", status: "open" } } },
+    { name: "task_advance", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { kind: "work", task: { id: "t1", status: "plan" }, previousStatus: "spec" } },
   ])("$name forwards an explicit operationKey as Idempotency-Key without inventing one", async ({ name, args, body }) => {
     fetchMock.mockResolvedValue(ok(body));
     await tool(name).handler(args as never);
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
+  });
+
+  // ── task_advance ────────────────────────────────────────────────────────
+  it("task_advance POSTs /advance with `to` in the body and the key only as a header", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "docs" }, previousStatus: "spec", advanceTargets: [] }));
+    await tool("task_advance").handler({ taskId: TASK_ID, to: "docs", operationKey: "adv-1" } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`https://example.test/api/tasks/${TASK_ID}/advance`);
+    expect(init.method).toBe("POST");
+    expect(init.headers["Idempotency-Key"]).toBe("adv-1");
+    expect(JSON.parse(init.body)).toEqual({ to: "docs" });
+  });
+
+  it("task_advance without `to` sends an empty JSON body", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "plan" }, previousStatus: "spec" }));
+    await tool("task_advance").handler({ taskId: TASK_ID } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.body).toBe("{}");
+  });
+
+  it("task_advance returns a receipt with the transition and the next call by default", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        kind: "work",
+        task: { id: "t1", status: "plan", description: "SECRET SPEC" },
+        previousStatus: "spec",
+        targetStatus: "plan",
+        expectedFinishState: null,
+        effectiveGates: { finish: null },
+        advanceTargets: ["implement"],
+      }),
+    );
+    const result = await tool("task_advance").handler({ taskId: TASK_ID } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "plan" },
+      transition: { from: "spec", to: "plan" },
+      next: ["task_advance (next stage: implement)"],
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("task_advance include:[\"task\"] returns the full backend object", async () => {
+    const body = { kind: "work", task: { id: "t1", status: "plan" }, previousStatus: "spec", targetStatus: "plan", advanceTargets: ["implement"] };
+    fetchMock.mockResolvedValue(ok(body));
+    expect(await tool("task_advance").handler({ taskId: TASK_ID, include: ["task"] } as never)).toEqual(body);
+  });
+
+  it("task_advance's `to` must be a workflow state name, checked locally", () => {
+    expect(parseArgs("task_advance", { taskId: TASK_ID, to: "plan" }).to).toBe("plan");
+    expect(() => parseArgs("task_advance", { taskId: TASK_ID, to: "Plan Stage" })).toThrow();
+    expect(() => parseArgs("task_advance", { taskId: TASK_ID, to: "" })).toThrow();
+    expect(() => parseArgs("task_advance", { taskId: TASK_ID, to: "a".repeat(65) })).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("task_advance maps a 422 precondition_failed to a recipe that retries task_advance", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "precondition_failed", message: "Transition blocked", failed: [{ rule: "branchPresent", message: "No branch" }] }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const err = await tool("task_advance").handler({ taskId: TASK_ID } as never).catch((e: Error) => e);
+    const parsed = JSON.parse((err as Error).message);
+    expect(parsed.error.code).toBe("precondition_failed");
+    expect(parsed.error.recipe).toContain("retry task_advance");
+    expect(parsed.error.allowedNext).toEqual(["task_submit_pr", "task_advance"]);
+  });
+
+  it("task_advance maps a 409 advance_ambiguous to its catalog entry with the choices", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "advance_ambiguous", message: "'spec' has 2 forward edges", from: "spec", choices: ["lint", "docs"] }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const err = await tool("task_advance").handler({ taskId: TASK_ID } as never).catch((e: Error) => e);
+    const parsed = JSON.parse((err as Error).message);
+    expect(parsed.error).toMatchObject({ code: "advance_ambiguous", allowedNext: ["task_advance"], detail: { from: "spec", choices: ["lint", "docs"], totalChoices: 2 } });
   });
 
   it("task_finish with only taskId + operationKey sends an empty JSON body and the key as a header", async () => {
@@ -1713,6 +1796,7 @@ describe("buildTools", () => {
     { name: "task_finish", args: { taskId: TASK_ID }, body: { kind: "work", task: { id: "t1", status: "review" } } },
     { name: "task_merge", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "s", alreadyMerged: false } },
     { name: "task_abandon", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "open" } } },
+    { name: "task_advance", args: { taskId: TASK_ID }, body: { kind: "work", task: { id: "t1", status: "plan" }, previousStatus: "spec" } },
   ])("$name generates an Idempotency-Key header when operationKey is omitted", async ({ name, args, body }) => {
     fetchMock.mockResolvedValue(ok(body));
     await tool(name).handler(args as never);
@@ -1720,7 +1804,7 @@ describe("buildTools", () => {
     expect(init.headers["Idempotency-Key"]).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
   });
 
-  it.each(["task_finish", "task_merge", "task_abandon"])(
+  it.each(["task_finish", "task_merge", "task_abandon", "task_advance"])(
     "%s generates a DIFFERENT Idempotency-Key on each call when operationKey is omitted",
     async (name) => {
       fetchMock.mockImplementation(() =>
@@ -1736,7 +1820,7 @@ describe("buildTools", () => {
     },
   );
 
-  it.each(["task_finish", "task_merge", "task_abandon"])(
+  it.each(["task_finish", "task_merge", "task_abandon", "task_advance"])(
     "%s rejects a malformed operationKey locally, before any network call",
     (name) => {
       expect(() => parseArgs(name, { taskId: TASK_ID, operationKey: "has a space" })).toThrow();
@@ -1749,7 +1833,7 @@ describe("buildTools", () => {
   // pull_requests_create's wider printable-ASCII format, so a task tool that
   // accepted that wider format would let them through.
   it.each(
-    ["task_finish", "task_merge", "task_abandon"].flatMap((name) => [
+    ["task_finish", "task_merge", "task_abandon", "task_advance"].flatMap((name) => [
       { name, label: "a 129-char operationKey", key: "a".repeat(129) },
       { name, label: "an operationKey containing '/'", key: "a/b" },
       { name, label: "an empty operationKey", key: "" },

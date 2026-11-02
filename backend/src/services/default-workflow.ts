@@ -381,7 +381,7 @@ export function isTerminalState(def: WorkflowDefinitionShape, stateName: string)
  *
  * For the default workflow: "review" qualifies (review→done, open has no edge
  * to it, only open→in_progress).
- * For the held coding-agent definition: "review" qualifies (review→done, open
+ * For the coding-agent template: "review" qualifies (review→done, open
  * has no edge to it, only open→spec).
  */
 export function isReviewState(def: WorkflowDefinitionShape, stateName: string): boolean {
@@ -527,6 +527,120 @@ export function finishTargetFrom(
 ): string {
   const def = definition ?? defaultWorkflowDefinition();
   return reachableReviewState(def, fromState) ?? expectedFinishStateFromDefinition(def);
+}
+
+/**
+ * The state a work-claim `task_finish` from `fromState` would move the task
+ * to, or null when that finish would be refused because the workflow has no
+ * edge `fromState -> finishTargetFrom(...)`. The `task_start` and
+ * `task_advance` previews use it, so a stage without an edge into a review
+ * (or terminal) state previews `null` instead of a review state the finish
+ * cannot reach. Gates on an existing edge do not make it null: a gated
+ * finish answers 422 and the preview lists the gates.
+ */
+export function reachableFinishTarget(def: WorkflowDefinitionShape, fromState: string): string | null {
+  const target = finishTargetFrom(def, fromState);
+  return def.transitions.some((t) => t.from === fromState && t.to === target) ? target : null;
+}
+
+// ── task_advance: forward moves between work stages ─────────────────────────
+//
+// "Forward" is defined by the definition's own state order: an edge
+// `from -> to` is forward when `to` appears later in `def.states` than
+// `from`. No graph search and no edge labels are involved, so the order the
+// states are listed in is the pipeline order (the coding-agent template lists
+// open, spec, plan, implement, test, review, done; spec -> plan is forward,
+// plan -> spec is backward). `task_advance` takes only a forward edge whose
+// target is neither review-like nor terminal: moving a task into review or
+// ending it stays with `task_finish`, which carries the review semantics
+// (claim kept for review, cleared on a terminal state, review signal).
+
+/** Position of `stateName` in `def.states`, -1 when it is not a state. */
+export function stateOrderIndex(def: WorkflowDefinitionShape, stateName: string): number {
+  return def.states.findIndex((s) => s.name === stateName);
+}
+
+/** Whether `from -> to` is forward: both are states and `to` is listed later. */
+export function isForwardMove(def: WorkflowDefinitionShape, from: string, to: string): boolean {
+  const fromIndex = stateOrderIndex(def, from);
+  const toIndex = stateOrderIndex(def, to);
+  return fromIndex >= 0 && toIndex > fromIndex;
+}
+
+/** A state `task_advance` never moves a task into: review-like or terminal. */
+export function isFinishOnlyState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  return isTerminalState(def, stateName) || isReviewState(def, stateName);
+}
+
+/**
+ * The states `task_advance` can move a task to from `fromState`: the targets
+ * of forward edges out of `fromState` that are neither review-like nor
+ * terminal, in the order the edges are listed, without duplicates.
+ */
+export function advanceTargetsFrom(def: WorkflowDefinitionShape, fromState: string): string[] {
+  const targets: string[] = [];
+  for (const t of def.transitions) {
+    if (t.from !== fromState || targets.includes(t.to)) continue;
+    if (!isForwardMove(def, fromState, t.to) || isFinishOnlyState(def, t.to)) continue;
+    targets.push(t.to);
+  }
+  return targets;
+}
+
+/**
+ * Why `task_advance` refused a target, or the edge it takes.
+ *
+ * - `finish_state`: the requested `to` is review-like or terminal, or no `to`
+ *   was given, there is no advance target, and either a forward edge out of
+ *   `fromState` leads into such a state or a `task_finish` from `fromState`
+ *   is possible. `finishTarget` is the state a `task_finish` from `fromState`
+ *   would reach, null when that finish would be refused too.
+ * - `ambiguous`: no `to` was given and several advance targets exist.
+ * - `not_forward`: the requested `to` is not an advance target of
+ *   `fromState` (no such edge, a backward edge, or not a state at all).
+ * - `no_forward_edge`: no `to` was given, `fromState` has no forward edge and
+ *   no `task_finish` from it is possible.
+ *
+ * `choices` is always `advanceTargetsFrom(def, fromState)`.
+ */
+export type AdvanceTargetResolution =
+  | { ok: true; to: string; choices: string[] }
+  | { ok: false; reason: "finish_state"; requested: string | null; finishTarget: string | null; choices: string[] }
+  | { ok: false; reason: "ambiguous"; choices: string[] }
+  | { ok: false; reason: "not_forward"; requested: string; choices: string[] }
+  | { ok: false; reason: "no_forward_edge"; choices: string[] };
+
+/**
+ * Pick the edge `task_advance` takes from `fromState`. With `requested`, the
+ * requested state wins when it is an advance target; a review-like or
+ * terminal `requested` is refused as `finish_state` before the edge is looked
+ * up, so the caller is pointed at `task_finish` either way. Without
+ * `requested`, a single advance target is taken, several are `ambiguous`, and
+ * none is `finish_state` when a forward edge leads into a review-like or
+ * terminal state or a finish is possible, else `no_forward_edge`.
+ */
+export function resolveAdvanceTarget(
+  def: WorkflowDefinitionShape,
+  fromState: string,
+  requested?: string,
+): AdvanceTargetResolution {
+  const choices = advanceTargetsFrom(def, fromState);
+  const finishTarget = reachableFinishTarget(def, fromState);
+  if (requested !== undefined) {
+    if (isFinishOnlyState(def, requested)) {
+      return { ok: false, reason: "finish_state", requested, finishTarget, choices };
+    }
+    if (choices.includes(requested)) return { ok: true, to: requested, choices };
+    return { ok: false, reason: "not_forward", requested, choices };
+  }
+  if (choices.length === 1) return { ok: true, to: choices[0]!, choices };
+  if (choices.length > 1) return { ok: false, reason: "ambiguous", choices };
+  const leadsToFinishState = def.transitions.some(
+    (t) => t.from === fromState && isForwardMove(def, fromState, t.to) && isFinishOnlyState(def, t.to),
+  );
+  return leadsToFinishState || finishTarget !== null
+    ? { ok: false, reason: "finish_state", requested: null, finishTarget, choices }
+    : { ok: false, reason: "no_forward_edge", choices };
 }
 
 /**

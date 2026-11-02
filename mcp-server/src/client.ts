@@ -469,6 +469,15 @@ export class AgentTasksClient {
       operationKey === undefined ? undefined : { "Idempotency-Key": operationKey });
   }
 
+  // task_advance: moves a work-claimed task along one forward edge to the
+  // next work stage. The operation key rides the Idempotency-Key header, which
+  // the advance route always dedupes on (a same-key retry replays the stored
+  // 2xx response).
+  advanceTask(taskId: string, input: { to?: string }, operationKey?: string) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/advance`, input,
+      operationKey === undefined ? undefined : { "Idempotency-Key": operationKey });
+  }
+
   abandonTask(taskId: string, operationKey?: string) {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`, operationKey === undefined ? undefined : {},
       operationKey === undefined ? undefined : { "Idempotency-Key": operationKey });

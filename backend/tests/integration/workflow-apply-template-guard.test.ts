@@ -10,8 +10,10 @@
  * outside it; the change does nothing to either, so neither blocks and the 2xx
  * response lists them (`terminalOutsideWorkflow`, `outsideWorkflow`).
  *
- * Against the registered templates (they share the four built-in names) the
- * guard only fires for a project whose tasks sit on other names.
+ * Against the four-state templates (they share the four built-in names) the
+ * guard only fires for a project whose tasks sit on other names. The
+ * coding-agent template has its own stage names, so applying it over the
+ * built-in default strands a task in `in_progress`.
  *
  * The same check guards the other routes that replace the workflow a group of
  * tasks follows: reset (DELETE /projects/:id/workflow), PUT /workflows/:id and
@@ -112,7 +114,16 @@ describe("apply-template guard", () => {
     expect(await rowCount()).toBe(1);
   });
 
-  it.each(WORKFLOW_TEMPLATES.map((t) => t.slug))(
+  const BUILT_IN_NAMES = ["done", "in_progress", "open", "review"];
+  const FOUR_STATE_SLUGS = WORKFLOW_TEMPLATES.filter(
+    (t) => JSON.stringify(t.definition.states.map((s) => s.name).sort()) === JSON.stringify(BUILT_IN_NAMES),
+  ).map((t) => t.slug);
+
+  it("the four-state templates are the two registered before the coding-agent template", () => {
+    expect(FOUR_STATE_SLUGS).toEqual(["branch-pr-merge-gated", "release-ops-no-pr"]);
+  });
+
+  it.each(FOUR_STATE_SLUGS)(
     "%s applies (201) over tasks on every built-in status plus backlog and abandoned",
     async (slug) => {
       for (const status of ["open", "in_progress", "review", "done", "backlog", "abandoned"]) await seedTask(status);
@@ -121,6 +132,23 @@ describe("apply-template guard", () => {
       expect(await rowCount()).toBe(1);
     },
   );
+
+  it("coding-agent applies (201) over tasks in open, review, done, backlog and abandoned (states it has or that live outside every workflow)", async () => {
+    for (const status of ["open", "review", "done", "backlog", "abandoned"]) await seedTask(status);
+    const res = await apply("coding-agent");
+    expect(res.status).toBe(201);
+    expect(await rowCount()).toBe(1);
+  });
+
+  it("coding-agent answers 409 stranded_tasks over a task in in_progress, which it lacks, and writes no workflow row", async () => {
+    await seedTask("open");
+    const stranded = await seedTask("in_progress");
+    const res = await apply("coding-agent");
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; taskIds: string[] };
+    expect(body).toMatchObject({ error: "stranded_tasks", taskIds: [stranded.id] });
+    expect(await rowCount()).toBe(0);
+  });
 
   it("a project with no tasks applies (201)", async () => {
     expect((await apply("branch-pr-merge-gated")).status).toBe(201);

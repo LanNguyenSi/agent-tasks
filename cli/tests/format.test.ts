@@ -214,6 +214,23 @@ describe("formatStart", () => {
     expect(out).toContain("expectedFinishState: review");
   });
 
+  it("a four-state start shows no advanceTargets line", () => {
+    expect(formatStart(result, "table")).not.toContain("advanceTargets");
+  });
+
+  it("a start stage with advance targets lists them and says the finish is refused from there", () => {
+    const out = formatStart(
+      { ...result, task: { ...result.task, status: "spec" }, expectedFinishState: null, advanceTargets: ["plan"] },
+      "table",
+    );
+    expect(out).toContain("expectedFinishState: none (finish is refused from this stage)");
+    expect(out).toContain("advanceTargets:      plan");
+  });
+
+  it("an empty advanceTargets list prints no line", () => {
+    expect(formatStart({ ...result, advanceTargets: [] }, "table")).not.toContain("advanceTargets");
+  });
+
   it("quiet returns task id", () => {
     expect(formatStart(result, "quiet")).toBe("t1");
   });

@@ -63,6 +63,7 @@ DELETE /api/tasks/:id              # Humans only
 POST /api/tasks/pickup             # v2, agent-only: signals → review pool → open pool → idle
 POST /api/tasks/:id/start          # v2: claim an open task / acquire a review lock; 403 backlog_not_promoted on backlog tasks
 POST /api/tasks/:id/finish         # v2: work claim → review/done, review claim → done or back to in_progress
+POST /api/tasks/:id/advance        # v2: work claim → next work stage along one forward edge (multi-stage workflows); review/terminal targets are /finish's
 POST /api/tasks/:id/merge          # v2: standalone merge verb, lands the task on done
 POST /api/tasks/:id/abandon        # v2: release held claim(s)
 POST /api/tasks/:id/creator-abandon # v2: creator retires their own unclaimed open/backlog task

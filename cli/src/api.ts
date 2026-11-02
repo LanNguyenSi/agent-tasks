@@ -624,7 +624,13 @@ export interface StartResult {
   kind: "work" | "review";
   task: Task;
   project: Project;
-  expectedFinishState: string;
+  /** On a work claim, null when a finish from the start stage is refused
+   *  because the workflow has no edge from it into the finish target (a
+   *  multi-stage workflow moves the task forward with task_advance first). */
+  expectedFinishState: string | null;
+  /** Work claim only, sent only when non-empty: the stages task_advance can
+   *  move the task to from the start stage. */
+  advanceTargets?: string[];
 }
 
 export async function taskStart(config: Config, taskId: string): Promise<StartResult> {

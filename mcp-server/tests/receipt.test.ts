@@ -4,6 +4,7 @@ import {
   receiptForCreate,
   receiptForRespec,
   receiptForFinish,
+  receiptForAdvance,
   receiptForSubmitPr,
   receiptForMerge,
   receiptForAbandon,
@@ -16,6 +17,7 @@ import {
   type StartSlice,
   type StartEffectiveGates,
   type PickupResponse,
+  type AdvanceResponse,
 } from "../src/receipt.js";
 import { serializeResult } from "../src/server.js";
 
@@ -430,6 +432,84 @@ describe("receiptForRespec", () => {
   });
 });
 
+describe("receiptForAdvance", () => {
+  const base: AdvanceResponse = {
+    kind: "work",
+    task: { id: "t1", status: "plan" },
+    previousStatus: "spec",
+    targetStatus: "plan",
+    expectedFinishState: null,
+    effectiveGates: { finish: null },
+    advanceTargets: [],
+  };
+
+  it("reports the move as a transition and nothing else when the reached stage has no follow-up", () => {
+    const receipt = receiptForAdvance(base);
+    expect(receipt).toEqual({ ok: true, task: { id: "t1", status: "plan" }, transition: { from: "spec", to: "plan" } });
+    expect(size(receipt)).toBeLessThanOrEqual(TIER1_BUDGET_CHARS);
+  });
+
+  it("one advance target: next names task_advance and the stage", () => {
+    expect(receiptForAdvance({ ...base, advanceTargets: ["implement"] })).toMatchObject({
+      next: ["task_advance (next stage: implement)"],
+    });
+  });
+
+  it("several advance targets: next names task_advance with the choices, clamped to five", () => {
+    const targets = ["a1", "a2", "a3", "a4", "a5", "a6"];
+    expect(receiptForAdvance({ ...base, advanceTargets: targets.slice(0, 2) })).toMatchObject({
+      next: ["task_advance with to: one of a1, a2"],
+    });
+    expect(receiptForAdvance({ ...base, advanceTargets: targets })).toMatchObject({
+      next: ["task_advance with to: one of a1, a2, a3, a4, a5, ..."],
+    });
+  });
+
+  it("a reachable finish: next names task_finish, its target and its gates", () => {
+    const receipt = receiptForAdvance({
+      ...base,
+      task: { id: "t1", status: "test" },
+      previousStatus: "implement",
+      expectedFinishState: "review",
+      effectiveGates: { finish: ["branchPresent", "prPresent"] },
+    });
+    expect(receipt).toMatchObject({
+      transition: { from: "implement", to: "test" },
+      next: ["task_finish (moves the task to review; gates: branchPresent, prPresent)"],
+    });
+    expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
+  });
+
+  it("a reachable finish without gates leaves the gate clause out", () => {
+    expect(receiptForAdvance({ ...base, expectedFinishState: "review", effectiveGates: { finish: [] } })).toMatchObject({
+      next: ["task_finish (moves the task to review)"],
+    });
+  });
+
+  it("an advance target and a finish both: advance first, then finish", () => {
+    expect(receiptForAdvance({ ...base, advanceTargets: ["polish"], expectedFinishState: "review", effectiveGates: { finish: [] } })).toMatchObject({
+      next: ["task_advance (next stage: polish)", "task_finish (moves the task to review)"],
+    });
+  });
+
+  it("foreign-deliverable gate skips become a WORKFLOW_GATE_SKIPPED deviation naming the rules", () => {
+    const receipt = receiptForAdvance({ ...base, skippedGates: [{ rule: "ciGreen", reason: "foreign repo" }, "prMerged"] });
+    expect(receipt).toMatchObject({
+      deviations: [{ code: "WORKFLOW_GATE_SKIPPED", detail: { skipped: ["ciGreen", "prMerged"], totalSkipped: 2 } }],
+    });
+  });
+
+  it("no transition when the backend reports no previous status", () => {
+    const { previousStatus: _drop, ...rest } = base;
+    expect(receiptForAdvance(rest)).not.toHaveProperty("transition");
+  });
+
+  it("a body without task.id passes through unchanged", () => {
+    const odd = { kind: "work" } as unknown as AdvanceResponse;
+    expect(receiptForAdvance(odd)).toBe(odd);
+  });
+});
+
 describe("receiptForFinish", () => {
   it("happy path (work branch): no deviations, within the tier-1 budget", () => {
     const receipt = receiptForFinish({ kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" }) as Receipt;
@@ -643,6 +723,36 @@ describe("receiptForStart", () => {
     // docs/response-contract-v1.md's task_start budget exception. Growing
     // the slice must move the doc number with it, not drift silently.
     expect(size(slice)).toBe(311);
+  });
+
+  // task_advance: a multi-stage workflow's start stage (the coding-agent
+  // template's `spec`) has advance targets and no finish edge. The slice
+  // carries both: the targets, and the explicit nulls for the refused finish.
+  it("a start stage with advance targets: the slice carries advanceTargets and the null finish preview", () => {
+    const slice = receiptForStart({
+      ...workResponse,
+      task: { ...workResponse.task, status: "spec" },
+      expectedFinishState: null,
+      effectiveGates: { finish: null },
+      advanceTargets: ["plan"],
+    }) as StartSlice;
+    expect(slice).toEqual({
+      ok: true,
+      task: { id: workResponse.task.id, status: "spec" },
+      transition: { from: "open", to: "spec" },
+      inferredTaskType: "bugfix",
+      expectedFinishState: null,
+      advanceTargets: ["plan"],
+      gateExpectations: null,
+    });
+    expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
+  });
+
+  it("an empty advanceTargets list costs nothing, and an absent expectedFinishState stays absent", () => {
+    const { expectedFinishState: _drop, ...rest } = workResponse;
+    const slice = receiptForStart({ ...rest, advanceTargets: [] }) as StartSlice;
+    expect(slice).not.toHaveProperty("advanceTargets");
+    expect(slice).not.toHaveProperty("expectedFinishState");
   });
 
   // rc-v1-B002 mutation probe: if receiptForStart ever went back to ignoring

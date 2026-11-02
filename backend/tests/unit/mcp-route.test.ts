@@ -141,7 +141,7 @@ describe("POST /api/mcp — tool registration", () => {
     ({ app } = makeTestApp());
   });
 
-  it("tools/list returns the full set of 26 tools", async () => {
+  it("tools/list returns the full set of 27 tools", async () => {
     const res = await mcpRequest(
       app,
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -176,6 +176,7 @@ describe("POST /api/mcp — tool registration", () => {
         "tasks_transition",
         "tasks_update",
         "task_abandon",
+        "task_advance",
         "task_finish",
         "task_grounding_attempt_create",
         "task_grounding_receipt_upload",
@@ -482,6 +483,7 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     { name: "task_finish", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/finish` },
     { name: "task_merge", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/merge` },
     { name: "task_abandon", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/abandon` },
+    { name: "task_advance", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/advance` },
   ])("$name forwards an explicit operationKey as Idempotency-Key unchanged", async ({ name, args, path }) => {
     await callTool(name, { ...args, operationKey: "explicit-key-1" });
     expect(recorded[0]).toMatchObject({ method: "POST", path });
@@ -492,13 +494,14 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     { name: "task_finish", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/finish` },
     { name: "task_merge", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/merge` },
     { name: "task_abandon", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/abandon` },
+    { name: "task_advance", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/advance` },
   ])("$name generates an Idempotency-Key header when operationKey is omitted", async ({ name, args, path }) => {
     await callTool(name, args);
     expect(recorded[0]).toMatchObject({ method: "POST", path });
     expect(recorded[0].idempotencyKey).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
   });
 
-  it.each(["task_finish", "task_merge", "task_abandon"])(
+  it.each(["task_finish", "task_merge", "task_abandon", "task_advance"])(
     "%s generates a DIFFERENT Idempotency-Key on each call when operationKey is omitted",
     async (name) => {
       await callTool(name, { taskId: TASK_ID });
@@ -594,11 +597,31 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe(key);
   });
 
+  it("task_advance forwards `to` in the body and sends an empty object without it", async () => {
+    await callTool("task_advance", { taskId: TASK_ID, to: "plan" });
+    await callTool("task_advance", { taskId: TASK_ID });
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0]).toMatchObject({ method: "POST", path: `/api/tasks/${TASK_ID}/advance`, body: { to: "plan" } });
+    expect(recorded[1]).toMatchObject({ method: "POST", path: `/api/tasks/${TASK_ID}/advance`, body: {} });
+  });
+
+  it("task_advance rejects a `to` that is not a state name before self-dispatch", async () => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_advance", arguments: { taskId: TASK_ID, to: "Not A State" } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
   it.each([
     { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey", path: "/api/github/pull-requests/1/merge", inBody: true },
     { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/finish`, inBody: false },
     { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/merge`, inBody: false },
     { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/abandon`, inBody: false },
+    { name: "task_advance", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/advance`, inBody: false },
   ])("$name dispatches a 128-char $keyField (the upper bound) unchanged", async ({ name, args, keyField, path, inBody }) => {
     const key = "Az09._:-".repeat(16);
     expect(key).toHaveLength(128);
@@ -641,6 +664,7 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_advance", args: { taskId: TASK_ID }, keyField: "operationKey" },
   ])("rejects a 129-char $keyField on $name before self-dispatch", async ({ name, args, keyField }) => {
     const key = "a".repeat(129);
     const response = await mcpRequest(
@@ -660,6 +684,7 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_advance", args: { taskId: TASK_ID }, keyField: "operationKey" },
   ])("rejects a $keyField containing '/' on $name before self-dispatch", async ({ name, args, keyField }) => {
     const response = await mcpRequest(
       app,
@@ -676,6 +701,7 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_advance", args: { taskId: TASK_ID }, keyField: "operationKey" },
   ])("rejects a $keyField that is empty on $name before self-dispatch", async ({ name, args, keyField }) => {
     const response = await mcpRequest(
       app,

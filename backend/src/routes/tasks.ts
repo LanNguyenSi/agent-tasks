@@ -82,7 +82,8 @@ import {
   defaultWorkflowDefinition,
   resolveEffectiveDefinition, withInReviewState,
   resolveProjectEffectiveDefinition,
-  expectedFinishStateFromDefinition, finishTargetFrom,
+  expectedFinishStateFromDefinition, finishTargetFrom, reachableFinishTarget,
+  advanceTargetsFrom, resolveAdvanceTarget,
   isInitialState,
   isTerminalState,
   isReviewState,
@@ -163,6 +164,9 @@ import {
 } from "../services/attachment-files.js";
 import { readAttachmentContent, parseIncludeBase64Flag } from "../services/attachment-content.js";
 import { httpUrl } from "../lib/url-guard.js";
+import { withIdempotency } from "../services/idempotency.js";
+import { ConflictError } from "../lib/errors.js";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 // Blocker statuses that no longer hold a dependent task back. `abandoned`
 // joined `done` here per task 5200f326: treat-abandoned-as-resolved at this
@@ -2328,6 +2332,26 @@ function gatesForTransitionOrNull(
   return exists ? gatesForTransition(def, from, to) : null;
 }
 
+/**
+ * What a work-claim holder can do next from `state`, for the `task_start` and
+ * `task_advance` responses: the state a work `task_finish` (without autoMerge)
+ * moves the task to, null when that finish would be refused for lack of an
+ * edge; the gates configured on that edge, null likewise; and the states
+ * `task_advance` can take the task to.
+ */
+function workStagePreview(def: WorkflowDefinitionShape, state: string): {
+  expectedFinishState: string | null;
+  finishGates: string[] | null;
+  advanceTargets: string[];
+} {
+  const expectedFinishState = reachableFinishTarget(def, state);
+  return {
+    expectedFinishState,
+    finishGates: gatesForTransitionOrNull(def, state, expectedFinishState ?? undefined),
+    advanceTargets: advanceTargetsFrom(def, state),
+  };
+}
+
 taskRouter.post("/tasks/:id/start", async (c) => {
   const actor = c.get("actor") as Actor;
 
@@ -2477,7 +2501,9 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       );
     }
 
-    const expectedFinishState = finishTargetFrom(effectiveDefinition, startTarget); // same helper as the finish: preview and finish name one edge
+    // Same helpers as the finish and advance routes, so the preview names the
+    // edges those calls take from the start stage.
+    const preview = workStagePreview(effectiveDefinition, startTarget);
     // If the caller supplied a branchName AND the task has none, fold it
     // into the gate input so a `branchPresent` precondition passes on the
     // same call that claims the task. The actual DB write happens in the
@@ -2626,7 +2652,11 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     return c.json({
       kind: "work",
       task: await withInReviewState({ ...updated, metadata: flavor.mergedMetadata }, prisma),
-      expectedFinishState,
+      // The state a work finish from the start stage moves the task to, or
+      // null when that finish is refused because the workflow has no edge
+      // from the start stage into it (a stage such as `spec` of the
+      // coding-agent template, which task_advance leaves first).
+      expectedFinishState: preview.expectedFinishState,
       // Gate list for the STANDARD (non-autoMerge) finish edge the caller
       // will hit next (startTarget → expectedFinishState), resolved from the
       // SAME effectiveDefinition already computed above — covers all three
@@ -2644,7 +2674,11 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       // task's effective deliverable repo diverges from project.githubRepo.
       // `null` means the edge itself is absent (finish will 400 with
       // no_transition) — distinct from [] (edge exists, nothing required).
-      effectiveGates: { finish: gatesForTransitionOrNull(effectiveDefinition, startTarget, expectedFinishState) },
+      effectiveGates: { finish: preview.finishGates },
+      // The states task_advance can move the task to from the start stage.
+      // Sent only when there is one, so a workflow without advance targets
+      // (the four-state ones) gets the same response as before.
+      ...(preview.advanceTargets.length > 0 ? { advanceTargets: preview.advanceTargets } : {}),
       // Task status immediately before this claim/transition (here: the
       // initial state, e.g. "open") — gives the caller a real transition.from
       // instead of assuming it.
@@ -4133,6 +4167,277 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     ...(workAutoMergeSha !== null ? { autoMergeSha: workAutoMergeSha } : {}),
     ...(gateResult.skipped.length > 0 ? { skippedGates: gateResult.skipped } : {}),
   });
+});
+
+// ── Agent advance (v2 MCP) ───────────────────────────────────────────────────
+//
+// Moves a work-claimed task along one FORWARD edge of its effective workflow
+// to another work stage, keeping the work claim. "Forward" is the state order
+// of the definition (see `resolveAdvanceTarget` in default-workflow.ts): the
+// target is listed later in `def.states` than the current state. A target
+// that is review-like or terminal is refused with a pointer at task_finish,
+// which owns those moves (review signal, claim cleared on a terminal state),
+// so a four-state workflow has nothing to advance (in_progress only leads
+// into review and done) and behaves exactly as before.
+//
+// Body: { to? }. Without `to`, the single advance target is taken; several
+// are a 409 listing them. With `to`, it must be one of them.
+//
+// Gates and the status write are the finish route's: evaluateV2TransitionGates
+// on the chosen edge (branchName / prUrl / prNumber from the task row, there is
+// no PR payload), then the writeStatusCas compare-and-swap. An Idempotency-Key
+// header makes a retry replay the stored 2xx response instead of advancing a
+// second time (services/idempotency.ts, the store the PR routes use); without
+// the header every call executes.
+//
+// A Grounding-provisioned task is refused: its status changes run through the
+// Grounding direct transition route, which this verb does not join.
+const advanceTaskSchema = z.object({
+  to: z
+    .string()
+    .min(1)
+    .max(64, "to must be at most 64 characters")
+    .regex(/^[a-z0-9_]+$/, "to is a workflow state name: lowercase letters, digits and underscores")
+    .optional(),
+});
+const advanceIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+
+const quoteList = (states: string[]) => states.map((s) => `'${s}'`).join(", ");
+
+taskRouter.post("/tasks/:id/advance", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) {
+    return forbidden(c, "Missing scope: tasks:transition");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      workflow: true,
+      project: { select: { id: true, name: true, slug: true, teamId: true, githubRepo: true } },
+      ...taskInclude,
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+  }
+
+  const parsed = advanceTaskSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+  }
+  const requested = parsed.data.to;
+
+  const headerKey = c.req.header("Idempotency-Key");
+  const key = headerKey === undefined ? undefined : advanceIdempotencyKeySchema.safeParse(headerKey);
+  if (key?.success === false) {
+    return c.json({ error: "validation_error", message: "Invalid Idempotency-Key header" }, 400);
+  }
+
+  const advance = async (): Promise<Response> => {
+    const holdsWorkClaim =
+      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+    if (!holdsWorkClaim) {
+      return forbidden(
+        c,
+        "You do not hold the work claim on this task. Call task_start to claim it before task_advance; a review claim does not advance a task.",
+      );
+    }
+
+    let grounding: GroundingRouteContext;
+    try {
+      grounding = await selectGroundingRouteContext(prisma, { taskId: task.id, projectId: task.projectId });
+    } catch (error) {
+      if (error instanceof GroundingAccessError) {
+        return c.json({ error: error.code, ...(error.detail ? { message: error.detail } : {}) }, error.status);
+      }
+      throw error;
+    }
+    if (grounding.mode !== "UNPROVISIONED") {
+      return c.json(
+        {
+          error: "grounding_advance_unsupported",
+          message:
+            "task_advance does not move a Grounding-provisioned task. Its status changes run through the Grounding direct transition route (POST /api/tasks/:id/transition).",
+        },
+        409,
+      );
+    }
+
+    const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
+    const from = task.status;
+
+    if (!isWorkState(effectiveDefinition, from)) {
+      return c.json(
+        { error: "bad_state", message: `task_advance requires a work state (non-initial, non-terminal), got '${from}'` },
+        409,
+      );
+    }
+    if (isReviewState(effectiveDefinition, from)) {
+      return c.json(
+        {
+          error: "advance_use_finish",
+          message: `Task is in the review state '${from}'. task_advance moves a task between work stages only; the review is decided with task_finish and an outcome.`,
+          from,
+          finishTarget: null,
+          choices: [],
+        },
+        409,
+      );
+    }
+
+    const resolution = resolveAdvanceTarget(effectiveDefinition, from, requested);
+    if (!resolution.ok) {
+      const { choices } = resolution;
+      const choicesHint =
+        choices.length > 0 ? ` task_advance can move it to ${quoteList(choices)}.` : "";
+      if (resolution.reason === "finish_state") {
+        const subject =
+          resolution.requested !== null
+            ? `'${resolution.requested}' is a ${isTerminalState(effectiveDefinition, resolution.requested) ? "terminal" : "review"} state, which task_advance never moves a task into.`
+            : `'${from}' has no forward edge to another work stage.`;
+        const finishHint =
+          resolution.finishTarget !== null
+            ? ` Call task_finish, which moves the task from '${from}' to '${resolution.finishTarget}'.`
+            : ` task_finish has no edge from '${from}' either.`;
+        return c.json(
+          {
+            error: "advance_use_finish",
+            message: `${subject}${finishHint}${choicesHint}`,
+            from,
+            ...(resolution.requested !== null ? { requested: resolution.requested } : {}),
+            finishTarget: resolution.finishTarget,
+            choices,
+          },
+          409,
+        );
+      }
+      if (resolution.reason === "ambiguous") {
+        return c.json(
+          {
+            error: "advance_ambiguous",
+            message: `'${from}' has ${choices.length} forward edges to work stages (${quoteList(choices)}). Call task_advance again with to set to one of them.`,
+            from,
+            choices,
+          },
+          409,
+        );
+      }
+      if (resolution.reason === "not_forward") {
+        return c.json(
+          {
+            error: "advance_target_invalid",
+            message: `'${resolution.requested}' is not a forward edge from '${from}' to a work stage.${choicesHint || ` '${from}' has no forward edge to another work stage.`}`,
+            from,
+            requested: resolution.requested,
+            choices,
+          },
+          409,
+        );
+      }
+      return c.json(
+        {
+          error: "advance_no_forward_edge",
+          message: `'${from}' has no forward edge to another work stage, and task_finish has no edge from it either.`,
+          from,
+          choices,
+        },
+        409,
+      );
+    }
+    const targetStatus = resolution.to;
+
+    // Same gate evaluation as the work finish, on the chosen edge. The task
+    // row is the whole gate context: task_advance takes no PR payload.
+    const gateResult = await evaluateV2TransitionGates(
+      task,
+      { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
+      targetStatus,
+      actor,
+      effectiveDefinition,
+    );
+    if (!gateResult.ok) {
+      if (gateResult.kind === "no_transition") {
+        return c.json({ error: "bad_request", message: gateResult.message }, 400);
+      }
+      if (gateResult.kind === "forbidden_role") {
+        return forbidden(c, `Requires role: ${gateResult.requiredRole}`);
+      }
+      if (gateResult.kind === "precondition") {
+        const { failed, ruleErrors } = gateResult;
+        return c.json(
+          {
+            error: "precondition_failed",
+            message: `Transition blocked — ${failed
+              .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+              .join(" ")}`,
+            failed: failed.map((r) => ({
+              rule: r,
+              message: RULE_MESSAGES[r],
+              ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+            })),
+            canForce: false,
+          },
+          422,
+        );
+      }
+      const _exhaustive: never = gateResult;
+      return _exhaustive;
+    }
+
+    // Compare-and-swap, same as the finish writes: lands only while the row
+    // still has the status, status version and claims validated above. The
+    // work claim is kept (the target is a work stage, never terminal).
+    const write = await writeStatusCas(c, actor, task, { status: targetStatus }, targetStatus, taskInclude, null);
+    if (!write.ok) return write.response;
+
+    void logAuditEvent({
+      action: "task.transitioned",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { from, to: targetStatus, actorType: actor.type, via: "task_advance" },
+    });
+
+    const preview = workStagePreview(effectiveDefinition, targetStatus);
+    return c.json({
+      kind: "work",
+      task: write.task,
+      previousStatus: from,
+      targetStatus,
+      // The same preview task_start returns, from the stage just reached.
+      expectedFinishState: preview.expectedFinishState,
+      effectiveGates: { finish: preview.finishGates },
+      advanceTargets: preview.advanceTargets,
+      ...(gateResult.skipped.length > 0 ? { skippedGates: gateResult.skipped } : {}),
+    });
+  };
+
+  try {
+    const outcome = await withIdempotency(
+      {
+        projectId: task.projectId,
+        verb: "task_advance",
+        idempotencyKey: key?.data,
+        payload: { taskId: task.id, to: requested ?? null },
+      },
+      async () => {
+        const response = await advance();
+        return { status: response.status, body: (await response.json()) as unknown };
+      },
+    );
+    return c.json(outcome.body as Record<string, unknown>, outcome.status as ContentfulStatusCode);
+  } catch (error) {
+    if (error instanceof ConflictError) return conflict(c, error.message);
+    throw error;
+  }
 });
 
 // ── Agent PR submission (v2 MCP) ─────────────────────────────────────────────

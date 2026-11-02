@@ -56,8 +56,8 @@ object via `include` (see
 [include semantics](#include-semantics-replacing-verbose)). A write verb
 is any verb that mutates task state or metadata: `task_pickup`,
 `task_start`, `task_create`, `task_respec`, `task_submit_pr`,
-`task_finish`, `task_merge`, `task_abandon`, `task_creator_abandon`,
-`task_note`, and their v1 equivalents.
+`task_finish`, `task_advance`, `task_merge`, `task_abandon`,
+`task_creator_abandon`, `task_note`, and their v1 equivalents.
 
 `task_pickup` is the deliberate exception: delivering the task spec is
 its purpose (see [onboarding channels](#onboarding-channels-by-rate-of-change)),
@@ -197,9 +197,10 @@ instead of composing several narrow ones.
 
 The full five-value vocabulary above is the target surface across both
 write and read verbs. Today, the write verbs converted under this
-contract (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`,
-`task_merge`, `task_abandon`, `task_creator_abandon`, `task_note` and its
-`tasks_comment` equivalent) accept only `include: ["task"]`; passing any other value
+contract (`task_create`, `task_respec`, `task_finish`, `task_advance`,
+`task_submit_pr`, `task_merge`, `task_abandon`, `task_creator_abandon`,
+`task_note` and its `tasks_comment` equivalent) accept only
+`include: ["task"]`; passing any other value
 (`"description"`, `"comments"`, `"instructions"`, `"artifacts"`) on one of
 these verbs is a schema validation error, not a silent no-op. The
 remaining vocabulary is the read-verb surface, landing with rc-v1-C006.
@@ -209,7 +210,8 @@ Per-verb defaults without `include`:
 | Verb | Default |
 |---|---|
 | `task_pickup` | full spec, without `comments` |
-| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState` (the work-finish target; on a work claim the review state the start target has an edge to, else the workflow-wide fallback; on a review claim this is NOT the same edge `gateExpectations` previews, see the budget exception below), `gateExpectations`, `requestChangesGateExpectations` on a review claim, `gateExpectationsSource` when assumed, `transition` on an actual state change) |
+| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState` (the work-finish target; on a work claim the review state the start target has an edge to, else the workflow-wide fallback, and `null` when the start target has no edge into that state, so the finish would be refused; on a review claim this is NOT the same edge `gateExpectations` previews, see the budget exception below), `advanceTargets` on a work claim when non-empty (the stages `task_advance` can reach from the start target), `gateExpectations`, `requestChangesGateExpectations` on a review claim, `gateExpectationsSource` when assumed, `transition` on an actual state change) |
+| `task_advance` | receipt with `transition` (from, to: the move it made) and `next` naming the follow-up call from the stage reached (another `task_advance`, or `task_finish` with its gates) |
 | `tasks_get` (and equivalents) | summary |
 | `project_tasks` | summary rows: an allowlist of id, title, status, priority, labels, externalRef, createdAt, claims (work claim only on this route), blockedBy, prUrl; every other field, description and templateData included, is left off each row by default |
 | `tasks_list` (legacy-only since rc-v1-C007) | existing summary projection (unchanged) |
@@ -262,7 +264,7 @@ what every verb accepts today. Per verb, as implemented:
 | `project_tasks` | `"description"`, `"templateData"`, `"task"` |
 | `task_start` | `"description"`, `"instructions"`, `"comments"`, `"task"` |
 | `task_pickup` | `"comments"`, `"task"` (both resolve to the same full object for this verb) |
-| Every other converted write verb (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_merge`, `task_abandon`, `task_creator_abandon`, `task_note`, `tasks_comment`) | `"task"` only |
+| Every other converted write verb (`task_create`, `task_respec`, `task_finish`, `task_advance`, `task_submit_pr`, `task_merge`, `task_abandon`, `task_creator_abandon`, `task_note`, `tasks_comment`) | `"task"` only |
 | `signals_poll` | no `include` parameter at all; see the cap and cursor section below instead |
 
 `"instructions"` is accepted by exactly one verb, `task_start`: it is
@@ -466,6 +468,12 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   recorded on the task timeline; it MUST NOT be wrapped in XML or JSON
   tags, and the error/description text MUST say so rather than silently
   accepting and mis-storing structured input.
+- **`task_advance` cannot pick an edge.** `409 advance_use_finish` (the
+  target is a review or terminal state, or the task sits in a review
+  state: `task_finish` is the move, `detail.finishTarget` names where it
+  goes), `409 advance_ambiguous` (several forward edges and no `to`) and
+  `409 advance_target_invalid` (a `to` that is not a forward edge to a work
+  stage) each carry `detail.choices`, the stages `task_advance` can reach.
 
 ## Onboarding channels by rate of change
 
@@ -495,8 +503,8 @@ transport tools for provisioned external assessment. The first returns the
 authoritative challenge; the second sends the producer's original signed
 receipt as opaque UTF-8 text, capped at 32,768 bytes. Upload is evidence
 ingestion, not a completion result. The backend alone verifies the receipt and
-current task context. `task_finish`, `task_merge`, and `task_abandon` accept an
-optional `operationKey`, and `pull_requests_create`/`pull_requests_merge` an
+current task context. `task_finish`, `task_advance`, `task_merge`, and
+`task_abandon` accept an optional `operationKey`, and `pull_requests_create`/`pull_requests_merge` an
 optional `idempotencyKey`, forwarded as the `Idempotency-Key` header (the two
 GitHub verbs also mirror it into the request body, so the legacy, unprovisioned
 `/api/github/pull-requests*` routes keep their own body-based retry dedupe). When
@@ -515,6 +523,12 @@ only where the receiving route enforces operation keys:
   `_idempotent_replay: true`; the same key with a different payload returns
   `409` (`backend/src/services/idempotency.ts`). The Grounding GitHub router
   keys its durable operation on the same value.
+- `task_advance`: on every backend. The advance route
+  (`POST /api/tasks/:id/advance`) stores one `tool_invocations` row per
+  successful call under the header key and replays the stored 2xx response
+  with `_idempotent_replay: true` on a same-key retry, instead of advancing
+  a second time; the same key with a different payload returns `409`. A
+  Grounding-provisioned task is refused before any effect.
 - `task_finish`, `task_merge` and `task_abandon`: only for a provisioned task
   on a Grounding-configured backend. On an unconfigured backend, or for an
   unprovisioned task, the request either reaches the legacy completion

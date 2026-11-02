@@ -78,6 +78,12 @@ pre-existing gap (PATCH never emitted signals), not a regression, but one
 that became a visible asymmetry once PATCH status writes started running
 the same gated pipeline as `/transition` above.
 
+The v2 verbs evaluate the same `requires` on the edge they take, without a
+`force` option: `task_start` on the start edge, `task_finish` on the finish
+edge, and `task_advance` (`POST /api/tasks/:id/advance`) on the forward edge
+it moves a task along between work stages. A failed rule answers the same
+`422` body, with `canForce: false`.
+
 Example failure response:
 
 ```json
@@ -589,27 +595,38 @@ is finished work that cannot be moved, and a task on a status that workflow does
 not have is already outside it; neither blocks, both keep their status, and the
 `201` response lists them as `terminalOutsideWorkflow` and `outsideWorkflow`.
 The `409` names the task ids (at most 50). Finish or move those tasks, then
-apply again. The
-registered templates use the four built-in states (`open`, `in_progress`,
+apply again. The two four-state templates (`branch-pr-merge-gated`,
+`release-ops-no-pr`) use the built-in states (`open`, `in_progress`,
 `review`, `done`), so a project whose tasks sit on those names (or on
-`backlog` / `abandoned`) is never refused; only the transitions, gates, and
-labels change.
+`backlog` / `abandoned`) is never refused by them; only the transitions,
+gates, and labels change. The `coding-agent` template has its own stage
+names, so applying it over the built-in default is refused while a task sits
+in `in_progress`.
 
-### Held: AI Coding Agent Pipeline (`coding-agent`)
+### AI Coding Agent Pipeline (`coding-agent`)
 
-A seven-stage definition (`open`, `spec`, `plan`, `implement`, `test`,
-`review`, `done`) is defined in `workflow-templates.ts`
-(`HELD_WORKFLOW_TEMPLATES`) but **not registered**: `GET /api/workflow-templates`
-does not list it and `apply-template/coding-agent` answers `404`. The
-definition is valid, so an admin can still create it as a custom workflow with
-`POST /api/projects/:projectId/workflows`.
+A seven-stage template (`open`, `spec`, `plan`, `implement`, `test`,
+`review`, `done`) for a solo coding agent. On the v2 MCP surface:
 
-It is held because an agent on the default v2 MCP surface cannot leave
-`spec`: `task_start` moves an open task there, but a work-claim `task_finish`
-reaches `review` only from `test`, which has the one direct edge into the
-review-like state. The stages between have no v2 verb that advances them
-(`POST /tasks/:id/transition` is a REST endpoint and a hidden legacy MCP
-verb). Registration waits for such a verb. The definition itself:
+1. `task_start` moves an open task into `spec` and takes the work claim. Its
+   preview names `advanceTargets: ["plan"]`; `expectedFinishState` and the
+   finish gates are `null`, because a finish from `spec` is refused.
+2. `task_advance` (`POST /api/tasks/:id/advance`) moves the task along one
+   forward edge at a time, keeping the claim: `spec` to `plan`, `plan` to
+   `implement` (gated on `branchPresent`, a `422` until a branch is recorded,
+   for example with `task_start { branchName }`), `implement` to `test`.
+   Forward means the target is listed later in the definition's states. The
+   backward edges (revisit spec, revisit plan, fix failures) and the release
+   edge to `open` are not forward, so `task_advance` never takes them.
+3. `task_finish` with the work claim moves the task from `test` into
+   `review` (gated on `branchPresent` and `prPresent`) and keeps the claim.
+   A finish from `spec`, `plan` or `implement` is refused (`400`, the
+   workflow has no edge from them into `review`), and `task_advance` refuses
+   `review` and `done` as targets (`409 advance_use_finish`).
+4. Review approve ends the task in `done`; request changes returns it to
+   `implement`, where `task_advance` takes it to `test` again.
+
+The definition:
 
 | From | To | Label | Requires |
 | ---- | -- | ----- | -------- |

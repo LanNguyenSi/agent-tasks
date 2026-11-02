@@ -47,7 +47,12 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // agent-tasks whose task did not move (token lacks github:pr_merge) has to be
 // reachable from workflow_primer, and the error recipe's 240-char budget has no
 // room for the webhook-setup pointer. Same sanity-ceiling rationale as above.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 8300;
+// Ceiling raised from 8300 to 9200 for task_advance (+~916 chars, 8144 ->
+// 9060): the several-work-stages canonical flow, the advance_use_finish/
+// advance_ambiguous/advance_target_invalid trap-list entries (mandatory under
+// the trap-list-sync guard) and task_advance's place in the claim-model and
+// receipt-defaults lines. Same sanity-ceiling rationale as above.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 9200;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -98,6 +103,9 @@ const NON_VERB_TOKENS = new Set([
   "backlog_routing_enforced", // 400 error code (v1 backlog routing: task_create rejects an explicit non-backlog status from an agent)
   "backlog_not_promoted", // 403 error code (v1 backlog routing: task_start/task_pickup on an unpromoted backlog task)
   "merge_in_progress", // 409 error code (a claim or status write refused while a PR merge holds the task)
+  "advance_use_finish", // 409 error code (task_advance toward a review or terminal state)
+  "advance_ambiguous", // 409 error code (task_advance with several forward stages and no to)
+  "advance_target_invalid", // 409 error code (task_advance with a to that is not a forward stage)
   "pr_merge", // the github:pr_merge scope-name fragment (the "Merged outside agent-tasks" section)
 ]);
 
@@ -639,14 +647,12 @@ describe("claim model: task_pickup never claims", () => {
 // task_create / task_respec).
 describe("WORKFLOW_PRIMER's receipt shape line", () => {
   // Fields Receipt (receipt.ts) can actually carry via a receiptFor* builder
-  // call today. Hardcoded (not derived from the Receipt TYPE) because
-  // `transition` legitimately exists on the Receipt interface and on
-  // buildReceipt's BuildReceiptOpts, but no current builder ever passes it
-  // (see receipt.ts's own comments on receiptForFinish and receiptForMerge)
-  // -- a type-derived list could not express "declared but never emitted" on
-  // its own. Re-add `transition` here, and to the primer line, together, the
-  // day a builder starts emitting it.
-  const RECEIPT_SHAPE_FIELDS = ["ok", "task", "confidence", "deviations", "next"];
+  // call today. Hardcoded (not derived from the Receipt TYPE) so that a
+  // field the type declares but no builder emits could be left out.
+  // `transition` was such a field until task_advance: receiptForAdvance is
+  // the one builder that passes it (the advance route reports both ends of
+  // the move), so it is listed here and on the primer line together.
+  const RECEIPT_SHAPE_FIELDS = ["ok", "task", "transition", "confidence", "deviations", "next"];
 
   function extractBracedShape(text: string, marker: string): string {
     const markerIdx = text.indexOf(marker);
@@ -735,12 +741,16 @@ describe("WORKFLOW_PRIMER's receipt shape line", () => {
     return bodies;
   }
 
-  it("no buildReceipt call site passes transition: pins why RECEIPT_SHAPE_FIELDS omits a field the Receipt type declares (never emitted, not absent from the type)", () => {
+  it("exactly one buildReceipt call site passes transition (receiptForAdvance): pins why RECEIPT_SHAPE_FIELDS lists it and the primer scopes it to task_advance", () => {
     const bodies = buildReceiptCallBodies(receiptSource);
     expect(bodies.length).toBeGreaterThan(0);
-    for (const body of bodies) {
-      expect(body).not.toMatch(/\btransition\s*:/);
-    }
+    const withTransition = bodies.filter((body) => /\btransition\s*:/.test(body));
+    expect(withTransition).toHaveLength(1);
+    const advanceAt = receiptSource.indexOf("export function receiptForAdvance(");
+    const advanceEnd = receiptSource.indexOf("\n}\n", advanceAt);
+    expect(advanceAt).toBeGreaterThan(0);
+    expect(receiptSource.slice(advanceAt, advanceEnd)).toContain(withTransition[0]!);
+    expect(WORKFLOW_PRIMER).toContain("transition is set only by task_advance");
   });
 
   it("RECEIPT_SHAPE_FIELDS is a subset of the Receipt interface's own declared field names", () => {
@@ -899,6 +909,7 @@ describe("every DEFAULT-registered tool's description mentions only known verb n
     "self_merge", // projects_get_effective_gates: GateCode example
     "task_status_for_merge", // projects_get_effective_gates: GateCode example
     "pr_repo_matches_project", // projects_get_effective_gates: GateCode example
+    "grounding_advance_unsupported", // task_advance: 409 error code for a Grounding-provisioned task
   ]);
 
   // rc-v1-C007: a pruned verb's bare name may appear in a DEFAULT tool's

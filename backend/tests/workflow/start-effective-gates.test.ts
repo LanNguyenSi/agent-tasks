@@ -459,15 +459,17 @@ describe("POST /tasks/:id/start — effectiveGates + previousStatus (task 656ccb
       expect(res.byteLength).toBeLessThan(BYTES_BUDGET.taskStart);
     });
 
-    it("missing-edge definition (in_progress → review dropped, review → done kept): effectiveGates.finish is null, not []", async () => {
+    it("missing-edge definition (in_progress → review dropped, review → done kept): expectedFinishState and effectiveGates.finish are null, not \"review\" / []", async () => {
       // Finding L2 repro: workflowDefinitionSchema does not require graph
-      // connectivity, so this definition is persistable. expectedFinishState
-      // still resolves to "review" — isReviewState is a structural check
-      // (outgoing edge to a terminal state, not a direct target of the
-      // initial state) that never inspects incoming edges — even though the
-      // in_progress → review edge itself is gone. A caller trusting
-      // `finish: []` here would wrongly conclude "nothing required" instead
-      // of "this edge doesn't exist; /finish will 400 with no_transition".
+      // connectivity, so this definition is persistable. The finish target
+      // still resolves to "review" (isReviewState is a structural check:
+      // outgoing edge to a terminal state, not a direct target of the
+      // initial state, it never inspects incoming edges) even though the
+      // in_progress → review edge itself is gone, so /finish will 400 with
+      // no_transition. The preview says so: both fields are null. A caller
+      // trusting `finish: []` here would wrongly conclude "nothing
+      // required", and an expectedFinishState of "review" would name a state
+      // the finish cannot reach.
       const defMissingEdge = defWithoutTransition("in_progress", "review");
       const box = wireTask(
         baseTaskRow({
@@ -478,7 +480,7 @@ describe("POST /tasks/:id/start — effectiveGates + previousStatus (task 656ccb
 
       const res = await measure<{
         previousStatus: string;
-        expectedFinishState: string;
+        expectedFinishState: string | null;
         effectiveGates: { finish: string[] | null };
       }>(
         makeApp(AGENT).request(`/tasks/${TASK_ID}/start`, {
@@ -490,8 +492,9 @@ describe("POST /tasks/:id/start — effectiveGates + previousStatus (task 656ccb
 
       expect(res.status).toBe(200);
       expect(res.body.previousStatus).toBe("open");
-      expect(res.body.expectedFinishState).toBe("review");
+      expect(res.body.expectedFinishState).toBeNull();
       expect(res.body.effectiveGates).toEqual({ finish: null });
+      expect(res.body).not.toHaveProperty("advanceTargets");
       expect(box.current.status).toBe("in_progress");
       expect(res.byteLength).toBeLessThan(BYTES_BUDGET.taskStart);
     });

@@ -1509,6 +1509,21 @@ export const openApiSpec = {
         responses: { "200": { description: "Completed task route result" }, "202": { description: "Pending remote completion; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" }, "409": { description: "merge_in_progress: a pull request merge holds the task, so this claim or status write was refused and nothing was changed; retry once the merge has settled. Another finish that merges the pull request (autoMerge) while the first holds the reservation gets the same answer. grounding_github_fence_conflict: the task is under an active GitHub repository fence, so the reservation write was refused, nothing was merged and GitHub was not called; retry once the fenced operation has finished. Other 409 causes use the ErrorResponse shape.", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/MergeInProgressResponse" }, { $ref: "#/components/schemas/ErrorResponse" }] } } } } },
       },
     },
+    "/api/tasks/{id}/advance": {
+      post: {
+        tags: ["Tasks"], summary: "Advance a work-claimed task to the next work stage", security: [{ bearerAuth: [] }],
+        description: "Moves a task the caller holds the work claim on along one forward edge of its effective workflow (the target is listed later in the workflow's states than the current state) to another work stage, keeping the claim. Without `to` the single such edge is taken. A review-like or terminal target is task_finish's move and is refused. Gates and the status compare-and-swap are the finish route's. With Idempotency-Key, a same-key retry replays the stored 2xx response; the same key with a different payload is a 409 conflict. A Grounding-provisioned task is refused (409 grounding_advance_unsupported).",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Replays a stored 2xx response on a same-key retry." }],
+        requestBody: { required: false, content: { "application/json": { schema: { type: "object", properties: { to: { type: "string", pattern: "^[a-z0-9_]+$", maxLength: 64, description: "The work stage to move to; required when several forward edges exist." } } } } } },
+        responses: {
+          "200": { description: "Advanced: { kind: \"work\", task, previousStatus, targetStatus, expectedFinishState (null when a finish from the new stage is refused), effectiveGates: { finish }, advanceTargets, skippedGates? }" },
+          "400": { description: "Malformed `to` or Idempotency-Key", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "403": { description: "Missing scope, no write access, or no work claim on the task", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "409": { description: "advance_use_finish (a review or terminal target, or a task in a review state; finishTarget names the state task_finish reaches, null when refused), advance_ambiguous (several forward edges and no `to`; choices lists them), advance_target_invalid (`to` is not a forward edge to a work stage), advance_no_forward_edge, bad_state (not a work state), grounding_advance_unsupported, conflict (lost compare-and-swap, or an Idempotency-Key reused with a different payload), merge_in_progress. The advance codes carry `from` and `choices`.", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/MergeInProgressResponse" }, { $ref: "#/components/schemas/ErrorResponse" }] } } } },
+          "422": { description: "precondition_failed: a gate on the chosen edge is not satisfied", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
     "/api/tasks/{id}/merge": {
       post: {
         tags: ["Tasks", "Grounding"], summary: "Merge a task pull request", security: [{ bearerAuth: [] }],
