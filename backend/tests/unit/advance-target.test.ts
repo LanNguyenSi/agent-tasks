@@ -70,6 +70,17 @@ const REVIEW_FIRST: WorkflowDefinitionShape = {
   ],
 };
 
+/** The initial state `open` is listed after the work stage `spec`, and `spec` has an edge back to it. */
+const OPEN_LATE: WorkflowDefinitionShape = {
+  initialState: "open",
+  states: [state("spec"), state("open"), state("review"), state("done", true)],
+  transitions: [
+    { from: "open", to: "spec" },
+    { from: "spec", to: "open" },
+    { from: "review", to: "done" },
+  ],
+};
+
 describe("state order and forward moves", () => {
   it("indexes states by their position in the definition, -1 for an unknown name", () => {
     expect(stateOrderIndex(PIPELINE, "open")).toBe(0);
@@ -103,6 +114,11 @@ describe("advanceTargetsFrom", () => {
     expect(advanceTargetsFrom(PIPELINE, "build")).toEqual([]);
     expect(advanceTargetsFrom(PIPELINE, "review")).toEqual([]);
     expect(advanceTargetsFrom(STUCK, "b")).toEqual([]);
+  });
+
+  it("never offers the initial state, even when the definition lists it after the work stage", () => {
+    expect(isForwardMove(OPEN_LATE, "spec", "open")).toBe(true); // forward by order alone
+    expect(advanceTargetsFrom(OPEN_LATE, "spec")).toEqual([]);
   });
 
   it("is empty for every state past the initial one on the built-in four-state workflow", () => {
@@ -171,6 +187,11 @@ describe("resolveAdvanceTarget: `to` absent", () => {
     expect(resolveAdvanceTarget(REVIEW_FIRST, "in_progress")).toEqual({
       ok: false, reason: "finish_state", requested: null, finishTarget: "review", choices: [],
     });
+  });
+
+  it("the initial state listed after the work stage is not an advance target: not_forward when named, no_forward_edge when not", () => {
+    expect(resolveAdvanceTarget(OPEN_LATE, "spec", "open")).toEqual({ ok: false, reason: "not_forward", requested: "open", choices: [] });
+    expect(resolveAdvanceTarget(OPEN_LATE, "spec")).toEqual({ ok: false, reason: "no_forward_edge", choices: [] });
   });
 
   it("none, and no finish either: no_forward_edge", () => {

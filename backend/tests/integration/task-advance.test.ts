@@ -112,7 +112,7 @@ async function post(actor: Actor, path: string, body?: Record<string, unknown>, 
     headers: { ...JSON_HEADERS, ...headers },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
-  return { status: res.status, body: (await res.json()) as any };
+  return { status: res.status, headers: res.headers, body: (await res.json()) as any };
 }
 const advance = (actor: Actor, taskId: string, body: Record<string, unknown> = {}, headers?: Record<string, string>) =>
   post(actor, `/tasks/${taskId}/advance`, body, headers);
@@ -197,6 +197,17 @@ const REVIEW_FIRST = {
   transitions: [
     { from: "open", to: "in_progress" },
     { from: "in_progress", to: "review" },
+    { from: "review", to: "done" },
+  ],
+};
+
+/** The initial state `open` is listed after the work stage `spec`, and `spec` has an edge back to it. */
+const OPEN_LATE = {
+  initialState: "open",
+  states: [state("spec"), state("open"), state("review"), state("done", true)],
+  transitions: [
+    { from: "open", to: "spec" },
+    { from: "spec", to: "open" },
     { from: "review", to: "done" },
   ],
 };
@@ -351,6 +362,15 @@ describe("review and terminal targets are task_finish's", () => {
     expect((await row(taskId)).status).toBe("b");
   });
 
+  it.each([{}, { to: "open" }])("a definition that lists the initial state after the work stage never lets advance move a task there (%j)", async (body) => {
+    const taskId = await seedTask("spec", OPEN_LATE);
+    const res = await advance(author, taskId, body);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("to" in body ? "advance_target_invalid" : "advance_no_forward_edge");
+    expect(res.body.choices).toEqual([]);
+    expect(await row(taskId)).toMatchObject({ status: "spec", claimedByUserId: authorId });
+  });
+
   it.each(["open", "done"])("a task in the %s state (initial or terminal) is a 409 bad_state", async (status) => {
     const taskId = await seedTask(status, PIPELINE);
     const res = await advance(author, taskId);
@@ -487,6 +507,8 @@ describe("Idempotency-Key", () => {
     const retry = await advance(author, taskId, {}, { "Idempotency-Key": "advance-1" });
     expect(retry.status).toBe(200);
     expect(retry.body).toMatchObject({ targetStatus: "build", _idempotent_replay: true });
+    expect(retry.headers.get("x-idempotent-replay")).toBe("true");
+    expect(first.headers.get("x-idempotent-replay")).toBeNull();
     expect((await row(taskId)).status).toBe("build");
     expect(advanceAudits()).toHaveLength(1);
   });
@@ -506,6 +528,38 @@ describe("Idempotency-Key", () => {
     expect(reused.status).toBe(409);
     expect(reused.body.error).toBe("conflict");
     expect((await row(other)).status).toBe("spec");
+  });
+
+  it("the same key and the same empty body on another task is a 409 conflict: the task is part of the hash", async () => {
+    const first = await seedTask("spec", PIPELINE);
+    const second = await seedTask("spec", PIPELINE);
+    expect((await advance(author, first, {}, { "Idempotency-Key": "advance-4" })).status).toBe(200);
+    const reused = await advance(author, second, {}, { "Idempotency-Key": "advance-4" });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("conflict");
+    expect((await row(second)).status).toBe("spec");
+    expect(advanceAudits()).toHaveLength(1);
+  });
+
+  it("another caller reusing the key on the same task is a 409 conflict, not a success-shaped replay", async () => {
+    const taskId = await seedTask("spec", PIPELINE);
+    expect((await advance(author, taskId, {}, { "Idempotency-Key": "advance-5" })).status).toBe(200);
+    const reused = await advance(other, taskId, {}, { "Idempotency-Key": "advance-5" });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("conflict");
+    expect(reused.body).not.toHaveProperty("_idempotent_replay");
+    // The original caller's retry still replays.
+    const retry = await advance(author, taskId, {}, { "Idempotency-Key": "advance-5" });
+    expect(retry.body).toMatchObject({ _idempotent_replay: true });
+  });
+
+  it("an agent token and a human with the same id value are different callers", async () => {
+    const taskId = await seedTask("spec", PIPELINE);
+    expect((await advance(author, taskId, {}, { "Idempotency-Key": "advance-6" })).status).toBe(200);
+    const agent = { type: "agent", tokenId: authorId, teamId, userId: authorId, scopes: ["tasks:transition"] } as Actor;
+    const reused = await advance(agent, taskId, {}, { "Idempotency-Key": "advance-6" });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("conflict");
   });
 
   it("a refused advance is not stored: the same key retries for real", async () => {

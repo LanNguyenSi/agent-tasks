@@ -58,7 +58,9 @@
 // status write refused while a pull request merge holds the task) -- see
 // mergeInProgressError below. Plus advance_use_finish, advance_ambiguous and
 // advance_target_invalid (409, task_advance could not pick a forward edge to
-// a work stage) -- see advanceUseFinishError and its siblings below. Plus recipe branches for the grounding write
+// a work stage) -- see advanceUseFinishError and its siblings below -- and
+// grounding_advance_unsupported (409, task_advance on a Grounding-provisioned
+// task) -- see groundingAdvanceUnsupportedError. Plus recipe branches for the grounding write
 // verbs' (pull_requests_create, pull_requests_merge, task_merge,
 // task_finish, task_abandon, task_grounding_attempt_create) 403 `forbidden`:
 // re-mint guidance for a message naming a missing `github:*` scope, that
@@ -654,10 +656,22 @@ function preconditionFailedError(body: BackendErrorBody, verbContext: string | u
   // and each passes its own name to wrap() (tools.ts; wrap()'s comment
   // there lists every call site that passes one).
   const retryVerb = verbContext ?? "task_finish";
-  const recipe = needsSubmitPr
-    ? `run \`gh pr create\`, call task_submit_pr with the branch/PR metadata, then retry ${retryVerb}`
-    : `wait for the remaining precondition(s) to clear (see error.detail.failed), then retry ${retryVerb}`;
-  const allowedNext = needsSubmitPr ? ["task_submit_pr", retryVerb] : [retryVerb];
+  // task_advance with only branchPresent failing (plan -> implement in the
+  // coding-agent template): the generic recipe sends the caller to open a PR
+  // first, which needs a commit, and the branch-only path of task_start
+  // (branchName) closes once the task is claimed. Name both ways out.
+  const branchOnlyOnAdvance =
+    verbContext === "task_advance" && rules.length > 0 && rules.every((r) => r === "branchPresent");
+  const recipe = branchOnlyOnAdvance
+    ? "push a commit on your branch and open a draft PR (`gh pr create --draft`), call task_submit_pr with the branch/PR metadata, then retry task_advance; or task_abandon and task_start again with branchName"
+    : needsSubmitPr
+      ? `run \`gh pr create\`, call task_submit_pr with the branch/PR metadata, then retry ${retryVerb}`
+      : `wait for the remaining precondition(s) to clear (see error.detail.failed), then retry ${retryVerb}`;
+  const allowedNext = branchOnlyOnAdvance
+    ? ["task_submit_pr", "task_advance", "task_abandon", "task_start"]
+    : needsSubmitPr
+      ? ["task_submit_pr", retryVerb]
+      : [retryVerb];
   return buildTeachingError({
     code: "precondition_failed",
     message:
@@ -933,6 +947,23 @@ function advanceTargetInvalidError(body: BackendErrorBody, message: string): Tea
       "the current state has no forward work stage: call task_finish when it leads into review or done from here, or tasks_get to check the task",
     allowedNext: ["task_finish", "tasks_get"],
     detail,
+  });
+}
+
+// grounding_advance_unsupported: task_advance on a Grounding-provisioned task.
+// The Grounding routers own those tasks' status writes, and none of them
+// carries an advance transport yet, so the backend refuses rather than write
+// the status outside the Grounding mutation protocol. No MCP verb on the
+// default surface moves such a task between stages (the REST route behind
+// the legacy tasks_transition does), so the honest recipe is to read the
+// task, have the operator move the stage, or give the claim up.
+function groundingAdvanceUnsupportedError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "grounding_advance_unsupported",
+    message,
+    recipe:
+      "this task is Grounding-provisioned and cannot be advanced here: call tasks_get for its stage, ask the operator to move it through the Grounding direct transition route, or call task_abandon to release it",
+    allowedNext: ["tasks_get", "task_abandon"],
   });
 }
 
@@ -1842,6 +1873,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 409 && code === "advance_target_invalid") {
     return advanceTargetInvalidError(body, message);
+  }
+  if (status === 409 && code === "grounding_advance_unsupported") {
+    return groundingAdvanceUnsupportedError(message);
   }
   if (verbContext === "pull_requests_create" && code === "github_error") {
     return githubCreateError(status, body, message);

@@ -52,7 +52,11 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // advance_ambiguous/advance_target_invalid trap-list entries (mandatory under
 // the trap-list-sync guard) and task_advance's place in the claim-model and
 // receipt-defaults lines. Same sanity-ceiling rationale as above.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 9200;
+// Ceiling raised from 9200 to 9700 for the Grounding caveat (measured 9450
+// after it, which left the old ceiling 250 chars short): the grounding_advance_unsupported trap-list entry (mandatory
+// under the trap-list-sync guard) and the several-stages flow's branchName and
+// Grounding-provisioned notes. Same sanity-ceiling rationale as above.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 9700;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -106,6 +110,7 @@ const NON_VERB_TOKENS = new Set([
   "advance_use_finish", // 409 error code (task_advance toward a review or terminal state)
   "advance_ambiguous", // 409 error code (task_advance with several forward stages and no to)
   "advance_target_invalid", // 409 error code (task_advance with a to that is not a forward stage)
+  "grounding_advance_unsupported", // 409 error code (task_advance on a Grounding-provisioned task)
   "pr_merge", // the github:pr_merge scope-name fragment (the "Merged outside agent-tasks" section)
 ]);
 

@@ -40,6 +40,7 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 | Read instructions | (returned by `task_start`) | `agent-tasks tasks instructions <id>` | `GET /api/tasks/{id}/instructions` |
 | Do the work | (branch, code, commit, push) | (same) | (same) |
 | Record PR metadata (after `gh pr create`) | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/tasks/{id}/submit-pr` |
+| Move to the next work stage (multi-stage workflows only, e.g. the AI Coding Agent Pipeline template; see [workflow templates](workflow-preconditions.md#workflow-templates)) | `task_advance` | (none) | `POST /api/tasks/{id}/advance` |
 | Submit for review / approve | `task_finish` | `agent-tasks tasks finish <id> ...` | `POST /api/tasks/{id}/finish` |
 | Merge | `task_merge` | `agent-tasks github pr merge <pr-number> --task <id> --owner <owner> --repo <repo>` (not equivalent: it calls `POST /api/github/pull-requests/{prNumber}/merge`, see the note below) | `POST /api/tasks/{id}/merge` |
 | Done | (set by `task_merge`, by a reviewer's `task_finish` approve, or by the merge webhook in `AUTONOMOUS` projects) | (same) | (same) |

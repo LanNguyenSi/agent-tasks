@@ -613,8 +613,13 @@ A seven-stage template (`open`, `spec`, `plan`, `implement`, `test`,
    finish gates are `null`, because a finish from `spec` is refused.
 2. `task_advance` (`POST /api/tasks/:id/advance`) moves the task along one
    forward edge at a time, keeping the claim: `spec` to `plan`, `plan` to
-   `implement` (gated on `branchPresent`, a `422` until a branch is recorded,
-   for example with `task_start { branchName }`), `implement` to `test`.
+   `implement` (gated on `branchPresent`, a `422` until a branch is recorded),
+   `implement` to `test`. Pass `branchName` to `task_start` when claiming the
+   task: on the v2 surface that is the one way to record a branch alone. Once
+   the task is claimed, `task_submit_pr` records the branch together with a
+   PR (push a commit and open a draft PR first), so an agent that started
+   without a branch either does that or abandons and starts again with
+   `branchName`.
    Forward means the target is listed later in the definition's states. The
    backward edges (revisit spec, revisit plan, fix failures) and the release
    edge to `open` are not forward, so `task_advance` never takes them.
@@ -625,6 +630,17 @@ A seven-stage template (`open`, `spec`, `plan`, `implement`, `test`,
    `review` and `done` as targets (`409 advance_use_finish`).
 4. Review approve ends the task in `done`; request changes returns it to
    `implement`, where `task_advance` takes it to `test` again.
+
+Caveat for Grounding-provisioned tasks: in a project the Grounding creation
+policy enrolls, every new task is Grounding-provisioned, and `task_advance`
+refuses such a task (`409 grounding_advance_unsupported`) because the
+Grounding routers own its status writes and none carries an advance yet. On
+that task the v2 flow stops at `spec`: `task_finish` from `spec` is a `400`
+and the only other v2 move is `task_abandon`; the stage moves through the
+Grounding direct transition route (`POST /api/tasks/:id/transition`, driven
+by the operator or a REST call, not an MCP verb on the default surface). Do
+not apply this template to such a project until that route carries an
+advance.
 
 The definition:
 

@@ -1751,7 +1751,9 @@ describe("buildTools", () => {
     const parsed = JSON.parse((err as Error).message);
     expect(parsed.error.code).toBe("precondition_failed");
     expect(parsed.error.recipe).toContain("retry task_advance");
-    expect(parsed.error.allowedNext).toEqual(["task_submit_pr", "task_advance"]);
+    // Only branchPresent failed: the recipe also names the abandon and restart path.
+    expect(parsed.error.recipe).toContain("task_start again with branchName");
+    expect(parsed.error.allowedNext).toEqual(["task_submit_pr", "task_advance", "task_abandon", "task_start"]);
   });
 
   it("task_advance maps a 409 advance_ambiguous to its catalog entry with the choices", async () => {

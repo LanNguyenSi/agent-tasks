@@ -57,14 +57,14 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
       label: "Spec",
       terminal: false,
       agentInstructions:
-        "Write a clear specification: define the goal, acceptance criteria, constraints, and any open questions. Move to plan when the spec is complete.",
+        "Write a clear specification: define the goal, acceptance criteria, constraints, and any open questions. Move to plan with task_advance when the spec is complete.",
     },
     {
       name: "plan",
       label: "Plan",
       terminal: false,
       agentInstructions:
-        "Create an implementation plan: identify files to change, outline the approach, note risks. Create a branch, then move to implement.",
+        "Create an implementation plan: identify files to change, outline the approach, note risks. Moving to implement needs a recorded branch: pass branchName to task_start when you claim the task (task_submit_pr records one later, together with a PR). Then move to implement with task_advance.",
     },
     {
       name: "implement",
@@ -363,7 +363,7 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     slug: "coding-agent",
     name: "AI Coding Agent Pipeline",
     description:
-      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. task_start moves a task into spec, task_advance moves it forward through plan, implement (needs a branch) and test, and task_finish moves it from test into review (needs a branch and a PR).",
+      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. task_start moves a task into spec, task_advance moves it forward through plan, implement (needs a branch) and test, and task_finish moves it from test into review (needs a branch and a PR). Pass branchName to task_start so the implement gate is met. task_advance refuses Grounding-provisioned tasks (their stage moves through the Grounding direct transition route), so the template suits projects outside the Grounding creation policy.",
     definition: codingAgentDefinition,
   },
 ] as const;

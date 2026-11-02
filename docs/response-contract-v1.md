@@ -474,6 +474,12 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   goes), `409 advance_ambiguous` (several forward edges and no `to`) and
   `409 advance_target_invalid` (a `to` that is not a forward edge to a work
   stage) each carry `detail.choices`, the stages `task_advance` can reach.
+  `409 grounding_advance_unsupported` (the task is Grounding-provisioned,
+  and no Grounding route carries an advance yet) names `tasks_get`, the
+  operator's Grounding transition route and `task_abandon`. A `422
+  precondition_failed` from `task_advance` where only `branchPresent` failed
+  names the draft-PR path (`task_submit_pr`) and the abandon and restart with
+  `task_start { branchName }` path.
 
 ## Onboarding channels by rate of change
 

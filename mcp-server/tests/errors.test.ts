@@ -725,6 +725,49 @@ describe("mapBackendError catalog", () => {
     expect(err.error.detail).toEqual({ choices: ["ok", `${"z".repeat(57)}...`], totalChoices: 2 });
   });
 
+  it("grounding_advance_unsupported: recipe tasks_get, the operator's Grounding transition route, or task_abandon; matched on 409 only", () => {
+    const message = "task_advance does not move a Grounding-provisioned task.";
+    const err = mapBackendError(409, { error: "grounding_advance_unsupported", message }, "task_advance");
+    expect(err.error.code).toBe("grounding_advance_unsupported");
+    expect(err.error.message).toBe(message);
+    expect(err.error.recipe).toMatch(/tasks_get/);
+    expect(err.error.recipe).toMatch(/operator/);
+    expect(err.error.recipe).toMatch(/task_abandon/);
+    expect(err.error.allowedNext).toEqual(["tasks_get", "task_abandon"]);
+    assertAllowedNextRegistered(err, registered);
+    expect(mapBackendError(400, { error: "grounding_advance_unsupported", message }).error.recipe).toBe(
+      "call workflow_primer for the full lifecycle reference and today's known traps",
+    );
+  });
+
+  it("precondition_failed from task_advance with only branchPresent failing: push a commit and open a draft PR, or abandon and restart with branchName", () => {
+    const err = mapBackendError(
+      422,
+      { error: "precondition_failed", failed: [{ rule: "branchPresent", message: "No branch recorded on this task." }] },
+      "task_advance",
+    );
+    expect(err.error.recipe).toMatch(/draft PR/);
+    expect(err.error.recipe).toMatch(/task_submit_pr/);
+    expect(err.error.recipe).toMatch(/retry task_advance/);
+    expect(err.error.recipe).toMatch(/task_abandon and task_start again with branchName/);
+    expect(err.error.allowedNext).toEqual(["task_submit_pr", "task_advance", "task_abandon", "task_start"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("precondition_failed from task_advance keeps the generic recipe when another gate fails too, and the branch-only recipe is task_advance's alone", () => {
+    const both = mapBackendError(
+      422,
+      { error: "precondition_failed", failed: [{ rule: "branchPresent" }, { rule: "prPresent" }] },
+      "task_advance",
+    );
+    expect(both.error.recipe).toBe("run `gh pr create`, call task_submit_pr with the branch/PR metadata, then retry task_advance");
+    expect(both.error.allowedNext).toEqual(["task_submit_pr", "task_advance"]);
+    const finish = mapBackendError(422, { error: "precondition_failed", failed: [{ rule: "branchPresent" }] }, "task_finish");
+    expect(finish.error.recipe).toBe("run `gh pr create`, call task_submit_pr with the branch/PR metadata, then retry task_finish");
+    const none = mapBackendError(422, { error: "precondition_failed", failed: [] }, "task_advance");
+    expect(none.error.allowedNext).toEqual(["task_advance"]);
+  });
+
   // ── 7e. grounding write precondition 403s ─────────────────────────────────
   const GENERIC_PRIMER_RECIPE = "call workflow_primer for the full lifecycle reference and today's known traps";
   it("grounding 403: a backend precondition message is passed through verbatim (no-scope message keeps the generic degrade)", () => {
@@ -2216,6 +2259,14 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       err: mapBackendError(409, { error: "advance_target_invalid", message: "x", from: "test", requested: "x", choices: [] }),
     },
     {
+      label: "grounding_advance_unsupported",
+      err: mapBackendError(409, { error: "grounding_advance_unsupported", message: "x" }, "task_advance"),
+    },
+    {
+      label: "precondition_failed (task_advance, branch only)",
+      err: mapBackendError(422, { error: "precondition_failed", failed: [{ rule: "branchPresent" }] }, "task_advance"),
+    },
+    {
       label: "grounding forbidden (github scope re-mint branch)",
       err: mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_merge" }, "task_merge"),
       // The github:pr_merge recipe names task_merge only to say not to retry it
@@ -2312,6 +2363,7 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       "cross_repo_pr_rejected",
       "forbidden",
       "force_admin_only",
+      "grounding_advance_unsupported",
       "low_confidence",
       "merge_in_progress",
       "not_claimed",

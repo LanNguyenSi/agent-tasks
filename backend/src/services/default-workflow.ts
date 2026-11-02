@@ -574,14 +574,16 @@ export function isFinishOnlyState(def: WorkflowDefinitionShape, stateName: strin
 
 /**
  * The states `task_advance` can move a task to from `fromState`: the targets
- * of forward edges out of `fromState` that are neither review-like nor
- * terminal, in the order the edges are listed, without duplicates.
+ * of forward edges out of `fromState` that are work stages (not the initial
+ * state, which a definition may list after a work stage, and neither
+ * review-like nor terminal), in the order the edges are listed, without
+ * duplicates.
  */
 export function advanceTargetsFrom(def: WorkflowDefinitionShape, fromState: string): string[] {
   const targets: string[] = [];
   for (const t of def.transitions) {
     if (t.from !== fromState || targets.includes(t.to)) continue;
-    if (!isForwardMove(def, fromState, t.to) || isFinishOnlyState(def, t.to)) continue;
+    if (!isForwardMove(def, fromState, t.to) || !isWorkState(def, t.to) || isFinishOnlyState(def, t.to)) continue;
     targets.push(t.to);
   }
   return targets;

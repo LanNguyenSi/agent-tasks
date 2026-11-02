@@ -4426,13 +4426,21 @@ taskRouter.post("/tasks/:id/advance", async (c) => {
         projectId: task.projectId,
         verb: "task_advance",
         idempotencyKey: key?.data,
-        payload: { taskId: task.id, to: requested ?? null },
+        // The key is scoped to the task, the requested edge and the caller:
+        // another caller reusing it on the same task gets a conflict, not a
+        // success-shaped replay of a move it was never allowed to make.
+        payload: {
+          taskId: task.id,
+          to: requested ?? null,
+          caller: actor.type === "human" ? { type: "human", id: actor.userId } : { type: "agent", id: actor.tokenId },
+        },
       },
       async () => {
         const response = await advance();
         return { status: response.status, body: (await response.json()) as unknown };
       },
     );
+    if (outcome.replayed) c.header("X-Idempotent-Replay", "true");
     return c.json(outcome.body as Record<string, unknown>, outcome.status as ContentfulStatusCode);
   } catch (error) {
     if (error instanceof ConflictError) return conflict(c, error.message);

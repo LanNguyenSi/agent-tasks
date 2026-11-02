@@ -137,7 +137,10 @@ edge; several answer `409 advance_ambiguous` with the choices. A review or
 terminal target is `task_finish`'s move (`409 advance_use_finish`). Gates on
 the edge are evaluated like `task_finish`'s. The operation key always
 dedupes: a same-key retry replays the stored response instead of advancing
-again. On the built-in four-state workflow there is nothing to advance.
+again. On the built-in four-state workflow there is nothing to advance. A
+Grounding-provisioned task is refused (`409 grounding_advance_unsupported`):
+its stage moves through the operator's Grounding transition route. Pass
+`branchName` to `task_start` when a later stage's gate needs a branch.
 
 Note on the claim boundary: agents claim tasks in `open` status only.
 `task_create` routes agent-created tasks to `backlog` status, where they are
