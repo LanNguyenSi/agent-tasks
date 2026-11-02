@@ -11,7 +11,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 import {
-  HELD_WORKFLOW_TEMPLATES,
   WORKFLOW_TEMPLATES,
   findWorkflowTemplate,
 } from "../../src/services/workflow-templates.js";
@@ -20,9 +19,13 @@ import {
   isKnownRule,
 } from "../../src/services/transition-rules.js";
 import {
+  advanceTargetsFrom,
   approveTarget,
   finishTargetFrom,
+  isForwardMove,
+  reachableFinishTarget,
   reachableReviewState,
+  resolveAdvanceTarget,
   requestChangesTarget,
   reviewStates,
   type WorkflowDefinitionShape,
@@ -296,31 +299,15 @@ describe("release-ops-no-pr template", () => {
   });
 });
 
-describe("held templates", () => {
-  it("lists the coding-agent definition", () => {
-    expect(HELD_WORKFLOW_TEMPLATES.map((t) => t.slug)).toEqual(["coding-agent"]);
-  });
-
-  it("keeps every held definition out of the registry and out of findWorkflowTemplate", () => {
-    const registered = new Set(WORKFLOW_TEMPLATES.map((t) => t.slug));
-    for (const held of HELD_WORKFLOW_TEMPLATES) {
-      expect(registered.has(held.slug), held.slug).toBe(false);
-      expect(findWorkflowTemplate(held.slug), held.slug).toBeUndefined();
-    }
-  });
-
-  it("every held definition still passes workflowDefinitionSchema and names only known rules", () => {
-    for (const held of HELD_WORKFLOW_TEMPLATES) {
-      expect(workflowDefinitionSchema.safeParse(held.definition).success, held.slug).toBe(true);
-      for (const tr of held.definition.transitions) {
-        for (const rule of tr.requires ?? []) expect(isKnownRule(rule), `${held.slug}: ${rule}`).toBe(true);
-      }
-    }
+describe("coding-agent registration", () => {
+  it("is registered after the two four-state templates and found by findWorkflowTemplate", () => {
+    expect(WORKFLOW_TEMPLATES.map((t) => t.slug)).toEqual(["branch-pr-merge-gated", "release-ops-no-pr", "coding-agent"]);
+    expect(findWorkflowTemplate("coding-agent")?.name).toBe("AI Coding Agent Pipeline");
   });
 });
 
-describe("held coding-agent definition", () => {
-  const def = HELD_WORKFLOW_TEMPLATES.find((t) => t.slug === "coding-agent")!.definition;
+describe("coding-agent template", () => {
+  const def = findWorkflowTemplate("coding-agent")!.definition;
 
   it("has the seven stages in pipeline order, with `done` as the only terminal state", () => {
     expect(def.states.map((s) => s.name)).toEqual([
@@ -374,9 +361,25 @@ describe("held coding-agent definition", () => {
 
   it("finishes into `review` from `test` only: earlier stages have no edge into a review state", () => {
     expect(finishTargetFrom(def, "test")).toBe("review");
+    expect(reachableFinishTarget(def, "test")).toBe("review");
     // No direct edge: the workflow-wide fallback, which the gate lookup then refuses.
     for (const from of ["spec", "plan", "implement"]) {
       expect(reachableReviewState(def, from), from).toBeUndefined();
+      expect(reachableFinishTarget(def, from), from).toBeNull();
     }
+  });
+
+  it("its forward edges (by state order) are exactly the pipeline's next-stage edges; revisit, fix and release edges are backward", () => {
+    const forward = def.transitions.filter((t) => isForwardMove(def, t.from, t.to)).map((t) => `${t.from}->${t.to}`);
+    expect(forward.sort()).toEqual(["implement->test", "open->spec", "plan->implement", "review->done", "spec->plan", "test->review"]);
+  });
+
+  it("lists its stages in pipeline order, so task_advance walks spec -> plan -> implement -> test one forward edge at a time", () => {
+    expect(advanceTargetsFrom(def, "spec")).toEqual(["plan"]);
+    expect(advanceTargetsFrom(def, "plan")).toEqual(["implement"]);
+    expect(advanceTargetsFrom(def, "implement")).toEqual(["test"]);
+    // test only leads forward into the review state, which is task_finish's move.
+    expect(advanceTargetsFrom(def, "test")).toEqual([]);
+    expect(resolveAdvanceTarget(def, "test")).toMatchObject({ ok: false, reason: "finish_state", finishTarget: "review" });
   });
 });

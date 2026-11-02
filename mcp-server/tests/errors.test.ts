@@ -650,6 +650,124 @@ describe("mapBackendError catalog", () => {
     expect(mapBackendError(403, { error: "merge_in_progress", message: "x" }).error.recipe).not.toMatch(/merge of this task's pull request/);
   });
 
+  // ── 7d2. task_advance refusals ──────────────────────────────────────────────
+  it("advance_use_finish with a reachable finish target: recipe task_finish, the target in detail", () => {
+    const err = mapBackendError(409, {
+      error: "advance_use_finish",
+      message: "'test' has no forward edge to another work stage. Call task_finish, which moves the task from 'test' to 'review'.",
+      from: "test",
+      finishTarget: "review",
+      choices: [],
+    });
+    expect(err.error.code).toBe("advance_use_finish");
+    expect(err.error.recipe).toMatch(/^call task_finish/);
+    expect(err.error.allowedNext).toEqual(["task_finish"]);
+    expect(err.error.detail).toEqual({ from: "test", finishTarget: "review", choices: [], totalChoices: 0 });
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("advance_use_finish without a finish target but with advance targets: recipe task_advance to a listed stage first", () => {
+    const err = mapBackendError(409, {
+      error: "advance_use_finish",
+      message: "'review' is a review state.",
+      from: "spec",
+      requested: "review",
+      finishTarget: null,
+      choices: ["plan"],
+    });
+    expect(err.error.recipe).toMatch(/^call task_advance with to set to one of error\.detail\.choices first/);
+    expect(err.error.allowedNext).toEqual(["task_advance"]);
+    expect(err.error.detail).toEqual({ from: "spec", requested: "review", finishTarget: null, choices: ["plan"], totalChoices: 1 });
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("advance_use_finish with neither (a task in a review state): recipe task_finish with an outcome, or tasks_get", () => {
+    const err = mapBackendError(409, { error: "advance_use_finish", message: "Task is in the review state 'review'.", from: "review", finishTarget: null, choices: [] });
+    expect(err.error.recipe).toMatch(/task_finish and an outcome/);
+    expect(err.error.allowedNext).toEqual(["task_finish", "tasks_get"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("advance_ambiguous: recipe task_advance with one of the choices, clamped to five with the total", () => {
+    const err = mapBackendError(409, {
+      error: "advance_ambiguous",
+      message: "'spec' has 7 forward edges.",
+      from: "spec",
+      choices: ["a1", "a2", "a3", "a4", "a5", "a6", "a7"],
+    });
+    expect(err.error.code).toBe("advance_ambiguous");
+    expect(err.error.recipe).toBe("call task_advance again with to set to one of error.detail.choices");
+    expect(err.error.allowedNext).toEqual(["task_advance"]);
+    expect(err.error.detail).toEqual({ from: "spec", choices: ["a1", "a2", "a3", "a4", "a5"], totalChoices: 7 });
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("advance_target_invalid with choices: recipe task_advance with one of them", () => {
+    const err = mapBackendError(409, { error: "advance_target_invalid", message: "'open' is not a forward edge.", from: "spec", requested: "open", choices: ["plan"] });
+    expect(err.error.code).toBe("advance_target_invalid");
+    expect(err.error.recipe).toMatch(/^call task_advance with to set to one of error\.detail\.choices/);
+    expect(err.error.allowedNext).toEqual(["task_advance"]);
+    expect(err.error.detail).toMatchObject({ requested: "open", choices: ["plan"], totalChoices: 1 });
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("advance_target_invalid without choices: recipe task_finish or tasks_get", () => {
+    const err = mapBackendError(409, { error: "advance_target_invalid", message: "'x' is not a forward edge.", from: "test", requested: "x", choices: [] });
+    expect(err.error.allowedNext).toEqual(["task_finish", "tasks_get"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("the advance codes are matched on 409 only, and their detail fields are clamped and type-checked as untrusted data", () => {
+    expect(mapBackendError(400, { error: "advance_ambiguous", message: "x" }).error.recipe).toBe(
+      "call workflow_primer for the full lifecycle reference and today's known traps",
+    );
+    const err = mapBackendError(409, { error: "advance_ambiguous", message: "x", from: 7, choices: ["ok", 3, "z".repeat(200)] });
+    expect(err.error.detail).toEqual({ choices: ["ok", `${"z".repeat(57)}...`], totalChoices: 2 });
+  });
+
+  it("grounding_advance_unsupported: recipe tasks_get, the operator's Grounding transition route, or task_abandon; matched on 409 only", () => {
+    const message = "task_advance does not move a Grounding-provisioned task.";
+    const err = mapBackendError(409, { error: "grounding_advance_unsupported", message }, "task_advance");
+    expect(err.error.code).toBe("grounding_advance_unsupported");
+    expect(err.error.message).toBe(message);
+    expect(err.error.recipe).toMatch(/tasks_get/);
+    expect(err.error.recipe).toMatch(/operator/);
+    expect(err.error.recipe).toMatch(/task_abandon/);
+    expect(err.error.allowedNext).toEqual(["tasks_get", "task_abandon"]);
+    assertAllowedNextRegistered(err, registered);
+    expect(mapBackendError(400, { error: "grounding_advance_unsupported", message }).error.recipe).toBe(
+      "call workflow_primer for the full lifecycle reference and today's known traps",
+    );
+  });
+
+  it("precondition_failed from task_advance with only branchPresent failing: push a commit and open a draft PR, or abandon and restart with branchName", () => {
+    const err = mapBackendError(
+      422,
+      { error: "precondition_failed", failed: [{ rule: "branchPresent", message: "No branch recorded on this task." }] },
+      "task_advance",
+    );
+    expect(err.error.recipe).toMatch(/draft PR/);
+    expect(err.error.recipe).toMatch(/task_submit_pr/);
+    expect(err.error.recipe).toMatch(/retry task_advance/);
+    expect(err.error.recipe).toMatch(/task_abandon and task_start again with branchName/);
+    expect(err.error.allowedNext).toEqual(["task_submit_pr", "task_advance", "task_abandon", "task_start"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("precondition_failed from task_advance keeps the generic recipe when another gate fails too, and the branch-only recipe is task_advance's alone", () => {
+    const both = mapBackendError(
+      422,
+      { error: "precondition_failed", failed: [{ rule: "branchPresent" }, { rule: "prPresent" }] },
+      "task_advance",
+    );
+    expect(both.error.recipe).toBe("run `gh pr create`, call task_submit_pr with the branch/PR metadata, then retry task_advance");
+    expect(both.error.allowedNext).toEqual(["task_submit_pr", "task_advance"]);
+    const finish = mapBackendError(422, { error: "precondition_failed", failed: [{ rule: "branchPresent" }] }, "task_finish");
+    expect(finish.error.recipe).toBe("run `gh pr create`, call task_submit_pr with the branch/PR metadata, then retry task_finish");
+    const none = mapBackendError(422, { error: "precondition_failed", failed: [] }, "task_advance");
+    expect(none.error.allowedNext).toEqual(["task_advance"]);
+  });
+
   // ── 7e. grounding write precondition 403s ─────────────────────────────────
   const GENERIC_PRIMER_RECIPE = "call workflow_primer for the full lifecycle reference and today's known traps";
   it("grounding 403: a backend precondition message is passed through verbatim (no-scope message keeps the generic degrade)", () => {
@@ -2117,6 +2235,38 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       }),
     },
     {
+      label: "advance_use_finish (finish target)",
+      err: mapBackendError(409, { error: "advance_use_finish", message: "x", from: "test", finishTarget: "review", choices: [] }),
+    },
+    {
+      label: "advance_use_finish (advance first)",
+      err: mapBackendError(409, { error: "advance_use_finish", message: "x", from: "spec", finishTarget: null, choices: ["plan"] }),
+    },
+    {
+      label: "advance_use_finish (review state)",
+      err: mapBackendError(409, { error: "advance_use_finish", message: "x", from: "review", finishTarget: null, choices: [] }),
+    },
+    {
+      label: "advance_ambiguous",
+      err: mapBackendError(409, { error: "advance_ambiguous", message: "x", from: "spec", choices: ["lint", "docs"] }),
+    },
+    {
+      label: "advance_target_invalid (choices)",
+      err: mapBackendError(409, { error: "advance_target_invalid", message: "x", from: "spec", requested: "open", choices: ["plan"] }),
+    },
+    {
+      label: "advance_target_invalid (no choices)",
+      err: mapBackendError(409, { error: "advance_target_invalid", message: "x", from: "test", requested: "x", choices: [] }),
+    },
+    {
+      label: "grounding_advance_unsupported",
+      err: mapBackendError(409, { error: "grounding_advance_unsupported", message: "x" }, "task_advance"),
+    },
+    {
+      label: "precondition_failed (task_advance, branch only)",
+      err: mapBackendError(422, { error: "precondition_failed", failed: [{ rule: "branchPresent" }] }, "task_advance"),
+    },
+    {
       label: "grounding forbidden (github scope re-mint branch)",
       err: mapBackendError(403, { error: "forbidden", message: "Token missing scope: github:pr_merge" }, "task_merge"),
       // The github:pr_merge recipe names task_merge only to say not to retry it
@@ -2203,6 +2353,9 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
   // need parsing errors.ts's own source, out of scope for a test file).
   it("catalogFixtures' distinct codes match errors.ts's own file-header catalog-seed enumeration (drift guard)", () => {
     const EXPECTED_CATALOG_CODES = [
+      "advance_ambiguous",
+      "advance_target_invalid",
+      "advance_use_finish",
       "already_claimed",
       "backlog_not_promoted",
       "backlog_routing_enforced",
@@ -2210,6 +2363,7 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       "cross_repo_pr_rejected",
       "forbidden",
       "force_admin_only",
+      "grounding_advance_unsupported",
       "low_confidence",
       "merge_in_progress",
       "not_claimed",

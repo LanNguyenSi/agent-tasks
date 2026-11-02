@@ -56,7 +56,11 @@
 // alias), the v1 backlog-routing pair -- see backlogRoutingEnforcedError and
 // backlogNotPromotedError below. Plus merge_in_progress (409, a claim or
 // status write refused while a pull request merge holds the task) -- see
-// mergeInProgressError below. Plus recipe branches for the grounding write
+// mergeInProgressError below. Plus advance_use_finish, advance_ambiguous and
+// advance_target_invalid (409, task_advance could not pick a forward edge to
+// a work stage) -- see advanceUseFinishError and its siblings below -- and
+// grounding_advance_unsupported (409, task_advance on a Grounding-provisioned
+// task) -- see groundingAdvanceUnsupportedError. Plus recipe branches for the grounding write
 // verbs' (pull_requests_create, pull_requests_merge, task_merge,
 // task_finish, task_abandon, task_grounding_attempt_create) 403 `forbidden`:
 // re-mint guidance for a message naming a missing `github:*` scope, that
@@ -648,14 +652,26 @@ function preconditionFailedError(body: BackendErrorBody, verbContext: string | u
   // task_finish is the contract's own documented context for this trap
   // ("blocks task_finish with 422 precondition_failed") and the fallback
   // for a call without a verbContext. Only task_start, task_finish,
-  // tasks_claim, tasks_update and tasks_transition can raise this error,
+  // task_advance, tasks_claim, tasks_update and tasks_transition can raise this error,
   // and each passes its own name to wrap() (tools.ts; wrap()'s comment
   // there lists every call site that passes one).
   const retryVerb = verbContext ?? "task_finish";
-  const recipe = needsSubmitPr
-    ? `run \`gh pr create\`, call task_submit_pr with the branch/PR metadata, then retry ${retryVerb}`
-    : `wait for the remaining precondition(s) to clear (see error.detail.failed), then retry ${retryVerb}`;
-  const allowedNext = needsSubmitPr ? ["task_submit_pr", retryVerb] : [retryVerb];
+  // task_advance with only branchPresent failing (plan -> implement in the
+  // coding-agent template): the generic recipe sends the caller to open a PR
+  // first, which needs a commit, and the branch-only path of task_start
+  // (branchName) closes once the task is claimed. Name both ways out.
+  const branchOnlyOnAdvance =
+    verbContext === "task_advance" && rules.length > 0 && rules.every((r) => r === "branchPresent");
+  const recipe = branchOnlyOnAdvance
+    ? "push a commit on your branch and open a draft PR (`gh pr create --draft`), call task_submit_pr with the branch/PR metadata, then retry task_advance; or task_abandon and task_start again with branchName"
+    : needsSubmitPr
+      ? `run \`gh pr create\`, call task_submit_pr with the branch/PR metadata, then retry ${retryVerb}`
+      : `wait for the remaining precondition(s) to clear (see error.detail.failed), then retry ${retryVerb}`;
+  const allowedNext = branchOnlyOnAdvance
+    ? ["task_submit_pr", "task_advance", "task_abandon", "task_start"]
+    : needsSubmitPr
+      ? ["task_submit_pr", retryVerb]
+      : [retryVerb];
   return buildTeachingError({
     code: "precondition_failed",
     message:
@@ -829,6 +845,125 @@ function mergeInProgressError(message: string): TeachingError {
     recipe:
       "a merge of this task's pull request is in progress and holds its claims and status; call tasks_get until the merge has settled, then retry the call (the reservation lapses on its own if the merge never completes)",
     allowedNext: ["tasks_get"],
+  });
+}
+
+// 7d2. task_advance refusals. POST /tasks/:id/advance (backend/src/routes/
+// tasks.ts) answers 409 with its own code when it cannot pick a forward edge
+// to another work stage, and carries the choices it had: `from` (the current
+// state), `choices` (the states task_advance can reach from it), optionally
+// `requested` (the caller's `to`) and, on advance_use_finish, `finishTarget`
+// (the state a task_finish from `from` reaches, null when that finish is
+// refused too). Three codes are cataloged, each with a recipe that depends on
+// those fields; the rare advance_no_forward_edge (no forward edge and no
+// finish edge either) degrades generically, the backend message names the
+// dead end. Every field is untrusted response data and clamped.
+function advanceDetail(body: BackendErrorBody): {
+  detail: Record<string, unknown>;
+  choices: string[];
+  finishTarget: string | null | undefined;
+} {
+  const rawChoices = Array.isArray(body.choices) ? body.choices.filter((c): c is string => typeof c === "string") : [];
+  const choices = rawChoices.slice(0, DETAIL_CLAMP).map((c) => clamp(c, DETAIL_ENTRY_CHAR_BUDGET));
+  const finishTarget =
+    typeof body.finishTarget === "string" ? clamp(body.finishTarget, DETAIL_ENTRY_CHAR_BUDGET) : body.finishTarget === null ? null : undefined;
+  const detail: Record<string, unknown> = {
+    ...(typeof body.from === "string" ? { from: clamp(body.from, DETAIL_ENTRY_CHAR_BUDGET) } : {}),
+    ...(typeof body.requested === "string" ? { requested: clamp(body.requested, DETAIL_ENTRY_CHAR_BUDGET) } : {}),
+    ...(finishTarget !== undefined ? { finishTarget } : {}),
+    choices,
+    totalChoices: rawChoices.length,
+  };
+  return { detail, choices, finishTarget };
+}
+
+// advance_use_finish: the target (requested, or the only forward one) is a
+// review-like or terminal state, or the task already sits in a review state.
+// Those moves belong to task_finish. With a reachable finishTarget the recipe
+// is task_finish; without one, it is an advance to a listed stage first, or,
+// with no stage listed either (the review-state case), the review decided by
+// task_finish with an outcome.
+function advanceUseFinishError(body: BackendErrorBody, message: string): TeachingError {
+  const { detail, choices, finishTarget } = advanceDetail(body);
+  if (typeof finishTarget === "string") {
+    return buildTeachingError({
+      code: "advance_use_finish",
+      message,
+      recipe:
+        "call task_finish, which moves the task into the state error.detail.finishTarget names; this verb only moves a task between work stages",
+      allowedNext: ["task_finish"],
+      detail,
+    });
+  }
+  if (choices.length > 0) {
+    return buildTeachingError({
+      code: "advance_use_finish",
+      message,
+      recipe:
+        "call task_advance with to set to one of error.detail.choices first; review and terminal states are reached by a finish from a later stage",
+      allowedNext: ["task_advance"],
+      detail,
+    });
+  }
+  return buildTeachingError({
+    code: "advance_use_finish",
+    message,
+    recipe:
+      "decide the review with task_finish and an outcome when the task is in a review state, or call tasks_get to check where it stands",
+    allowedNext: ["task_finish", "tasks_get"],
+    detail,
+  });
+}
+
+// advance_ambiguous: several forward edges and no `to`.
+function advanceAmbiguousError(body: BackendErrorBody, message: string): TeachingError {
+  const { detail } = advanceDetail(body);
+  return buildTeachingError({
+    code: "advance_ambiguous",
+    message,
+    recipe: "call task_advance again with to set to one of error.detail.choices",
+    allowedNext: ["task_advance"],
+    detail,
+  });
+}
+
+// advance_target_invalid: the requested `to` is not a forward edge to a work
+// stage from the current state.
+function advanceTargetInvalidError(body: BackendErrorBody, message: string): TeachingError {
+  const { detail, choices } = advanceDetail(body);
+  if (choices.length > 0) {
+    return buildTeachingError({
+      code: "advance_target_invalid",
+      message,
+      recipe: "call task_advance with to set to one of error.detail.choices, or without to when there is only one",
+      allowedNext: ["task_advance"],
+      detail,
+    });
+  }
+  return buildTeachingError({
+    code: "advance_target_invalid",
+    message,
+    recipe:
+      "the current state has no forward work stage: call task_finish when it leads into review or done from here, or tasks_get to check the task",
+    allowedNext: ["task_finish", "tasks_get"],
+    detail,
+  });
+}
+
+// grounding_advance_unsupported: task_advance on a Grounding-provisioned task.
+// The Grounding routers own those tasks' status writes, and none of them
+// carries an advance transport yet, so the backend refuses rather than write
+// the status outside the Grounding mutation protocol. No MCP verb on the
+// default surface moves such a task between stages (the REST route behind
+// the legacy tasks_transition does), so the honest recipe is to read the
+// task, have the operator move the stage, or give the claim up.
+function groundingAdvanceUnsupportedError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "grounding_advance_unsupported",
+    message,
+    recipe:
+      "this task is Grounding-provisioned and cannot be advanced here: call tasks_get for its stage, ask the operator to move it through the Grounding direct transition route, or call task_abandon to release it",
+    allowedNext: ["tasks_get", "task_abandon"],
   });
 }
 
@@ -1729,6 +1864,18 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 409 && code === "merge_in_progress") {
     return mergeInProgressError(message);
+  }
+  if (status === 409 && code === "advance_use_finish") {
+    return advanceUseFinishError(body, message);
+  }
+  if (status === 409 && code === "advance_ambiguous") {
+    return advanceAmbiguousError(body, message);
+  }
+  if (status === 409 && code === "advance_target_invalid") {
+    return advanceTargetInvalidError(body, message);
+  }
+  if (status === 409 && code === "grounding_advance_unsupported") {
+    return groundingAdvanceUnsupportedError(message);
   }
   if (verbContext === "pull_requests_create" && code === "github_error") {
     return githubCreateError(status, body, message);

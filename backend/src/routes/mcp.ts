@@ -168,7 +168,7 @@ function errorResult(err: unknown) {
 }
 
 /**
- * Build a fresh `McpServer` with all 26 tools bound to the caller's
+ * Build a fresh `McpServer` with all 27 tools bound to the caller's
  * token. Called per request so there is no shared mutable state
  * between concurrent MCP requests.
  */
@@ -390,6 +390,12 @@ function buildServer(token: string): McpServer {
     " operationKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
     GENERATED_KEY_NOTE +
     " Reusing your own key on a retry makes that retry idempotent only where the backend enforces operation keys (a provisioned task on a Grounding-configured backend). On an unconfigured backend, or for an unprovisioned task, the key is ignored and a retry is not deduplicated.";
+  // task_advance always dedupes on its key, whether or not Grounding is
+  // provisioned: the advance route stores one tool_invocations row per
+  // successful call and replays it on a same-key retry (services/idempotency.ts).
+  const ADVANCE_KEY_HINT =
+    " operationKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." + GENERATED_KEY_NOTE +
+    " To retry the same advance safely (for example after a network timeout), generate your own key up front and pass the same value on the retry: the backend replays the stored 2xx response instead of advancing a second time, and rejects the same key with a different payload with 409.";
   const MERGE_IDEMPOTENCY_KEY_HINT =
     " idempotencyKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
   const CREATE_KEY_HINT =
@@ -410,6 +416,24 @@ function buildServer(token: string): McpServer {
     async ({ taskId, operationKey: explicitKey, ...body }) => {
       const key = resolveOperationKey(explicitKey);
       try { return textResult(await callSelf(`/api/tasks/${taskId}/finish`, { method: "POST", body, headers: completionHeaders(key) }, token)); }
+      catch (e) { return errorResult(e); }
+    },
+  );
+
+  server.registerTool(
+    "task_advance",
+    {
+      description:
+        "Move a task you hold the work claim on along one forward edge of its workflow to the next work stage (forward: the target is listed later in the workflow's states), keeping the claim. Without `to` the single forward edge is taken; several answer 409 advance_ambiguous with the choices. A review or terminal target answers 409 advance_use_finish: task_finish moves a task into review or done. Gates are evaluated on the edge (422 precondition_failed). A four-state workflow has nothing to advance." + ADVANCE_KEY_HINT,
+      inputSchema: {
+        taskId: uuid(),
+        to: z.string().min(1).max(64).regex(/^[a-z0-9_]+$/).optional(),
+        operationKey: operationKey.optional(),
+      },
+    },
+    async ({ taskId, to, operationKey: explicitKey }) => {
+      const key = resolveOperationKey(explicitKey);
+      try { return textResult(await callSelf(`/api/tasks/${taskId}/advance`, { method: "POST", body: to === undefined ? {} : { to }, headers: completionHeaders(key) }, token)); }
       catch (e) { return errorResult(e); }
     },
   );

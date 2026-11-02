@@ -15,6 +15,7 @@ import {
   receiptForCreate,
   receiptForRespec,
   receiptForFinish,
+  receiptForAdvance,
   receiptForSubmitPr,
   receiptForMerge,
   receiptForAbandon,
@@ -23,6 +24,7 @@ import {
   projectPickup,
   type CreateOrRespecResponse,
   type FinishResponse,
+  type AdvanceResponse,
   type SubmitPrResponse,
   type MergeResponse,
   type AbandonResponse,
@@ -126,6 +128,15 @@ const OPERATION_KEY_HINT =
   " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
   GENERATED_KEY_NOTE +
   " Reusing your own key on a retry makes that retry idempotent only where the backend enforces operation keys (a provisioned task on a Grounding-configured backend). On an unconfigured backend, or for an unprovisioned task, the key is ignored and a retry is not deduplicated.";
+
+// task_advance: attached to its operationKey field. Unlike the three
+// completion verbs above, the advance route always dedupes on the key, with or
+// without Grounding: it stores one tool_invocations row per successful call
+// and replays it on a same-key retry (backend/src/services/idempotency.ts).
+const ADVANCE_KEY_HINT =
+  " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
+  GENERATED_KEY_NOTE +
+  " To retry the same advance safely (for example after a network timeout), generate your own key up front and pass the same value on the retry: the backend replays the stored 2xx response instead of advancing a second time, and rejects the same key with a different payload with 409.";
 
 // pull_requests_merge/pull_requests_create: appended to the tool
 // description, so each starts with the field name to keep "optional" from
@@ -363,7 +374,7 @@ export function buildTools(
     def({
       name: "task_start",
       description:
-        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Fails with 409 if you already hold an active claim. An `open` task is also refused with 409 (bad state) when you hold its review claim in a project that requires a distinct reviewer.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write, no follow-up call required. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where only the literal query string `true` is honoured).\n\nReturns a receipt by default ({ ok, task: { id, status }, transition?, expectedFinishState, gateExpectations?, gateExpectationsSource?, requestChangesGateExpectations?, inferredTaskType? }) — no description, no per-state instructions prose, no comments, and no project object; a compact grounding-session recipe replaces the debugFlavor hint's verbose fields when the task is debug-flavored, and the large metadata.groundingSessionState blob never appears. `transition` (from/to) appears only on an actual state change (a work claim; a review claim does not itself transition status). `gateExpectations` is the gate list for the edge task_finish will hit next (on a review claim: the approve outcome); `requestChangesGateExpectations` is the review claim's other outcome. Either can be `null`, meaning the edge itself does not exist and that finish call will 400, distinct from an omitted field, which means nothing is required (or, on an old backend, nothing could be derived). gateExpectationsSource is set to \"assumed-default-workflow\" only when the backend predates the authoritative gate fields and gateExpectations came from the static built-in-default fallback instead, since a null workflowId can also mean a customized project-default workflow; unset on a current backend. Pass include:[\"description\" | \"instructions\" | \"comments\"] to add one field back, or include:[\"task\"] for the full, pre-contract object (recovery path after context loss).",
+        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Fails with 409 if you already hold an active claim. An `open` task is also refused with 409 (bad state) when you hold its review claim in a project that requires a distinct reviewer.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write, no follow-up call required. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where only the literal query string `true` is honoured).\n\nReturns a receipt by default ({ ok, task: { id, status }, transition?, expectedFinishState, advanceTargets?, gateExpectations?, gateExpectationsSource?, requestChangesGateExpectations?, inferredTaskType? }) — no description, no per-state instructions prose, no comments, and no project object; a compact grounding-session recipe replaces the debugFlavor hint's verbose fields when the task is debug-flavored, and the large metadata.groundingSessionState blob never appears. `transition` (from/to) appears only on an actual state change (a work claim; a review claim does not itself transition status). `gateExpectations` is the gate list for the edge task_finish will hit next (on a review claim: the approve outcome); `requestChangesGateExpectations` is the review claim's other outcome. Either can be `null`, meaning the edge itself does not exist and that finish call will 400, distinct from an omitted field, which means nothing is required (or, on an old backend, nothing could be derived). On a work claim, `expectedFinishState` is `null` too when the start stage has no edge into the finish target, and `advanceTargets` (only when non-empty) lists the stages task_advance can move the task to first (a multi-stage workflow such as the AI Coding Agent Pipeline template starts in spec). gateExpectationsSource is set to \"assumed-default-workflow\" only when the backend predates the authoritative gate fields and gateExpectations came from the static built-in-default fallback instead, since a null workflowId can also mean a customized project-default workflow; unset on a current backend. Pass include:[\"description\" | \"instructions\" | \"comments\"] to add one field back, or include:[\"task\"] for the full, pre-contract object (recovery path after context loss).",
       inputShape: {
         taskId: uuid(),
         branchName: z
@@ -480,6 +491,28 @@ export function buildTools(
         const response = await wrap(() => client.finishTask(taskId, body, key), "task_finish");
         if (include?.includes("task")) return response;
         return receiptForFinish(response as FinishResponse);
+      },
+    }),
+    def({
+      name: "task_advance",
+      description:
+        "Move a task you hold the work claim on to the next work stage of its workflow, along one forward edge, keeping the claim. Forward means the target is listed later in the workflow's states than the current state (the AI Coding Agent Pipeline template lists open, spec, plan, implement, test, review, done, so task_advance walks spec -> plan -> implement -> test). For workflows with several work stages; on the built-in four-state workflow there is nothing to advance (in_progress leads only into review and done) and the call is refused.\n\nOptional `to`: without it, the single forward edge is taken, and several answer 409 advance_ambiguous listing them in error.detail.choices; with it, it must be one of those. A review or terminal target (named, or the only forward one) answers 409 advance_use_finish: task_finish moves a task into review or done, and error.detail.finishTarget names where it would go (null when the finish is refused from this stage too). Any other `to` answers 409 advance_target_invalid. Without the work claim: 403, call task_start first. Workflow gates on the edge are enforced like task_finish's (422 precondition_failed, e.g. branchPresent on plan -> implement: pass branchName to task_start, or record it with task_submit_pr). A Grounding-provisioned task is refused (409 grounding_advance_unsupported).\n\nReturns a receipt by default ({ ok, task: { id, status }, transition: { from, to }, next? }); `next` names the follow-up call from the stage just reached: another task_advance, or task_finish with the gates it will check. Pass include:[\"task\"] for the full backend object (task, previousStatus, targetStatus, expectedFinishState, effectiveGates, advanceTargets).",
+      inputShape: {
+        taskId: uuid(),
+        to: statusName()
+          .optional()
+          .describe("The work stage to move to. Required only when the current stage has several forward edges; it must be one of them."),
+        operationKey: operationKey().optional().describe(ADVANCE_KEY_HINT),
+        include: includeSchema,
+      },
+      handler: async ({ taskId, to, operationKey, include }) => {
+        const key = resolveOperationKey(operationKey);
+        const response = await wrap(
+          () => client.advanceTask(taskId, to === undefined ? {} : { to }, key),
+          "task_advance",
+        );
+        if (include?.includes("task")) return response;
+        return receiptForAdvance(response as AdvanceResponse);
       },
     }),
     def({

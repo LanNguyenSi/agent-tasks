@@ -434,6 +434,74 @@ export function receiptForFinish(response: FinishResponse): Receipt | FinishResp
   });
 }
 
+export interface AdvanceResponse {
+  kind: "work";
+  task: BackendTask;
+  previousStatus?: string;
+  targetStatus?: string;
+  /** The state a task_finish from the reached stage moves the task to; null
+   *  when that finish is refused (no edge from the stage). */
+  expectedFinishState?: string | null;
+  effectiveGates?: { finish: string[] | null };
+  /** The states task_advance can reach from the stage just reached. */
+  advanceTargets?: string[];
+  /** Foreign-deliverable gate skips, `{ rule, reason }` per rule. */
+  skippedGates?: unknown[];
+}
+
+/** Rule names out of a skippedGates array, whether it carries names or `{ rule }` objects. */
+function skippedRuleNames(skipped: unknown[]): string[] {
+  return skipped
+    .map((s) => (typeof s === "string" ? s : s && typeof s === "object" && typeof (s as { rule?: unknown }).rule === "string" ? (s as { rule: string }).rule : null))
+    .filter((r): r is string => r !== null);
+}
+
+// task_advance: unlike task_finish, the backend reports both ends of the move
+// (previousStatus, targetStatus), so the receipt carries a real `transition`.
+// The follow-up call is the one obvious next step and goes in `next`: another
+// task_advance when the reached stage has advance targets, or the task_finish
+// the reached stage allows, with its gates. Nothing else from the preview is
+// echoed; include:["task"] returns the whole backend object.
+export function receiptForAdvance(response: AdvanceResponse): Receipt | AdvanceResponse {
+  if (!hasTaskId(response)) return response;
+  const next: string[] = [];
+  const targets = response.advanceTargets ?? [];
+  if (targets.length === 1) next.push(`task_advance (next stage: ${targets[0]})`);
+  if (targets.length > 1) {
+    const shown = targets.slice(0, DETAIL_CLAMP).join(", ");
+    next.push(`task_advance with to: one of ${shown}${targets.length > DETAIL_CLAMP ? ", ..." : ""}`);
+  }
+  if (typeof response.expectedFinishState === "string") {
+    const gates = response.effectiveGates?.finish ?? [];
+    next.push(
+      `task_finish (moves the task to ${response.expectedFinishState}${gates.length > 0 ? `; gates: ${gates.join(", ")}` : ""})`,
+    );
+  }
+  const deviations: Deviation[] = [];
+  const skipped = skippedRuleNames(response.skippedGates ?? []);
+  if (skipped.length > 0) {
+    deviations.push({
+      code: "WORKFLOW_GATE_SKIPPED",
+      detail: {
+        skipped: clampEntries(skipped, { max: DETAIL_CLAMP, entryChars: ENTRY_CHAR_BUDGET }),
+        totalSkipped: skipped.length,
+      },
+      actNow: `The task's deliverable repo is outside this project's repo, so these gate(s) were treated as satisfied: ${skipped.join(", ")}.`,
+    });
+  }
+  return buildReceipt({
+    taskId: response.task.id,
+    status: response.task.status,
+    ...(response.previousStatus !== undefined &&
+    response.task.status !== undefined &&
+    response.previousStatus !== response.task.status
+      ? { transition: { from: response.previousStatus, to: response.task.status } }
+      : {}),
+    deviations,
+    next,
+  });
+}
+
 export interface SubmitPrResponse {
   kind: "submit_pr";
   task: BackendTask;
@@ -601,7 +669,12 @@ export interface StartEffectiveGates {
 export interface StartResponse {
   kind: "work" | "review";
   task: StartTask;
-  expectedFinishState?: string;
+  /** On a work claim, null when a task_finish from the start stage would be
+   *  refused (no edge from it into the finish target); see StartSlice. */
+  expectedFinishState?: string | null;
+  /** Work claim only, and only when non-empty: the states task_advance can
+   *  move the task to from the start stage. */
+  advanceTargets?: string[];
   groundingHint?: StartGroundingHint | ExternalGroundingHint;
   project?: unknown;
   // KNOWN GAP: not present on the live backend's /start success response
@@ -655,7 +728,13 @@ export interface StartSlice {
    *  }` therefore means the approve edge is absent, NOT that this field's
    *  own named state is unreachable; do not pair the two fields as if they
    *  describe the same transition on a review claim. */
-  expectedFinishState?: string;
+  expectedFinishState?: string | null;
+  /** Work claim only, present only when non-empty: the states task_advance
+   *  can move the task to from the start stage (forward edges to other work
+   *  stages, in the workflow's state order). A stage with advance targets
+   *  usually has no finish edge yet, so `expectedFinishState` and
+   *  `gateExpectations` are null next to it. */
+  advanceTargets?: string[];
   /** The `requires` gate list for the edge task_finish will hit next: on a
    *  work claim, the single startTarget -> expectedFinishState edge; on a
    *  review claim, the "approve" edge (see requestChangesGateExpectations
@@ -754,7 +833,7 @@ interface GateExpectationsResult {
  */
 function deriveGateExpectations(
   task: StartTask,
-  expectedFinishState: string | undefined,
+  expectedFinishState: string | null | undefined,
 ): GateExpectationsResult {
   if (!expectedFinishState || !task.status) return {};
 
@@ -918,7 +997,15 @@ export function receiptForStart(
   if (response.confidence?.score !== undefined) slice.confidence = response.confidence.score;
   const inferredTaskType = deriveInferredTaskType(response.task);
   if (inferredTaskType) slice.inferredTaskType = inferredTaskType;
-  if (response.expectedFinishState) slice.expectedFinishState = response.expectedFinishState;
+  // A string names the finish target; null (sent on a work claim whose start
+  // stage has no edge into it) is passed through, so the caller can tell
+  // "finish refused from here" from an old backend that sent nothing.
+  if (response.expectedFinishState === null || response.expectedFinishState) {
+    slice.expectedFinishState = response.expectedFinishState;
+  }
+  if (response.advanceTargets && response.advanceTargets.length > 0) {
+    slice.advanceTargets = response.advanceTargets;
+  }
   const {
     finish: gateExpectations,
     finishSource: gateExpectationsSource,

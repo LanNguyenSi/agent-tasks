@@ -66,6 +66,8 @@ task_submit_pr { taskId, branchName, prUrl, prNumber } # after `gh pr create`
 task_finish    { taskId, result?, prUrl? }           # advance to review, or to done with autoMerge in AUTONOMOUS projects
 ```
 
+A project with a multi-stage workflow (for example the AI Coding Agent Pipeline template) adds `task_advance { taskId, to? }` between `task_start` and `task_finish`: it moves the claimed task one forward stage at a time. See [docs/workflow-preconditions.md](docs/workflow-preconditions.md#workflow-templates).
+
 The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `projects_get_effective_gates`, `task_pickup`), the full MCP tool table, CLI and curl equivalents, and the response/receipt shapes: [docs/getting-started.md](docs/getting-started.md), [docs/agent-workflow.md](docs/agent-workflow.md), and [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## Next steps

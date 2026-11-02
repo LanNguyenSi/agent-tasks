@@ -44,6 +44,25 @@ describe("AgentTasksClient", () => {
     expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
   });
 
+  it("advanceTask POSTs the advance route with the body and an explicit operation key header", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "plan" } }));
+    const client = new AgentTasksClient(config);
+    await client.advanceTask("t1", { to: "plan" }, "adv-key-1");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/t1/advance");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ to: "plan" });
+    expect(init.headers["Idempotency-Key"]).toBe("adv-key-1");
+  });
+
+  it("advanceTask sends no Idempotency-Key when the caller supplied none", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "plan" } }));
+    const client = new AgentTasksClient(config);
+    await client.advanceTask("t1", {});
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).not.toHaveProperty("Idempotency-Key");
+  });
+
   it("does not generate an operation key when the caller did not supply one", async () => {
     fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "open" } }));
     const client = new AgentTasksClient(config);

@@ -21,32 +21,27 @@ export interface WorkflowTemplate {
   definition: WorkflowDefinitionShape;
 }
 
-// ── AI Coding Agent Pipeline (HELD, not registered) ─────────────────────────
+// ── AI Coding Agent Pipeline ────────────────────────────────────────────────
 //
 // 7-stage pipeline modeled after the keshrath/agent-tasks competitive
 // benchmark (April 2026). Designed for solo AI coding agents that move
 // tasks through open → spec → plan → implement → test → review → done.
 //
-// HELD: the definition is valid (it passes `workflowDefinitionSchema` and can
-// be created as a custom workflow through `POST /projects/:projectId/workflows`)
-// but it is deliberately NOT in `WORKFLOW_TEMPLATES`, so the templates list does
-// not offer it and `apply-template` cannot find it. On the default v2 MCP
-// surface an agent cannot leave `spec`: `task_finish` with a work claim reaches
-// `review` only from `test`, the verb that moves a task along the other stages
-// (`tasks_transition`) is a hidden legacy verb, so the only v2 way out of
-// `spec` is `task_abandon`, which resets the task to `open`, where it is
-// picked up and started into `spec` again. Registration waits for a v2 verb that advances the
-// non-test stages. `HELD_WORKFLOW_TEMPLATES` below keeps it importable for the
-// tests that pin that dead end, so the follow-up has a red/green anchor.
+// On the v2 MCP surface: `task_start` moves an open task into `spec`,
+// `task_advance` moves it along the forward edges spec → plan → implement →
+// test (the states are listed in pipeline order, which is what "forward"
+// means there), and `task_finish` with the work claim moves it from `test`
+// into `review`, the one stage with an edge into the review state. The
+// earlier stages have no edge into `review`, so a finish from them is refused
+// as a transition the workflow does not allow, and `task_start` previews
+// `expectedFinishState: null` from `spec`. Review approve ends in `done`,
+// request changes returns to `implement`.
 //
 // The first stage is `open`, the engine's initial state, and not `backlog`:
 // `backlog` is a reserved name (written only by the dedicated demote route),
 // and `initialState` must be `open`. The spec → open edge is therefore the
 // release edge. `review` is the review-like state (it leads to `done` and is
-// not a direct target of `open`), so a work-claim finish from `test` lands in
-// it and review approve ends in `done`; the earlier work states have no edge
-// into `review`, so a finish from them is refused as a transition the workflow
-// does not allow.
+// not a direct target of `open`).
 
 const codingAgentDefinition: WorkflowDefinitionShape = {
   states: [
@@ -62,14 +57,14 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
       label: "Spec",
       terminal: false,
       agentInstructions:
-        "Write a clear specification: define the goal, acceptance criteria, constraints, and any open questions. Move to plan when the spec is complete.",
+        "Write a clear specification: define the goal, acceptance criteria, constraints, and any open questions. Move to plan with task_advance when the spec is complete.",
     },
     {
       name: "plan",
       label: "Plan",
       terminal: false,
       agentInstructions:
-        "Create an implementation plan: identify files to change, outline the approach, note risks. Create a branch, then move to implement.",
+        "Create an implementation plan: identify files to change, outline the approach, note risks. Moving to implement needs a recorded branch: pass branchName to task_start when you claim the task (task_submit_pr records one later, together with a PR). Then move to implement with task_advance.",
     },
     {
       name: "implement",
@@ -345,9 +340,9 @@ const releaseOpsNoPrDefinition: WorkflowDefinitionShape = {
 
 // ── Template registry ───────────────────────────────────────────────────────
 //
-// Every registered template passes `workflowDefinitionSchema` and keeps the
-// four built-in state names, varying only transitions, gates and labels.
-// Held definitions (see the coding-agent block above) are listed separately.
+// Every registered template passes `workflowDefinitionSchema`. The first two
+// keep the four built-in state names, varying only transitions, gates and
+// labels; the coding-agent pipeline uses its own stage names.
 
 export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   {
@@ -364,19 +359,11 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
       "The default four-state workflow, minus the branchPresent/prPresent gates on in_progress → review and in_progress → done. For task classes that legitimately never produce a branch or a PR (tag-only releases, config/ops actions). Stays per-task auditable only when assigned via task_create({workflowId}) against a non-default Workflow row; applying it here via apply-template makes it the project's DEFAULT workflow, relaxing these gates for every task in the project, not just release/ops ones — for a mixed project, create a non-default named workflow from this definition instead. Review stays a normal, non-skippable-by-default stage; only the branch/PR preconditions on the two in_progress edges are gone.",
     definition: releaseOpsNoPrDefinition,
   },
-] as const;
-
-/**
- * Definitions that exist and validate but are held back from the registry:
- * not listed by `GET /workflow-templates`, not found by `apply-template`.
- * See the coding-agent block above for why and what lifts the hold.
- */
-export const HELD_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   {
     slug: "coding-agent",
     name: "AI Coding Agent Pipeline",
     description:
-      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. Held: not registered until a v2 verb can advance the stages between spec and test.",
+      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. task_start moves a task into spec, task_advance moves it forward through plan, implement (needs a branch) and test, and task_finish moves it from test into review (needs a branch and a PR). Pass branchName to task_start so the implement gate is met. task_advance refuses Grounding-provisioned tasks (their stage moves through the Grounding direct transition route), so the template suits projects outside the Grounding creation policy.",
     definition: codingAgentDefinition,
   },
 ] as const;

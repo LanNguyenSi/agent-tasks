@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-11-01T11:50:18Z
+timestamp: 2026-11-02T14:07:42Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -35,11 +35,11 @@ sources:
   - docs/grounding-receipt-contract.md
 ---
 
-Framework is **Hono** (`hono@^4.13.7`), not Express, `backend/src/app.ts` builds a `Hono` app and mounts sub-routers with `app.route(prefix, router)`; `backend/src/server.ts` serves it via `@hono/node-server`. Config is a Zod schema in `backend/src/config/index.ts` (`DATABASE_URL`, `SESSION_SECRET` min 32 chars, `CORS_ORIGINS`, `TRUSTED_PROXY_HOPS`, etc.), fail-fast on missing/invalid env.
+Framework is **Hono** (`hono@^4.13.14`), not Express, `backend/src/app.ts` builds a `Hono` app and mounts sub-routers with `app.route(prefix, router)`; `backend/src/server.ts` serves it via `@hono/node-server`. Config is a Zod schema in `backend/src/config/index.ts` (`DATABASE_URL`, `SESSION_SECRET` min 32 chars, `CORS_ORIGINS`, `TRUSTED_PROXY_HOPS`, etc.), fail-fast on missing/invalid env.
 
 **Route mounting** (`app.ts`): `/api/health`, `/api/webhooks` (GitHub, signature-verified, no auth; the grounding GitHub webhook router when grounding is configured, otherwise the plain webhook router), `/` docsRouter (OpenAPI spec), `/api/auth` + `/api` (SSO), `/api/auth`, `/api` (teams), `/api/agent-tokens`, `/api` (projects, project invites), `/api/invites`, `/api/admin` (shares), `/api` (grounding attempts, grounding task completion, grounding direct tasks, grounding creation, then **tasks**, workflows, boards, audit, signals), `/api/github` (the grounding GitHub router first when grounding is configured, then the GitHub router), `/api/mcp`.
 
-**`backend/src/routes/tasks.ts`** (8100+ lines) is the v2 verb surface: `POST /api/tasks/pickup`, `POST /api/tasks/:id/start`, `POST /api/tasks/:id/finish`, `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/abandon`, `POST /api/tasks/:id/creator-abandon`, `POST /api/tasks/:id/respec`, `POST /api/tasks/:id/submit-pr`, plus the advisory-only `POST /api/tasks/:id/suggest-rewrite` (LLM rewrite helper, gated behind `Project.aiHelpersEnabled`, never mutates the task itself), plus the classic REST CRUD (`POST /api/projects/:projectId/tasks`, `PATCH/GET/DELETE /api/tasks/:id`, `/attachments`, `/artifacts`, `/comments`, `/dependencies`, `/claim`, `/release`, `/transition`, `/review`, `/review/claim`, `/review/release`). See `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`, `governance-merge.md` for the invariants living in this file.
+**`backend/src/routes/tasks.ts`** (8100+ lines) is the v2 verb surface: `POST /api/tasks/pickup`, `POST /api/tasks/:id/start`, `POST /api/tasks/:id/advance`, `POST /api/tasks/:id/finish`, `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/abandon`, `POST /api/tasks/:id/creator-abandon`, `POST /api/tasks/:id/respec`, `POST /api/tasks/:id/submit-pr`, plus the advisory-only `POST /api/tasks/:id/suggest-rewrite` (LLM rewrite helper, gated behind `Project.aiHelpersEnabled`, never mutates the task itself), plus the classic REST CRUD (`POST /api/projects/:projectId/tasks`, `PATCH/GET/DELETE /api/tasks/:id`, `/attachments`, `/artifacts`, `/comments`, `/dependencies`, `/claim`, `/release`, `/transition`, `/review`, `/review/claim`, `/review/release`). See `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`, `governance-merge.md` for the invariants living in this file.
 
 **Services** (`backend/src/services/`): one file per concern, `confidence-gate.ts` (scorer enforcement), `review-gate.ts` + `self-merge-notice.ts` (distinct-reviewer/self-merge), `github-merge.ts`/`github-checks.ts`/`github-webhook.ts` (PR lifecycle; `github-merge.ts` is the legacy merge path), `grounding-github-create.ts`/`grounding-github-webhook.ts` (configured GitHub create/webhook adapters, see below), `transition-rules.ts` (the four declarative gates), `signal.ts`/`task-signal.ts`/`review-signal.ts` (async notifications), `scopes.ts` (canonical agent-token scope list), `audit.ts` (append-only audit log), `workflow-templates.ts`/`default-workflow.ts` (workflow engine).
 

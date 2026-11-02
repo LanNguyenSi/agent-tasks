@@ -1,22 +1,22 @@
 /**
- * End-to-end test of the HELD `coding-agent` definition against a real
- * database. The definition is not a registered template (the templates list
- * does not offer it and apply-template cannot find it), so a project gets it the
- * way any custom workflow arrives: `POST /projects/:projectId/workflows` with
- * `isDefault`. A task then runs through its seven stages (open, spec, plan,
- * implement, test, review, done) with the real task, review, merge and webhook
- * handlers.
+ * End-to-end test of the registered `coding-agent` template against a real
+ * database. A project gets it through `apply-template/coding-agent`, and a task
+ * then runs through its seven stages (open, spec, plan, implement, test,
+ * review, done) with the real task, review, merge and webhook handlers.
  *
- * Pins how the engine behaves for the definition's own state names: start moves
- * a task into `spec`, the gated edges answer 422 until the branch / PR exist,
- * a work-claim finish leaves `test` for `review` (and is refused from the
- * stages without an edge into `review`), review approve ends in `done`, request
- * changes returns to `implement`, the merge gate and the webhook hand-over use
- * `review` / `done`, and the earlier `backlog` stage cannot be reached.
+ * Pins how the engine behaves for the template's own state names: start moves
+ * a task into `spec` and previews the advance target instead of a review state
+ * the finish cannot reach, `task_advance` (POST /tasks/:id/advance) moves it
+ * forward one stage at a time, the gated edges answer 422 until the branch / PR
+ * exist, a work-claim finish leaves `test` for `review` (and is refused from
+ * the stages without an edge into `review`), review approve ends in `done`,
+ * request changes returns to `implement`, the merge gate and the webhook
+ * hand-over use `review` / `done`, and the earlier `backlog` stage cannot be
+ * reached.
  *
- * The "dead end" case is the reason the template stays held: an agent token
- * that starts a task is in `spec` and its `task_finish` is refused. Registration
- * waits for a v2 verb that advances the non-test stages; that case then turns.
+ * The former dead end (an agent token that starts a task sits in `spec` and its
+ * `task_finish` is refused, with no v2 verb to leave `spec`) is what kept the
+ * template held; `task_advance` lifts it.
  */
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
@@ -109,11 +109,11 @@ import { githubRouter } from "../../src/routes/github.js";
 import { workflowRouter } from "../../src/routes/workflows.js";
 import { handlePullRequestEvent } from "../../src/services/github-webhook.js";
 import { checkTaskStatusForMerge } from "../../src/services/gates/task-status-for-merge.js";
-import { HELD_WORKFLOW_TEMPLATES, WORKFLOW_TEMPLATES, findWorkflowTemplate } from "../../src/services/workflow-templates.js";
+import { WORKFLOW_TEMPLATES, findWorkflowTemplate } from "../../src/services/workflow-templates.js";
 import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 
 const SLUG = "coding-agent";
-const HELD = HELD_WORKFLOW_TEMPLATES.find((t) => t.slug === SLUG)!;
+const TEMPLATE = findWorkflowTemplate(SLUG)!;
 const STAGES = ["open", "spec", "plan", "implement", "test", "review", "done"];
 const JSON_HEADERS = { "content-type": "application/json" };
 const PR_FIELDS = { branchName: "feat/x", prUrl: "https://github.com/acme/thing/pull/1", prNumber: 1 };
@@ -194,6 +194,15 @@ async function walk(taskId: string, ...states: string[]) {
   }
 }
 
+/** Advances a task one stage with task_advance as `actor` and checks where it landed. */
+async function advance(actor: Actor, taskId: string, expected: string, body: Record<string, unknown> = {}) {
+  const moved = await post(actor, `/tasks/${taskId}/advance`, body);
+  expect(moved.status, `advance -> ${expected}: ${JSON.stringify(moved.body)}`).toBe(200);
+  expect(moved.body.targetStatus).toBe(expected);
+  expect((await row(taskId)).status).toBe(expected);
+  return moved;
+}
+
 beforeAll(async () => {
   store = await groundingPostgres();
   db = store.db;
@@ -234,39 +243,35 @@ beforeEach(async () => {
   admin = { type: "human", userId: adminId, teamId };
 });
 
-/** Gives the project the held definition as its default custom workflow, as an admin would through the workflow API. */
-async function createHeldWorkflow() {
-  const res = await post(admin, `/projects/${projectId}/workflows`, { name: HELD.name, isDefault: true, definition: JSON.parse(JSON.stringify(HELD.definition)) });
+/** Applies the template to the project, as an admin would through apply-template. */
+async function applyTemplate() {
+  const res = await post(admin, `/projects/${projectId}/workflow/apply-template/${SLUG}`);
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   return res;
 }
 
-describe("the held definition is not a template", () => {
-  it("is not registered: findWorkflowTemplate and the registry do not know the slug", () => {
-    expect(findWorkflowTemplate(SLUG)).toBeUndefined();
-    expect(WORKFLOW_TEMPLATES.map((t) => t.slug)).not.toContain(SLUG);
+describe("the coding-agent template is registered", () => {
+  it("findWorkflowTemplate and the registry know the slug", () => {
+    expect(findWorkflowTemplate(SLUG)).toBeDefined();
+    expect(WORKFLOW_TEMPLATES.map((t) => t.slug)).toContain(SLUG);
   });
 
-  it("GET /workflow-templates does not list it", async () => {
+  it("GET /workflow-templates lists it with its seven stages", async () => {
     const res = await call(admin, "GET", "/workflow-templates");
     expect(res.status).toBe(200);
-    expect(res.body.templates.map((t: { slug: string }) => t.slug)).not.toContain(SLUG);
+    expect(res.body.templates).toContainEqual(
+      expect.objectContaining({ slug: SLUG, name: TEMPLATE.name, stateCount: 7, initialState: "open" }),
+    );
   });
 
-  it("apply-template cannot find it: 404, and the project keeps no workflow row", async () => {
-    const res = await post(admin, `/projects/${projectId}/workflow/apply-template/${SLUG}`);
-    expect(res.status).toBe(404);
-    expect(await db.workflow.count({ where: { projectId } })).toBe(0);
-  });
-
-  it("the definition itself validates and persists when POSTed as a custom workflow", async () => {
-    expect(workflowDefinitionSchema.safeParse(HELD.definition).success).toBe(true);
-    const created = await createHeldWorkflow();
+  it("apply-template applies it as the project default, and the effective workflow has the seven stages", async () => {
+    const applied = await applyTemplate();
+    expect(applied.body.source).toBe("custom");
     const stored = await db.workflow.findFirstOrThrow({ where: { projectId, isDefault: true } });
-    // The API stores the parsed definition (defaults such as requiredRole filled in).
-    expect(stored.definition).toEqual(workflowDefinitionSchema.parse(HELD.definition));
-    expect(stored.definition).toMatchObject(JSON.parse(JSON.stringify(HELD.definition)));
-    expect(created.body.id ?? created.body.workflow?.id).toBeTruthy();
+    expect(stored.definition).toMatchObject(JSON.parse(JSON.stringify(TEMPLATE.definition)));
+    expect(auditCalls("workflow.template_applied").map((e) => e.payload)).toContainEqual(
+      expect.objectContaining({ templateSlug: SLUG, stateCount: 7 }),
+    );
 
     const effective = await call(admin, "GET", `/projects/${projectId}/effective-workflow`);
     expect(effective.status).toBe(200);
@@ -274,11 +279,31 @@ describe("the held definition is not a template", () => {
     expect(effective.body.definition.states.map((s: { name: string }) => s.name)).toEqual(STAGES);
     expect(effective.body.definition.initialState).toBe("open");
   });
+
+  it("apply-template keeps the stranded-tasks guard: a task in `in_progress`, which the template lacks, refuses the apply", async () => {
+    const taskId = await createTask();
+    await db.task.update({ where: { id: taskId }, data: { status: "in_progress" } });
+    const res = await post(admin, `/projects/${projectId}/workflow/apply-template/${SLUG}`);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "stranded_tasks", taskIds: [taskId] });
+    expect(await db.workflow.count({ where: { projectId } })).toBe(0);
+  });
+
+  it("the definition itself validates and persists when POSTed as a custom workflow", async () => {
+    expect(workflowDefinitionSchema.safeParse(TEMPLATE.definition).success).toBe(true);
+    const created = await post(admin, `/projects/${projectId}/workflows`, { name: TEMPLATE.name, isDefault: true, definition: JSON.parse(JSON.stringify(TEMPLATE.definition)) });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const stored = await db.workflow.findFirstOrThrow({ where: { projectId, isDefault: true } });
+    // The API stores the parsed definition (defaults such as requiredRole filled in).
+    expect(stored.definition).toEqual(workflowDefinitionSchema.parse(TEMPLATE.definition));
+    expect(stored.definition).toMatchObject(JSON.parse(JSON.stringify(TEMPLATE.definition)));
+    expect(created.body.id ?? created.body.workflow?.id).toBeTruthy();
+  });
 });
 
-describe("a task through the held definition as a custom workflow", () => {
+describe("a task through the coding-agent template", () => {
   beforeEach(async () => {
-    await createHeldWorkflow();
+    await applyTemplate();
   });
 
   it("create: a human-created task starts in the initial state `open`", async () => {
@@ -306,7 +331,7 @@ describe("a task through the held definition as a custom workflow", () => {
     expect(after.claimedByUserId).toBe(authorId);
   });
 
-  it("dead end today: an agent token that starts a task is in `spec` and its task_finish is refused", async () => {
+  it("no dead end: an agent token that starts a task is in `spec`, its task_finish is still refused, and task_advance moves it to `plan` keeping the claim", async () => {
     const taskId = await createTask();
     const agent = await seedAgent();
     const start = await post(agent, `/tasks/${taskId}/start`);
@@ -316,9 +341,46 @@ describe("a task through the held definition as a custom workflow", () => {
     const finish = await post(agent, `/tasks/${taskId}/finish`, { result: "spec written" });
     expect(finish.status).toBe(400);
     expect(finish.body.message).toMatch(/^Transition from 'spec' to 'review' is not allowed by workflow/);
+    expect((await row(taskId)).status).toBe("spec");
+
+    const advanced = await advance(agent, taskId, "plan");
+    expect(advanced.body.previousStatus).toBe("spec");
     const after = await row(taskId);
-    expect(after.status).toBe("spec");
     expect(after.claimedByAgentId).toBe(agent.tokenId);
+    expect(auditCalls("task.transitioned").map((e) => e.payload)).toContainEqual(
+      expect.objectContaining({ from: "spec", to: "plan", actorType: "agent", via: "task_advance" }),
+    );
+  });
+
+  it("the v2 flow end to end as an agent token: start (branch folded in) -> advance x3 -> submit_pr -> finish -> review approve -> done", async () => {
+    const taskId = await createTask();
+    const agent = await seedAgent();
+    const start = await post(agent, `/tasks/${taskId}/start`, { branchName: "feat/x" });
+    expect(start.status, JSON.stringify(start.body)).toBe(200);
+    expect((await row(taskId)).branchName).toBe("feat/x");
+
+    await advance(agent, taskId, "plan");
+    await advance(agent, taskId, "implement");
+    const toTest = await advance(agent, taskId, "test");
+    // From test the next move is the finish into review; nothing is left to advance.
+    expect(toTest.body).toMatchObject({ expectedFinishState: "review", effectiveGates: { finish: ["branchPresent", "prPresent"] }, advanceTargets: [] });
+
+    const refused = await post(agent, `/tasks/${taskId}/advance`);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: "advance_use_finish", finishTarget: "review" });
+
+    const submitted = await post(agent, `/tasks/${taskId}/submit-pr`, { branchName: "feat/x", prUrl: PR_FIELDS.prUrl, prNumber: PR_FIELDS.prNumber });
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(200);
+    const finished = await post(agent, `/tasks/${taskId}/finish`, { result: "tests pass" });
+    expect(finished.status, JSON.stringify(finished.body)).toBe(200);
+    expect(finished.body.targetStatus).toBe("review");
+    expect(await row(taskId)).toMatchObject({ status: "review", claimedByAgentId: agent.tokenId });
+
+    const claimed = await post(reviewer, `/tasks/${taskId}/review/claim`);
+    expect(claimed.status, JSON.stringify(claimed.body)).toBe(200);
+    const approved = await post(reviewer, `/tasks/${taskId}/finish`, { outcome: "approve" });
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    expect(await row(taskId)).toMatchObject({ status: "done", ...NO_CLAIMS });
   });
 
   it("spec -> open releases the task back to the initial state; spec -> backlog does not exist", async () => {
@@ -333,7 +395,7 @@ describe("a task through the held definition as a custom workflow", () => {
     expect((await row(taskId)).status).toBe("open");
   });
 
-  it("plan -> implement answers 422 without a branch and passes once it is recorded", async () => {
+  it("plan -> implement answers 422 without a branch and passes once it is recorded (transition verb)", async () => {
     const taskId = await createTask();
     await post(author, `/tasks/${taskId}/start`);
     await walk(taskId, "plan");
@@ -344,6 +406,52 @@ describe("a task through the held definition as a custom workflow", () => {
 
     await db.task.update({ where: { id: taskId }, data: { branchName: "feat/x" } });
     await walk(taskId, "implement");
+    expect((await row(taskId)).status).toBe("implement");
+  });
+
+  it("task_advance walks spec -> plan -> implement -> test: plan -> implement answers 422 without a branch and passes once it is recorded", async () => {
+    const taskId = await createTask();
+    await post(author, `/tasks/${taskId}/start`);
+    const toPlan = await advance(author, taskId, "plan");
+    expect(toPlan.body).toMatchObject({ previousStatus: "spec", expectedFinishState: null, effectiveGates: { finish: null }, advanceTargets: ["implement"] });
+
+    const blocked = await post(author, `/tasks/${taskId}/advance`);
+    expect(blocked.status).toBe(422);
+    expect(blocked.body.error).toBe("precondition_failed");
+    expect(blocked.body.failed.map((f: { rule: string }) => f.rule)).toEqual(["branchPresent"]);
+    expect((await row(taskId)).status).toBe("plan");
+
+    await db.task.update({ where: { id: taskId }, data: { branchName: "feat/x" } });
+    await advance(author, taskId, "implement", { to: "implement" });
+    await advance(author, taskId, "test");
+    const after = await row(taskId);
+    expect(after.claimedByUserId).toBe(authorId);
+    expect(auditCalls("task.transitioned").filter((e) => e.payload.via === "task_advance").map((e) => `${e.payload.from}->${e.payload.to}`)).toEqual([
+      "spec->plan",
+      "plan->implement",
+      "implement->test",
+    ]);
+  });
+
+  it("task_advance refuses the review state and the backward edges, and leaves the task where it is", async () => {
+    const taskId = await createTask();
+    await post(author, `/tasks/${taskId}/start`);
+    await db.task.update({ where: { id: taskId }, data: { branchName: "feat/x" } });
+    await advance(author, taskId, "plan");
+    await advance(author, taskId, "implement");
+
+    const backward = await post(author, `/tasks/${taskId}/advance`, { to: "plan" });
+    expect(backward.status).toBe(409);
+    expect(backward.body).toMatchObject({ error: "advance_target_invalid", from: "implement", requested: "plan", choices: ["test"] });
+
+    const intoReview = await post(author, `/tasks/${taskId}/advance`, { to: "review" });
+    expect(intoReview.status).toBe(409);
+    expect(intoReview.body).toMatchObject({ error: "advance_use_finish", requested: "review", finishTarget: null, choices: ["test"] });
+    expect(intoReview.body.message).toContain("task_finish");
+
+    const intoDone = await post(author, `/tasks/${taskId}/advance`, { to: "done" });
+    expect(intoDone.status).toBe(409);
+    expect(intoDone.body).toMatchObject({ error: "advance_use_finish", requested: "done" });
     expect((await row(taskId)).status).toBe("implement");
   });
 
@@ -368,11 +476,13 @@ describe("a task through the held definition as a custom workflow", () => {
     expect(after.claimedByUserId).toBe(authorId);
   });
 
-  it("start previews the review state of the workflow; the transition verb also reaches it from `test` only with branch and PR", async () => {
+  it("start previews the advance target from `spec` and no finish (the finish from `spec` is refused); the transition verb reaches `review` from `test` only with branch and PR", async () => {
     const taskId = await createTask();
     const start = await post(author, `/tasks/${taskId}/start`);
     expect(start.status).toBe(200);
-    expect(start.body.expectedFinishState).toBe("review");
+    expect(start.body.expectedFinishState).toBeNull();
+    expect(start.body.effectiveGates).toEqual({ finish: null });
+    expect(start.body.advanceTargets).toEqual(["plan"]);
 
     await db.task.update({ where: { id: taskId }, data: { branchName: "feat/x" } });
     await walk(taskId, "plan", "implement", "test");
@@ -451,7 +561,7 @@ describe("a task through the held definition as a custom workflow", () => {
     });
 
     it("the status gate accepts exactly `review` and `done` among the template's states", () => {
-      const definition = HELD.definition;
+      const definition = TEMPLATE.definition;
       const accepted = STAGES.filter((status) => checkTaskStatusForMerge({ status }, definition).ok);
       expect(accepted).toEqual(["review", "done"]);
     });
