@@ -562,6 +562,34 @@ describe("Idempotency-Key", () => {
     expect(reused.body.error).toBe("conflict");
   });
 
+  it("the same caller, task and key with a different `to` is a 409 conflict: the requested edge is part of the hash", async () => {
+    const taskId = await seedTask("spec", FORK);
+    expect((await advance(author, taskId, { to: "lint" }, { "Idempotency-Key": "advance-7" })).status).toBe(200);
+    const reused = await advance(author, taskId, { to: "docs" }, { "Idempotency-Key": "advance-7" });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("conflict");
+    expect(reused.body).not.toHaveProperty("_idempotent_replay");
+    expect((await row(taskId)).status).toBe("lint");
+  });
+
+  it("two agent tokens of the same owner are different callers: the second reusing the key gets a 409, not a replay", async () => {
+    const tokenA = randomUUID();
+    const tokenB = randomUUID();
+    for (const id of [tokenA, tokenB]) {
+      await db.agentToken.create({ data: { id, teamId, createdById: authorId, name: `agent-${id.slice(0, 8)}`, tokenHash: id, scopes: ["tasks:transition"] } });
+    }
+    const taskId = await seedTask("spec", PIPELINE, { claimedByUserId: null, claimedByAgentId: tokenA });
+    const asToken = (tokenId: string) => ({ type: "agent", tokenId, teamId, userId: authorId, scopes: ["tasks:transition"] }) as Actor;
+    const first = await advance(asToken(tokenA), taskId, {}, { "Idempotency-Key": "advance-8" });
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    const reused = await advance(asToken(tokenB), taskId, {}, { "Idempotency-Key": "advance-8" });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("conflict");
+    expect(reused.body).not.toHaveProperty("_idempotent_replay");
+    expect(reused.headers.get("X-Idempotent-Replay")).toBeNull();
+    expect((await row(taskId)).status).toBe("plan");
+  });
+
   it("a refused advance is not stored: the same key retries for real", async () => {
     const taskId = await seedTask("plan", PIPELINE);
     expect((await advance(author, taskId, {}, { "Idempotency-Key": "advance-3" })).status).toBe(422);
