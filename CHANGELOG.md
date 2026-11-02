@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The root `tsx` override now references the direct dependency (`"$tsx"`), so a dependency update of `tsx` no longer fails with `EOVERRIDE`; the security floor stays in the direct dependency range.
 - Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard).
 
 ## [0.33.0] - 2026-11-01
