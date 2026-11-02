@@ -41,10 +41,10 @@
     "commander": "^12.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsx": "^4.22.4",
-    "typescript": "^5.7.0",
-    "vitest": "^4.1.11"
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "postcss": "^8.5.18"
