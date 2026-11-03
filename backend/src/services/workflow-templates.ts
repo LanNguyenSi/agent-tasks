@@ -363,7 +363,7 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     slug: "coding-agent",
     name: "AI Coding Agent Pipeline",
     description:
-      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. task_start moves a task into spec, task_advance moves it forward through plan, implement (needs a branch) and test, and task_finish moves it from test into review (needs a branch and a PR). Pass branchName to task_start so the implement gate is met. task_advance refuses Grounding-provisioned tasks (their stage moves through the Grounding direct transition route), so the template suits projects outside the Grounding creation policy.",
+      "Seven stages for a solo coding agent: open, spec, plan, implement, test, review, done. task_start moves a task into spec, task_advance moves it forward through plan, implement (needs a branch) and test, and task_finish moves it from test into review (needs a branch and a PR). Pass branchName to task_start so the implement gate is met. A Grounding-provisioned task advances the same way, through the Grounding mutation protocol, so the template also suits projects the Grounding creation policy enrolls.",
     definition: codingAgentDefinition,
   },
 ] as const;

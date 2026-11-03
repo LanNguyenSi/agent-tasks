@@ -631,16 +631,17 @@ A seven-stage template (`open`, `spec`, `plan`, `implement`, `test`,
 4. Review approve ends the task in `done`; request changes returns it to
    `implement`, where `task_advance` takes it to `test` again.
 
-Caveat for Grounding-provisioned tasks: in a project the Grounding creation
-policy enrolls, every new task is Grounding-provisioned, and `task_advance`
-refuses such a task (`409 grounding_advance_unsupported`) because the
-Grounding routers own its status writes and none carries an advance yet. On
-that task the v2 flow stops at `spec`: `task_finish` from `spec` is a `400`
-and the only other v2 move is `task_abandon`; the stage moves through the
-Grounding direct transition route (`POST /api/tasks/:id/transition`, driven
-by the operator or a REST call, not an MCP verb on the default surface). Do
-not apply this template to such a project until that route carries an
-advance.
+Grounding-provisioned tasks: in a project the Grounding creation policy
+enrolls, every new task is Grounding-provisioned. `task_advance` moves such a
+task through the Grounding direct route (`POST /api/tasks/:id/advance`, served
+by the Grounding mutation protocol on the transition transport), with the
+same claim check, edge choice, refusals and response as on an unprovisioned
+task and without a receipt, so `spec`, `plan`, `implement` and `test` are
+reached there too (the `task_finish` into `review` follows the Grounding
+completion rules, with a receipt in EXTERNAL_V1). Three answers differ: a failed gate is `409 precondition_failed` whose message names the
+edge and its configured gates (no `failed[]` list; the stdio MCP server
+teaches the `task_submit_pr` recipe for it), a `requiredRole` the caller
+lacks is a bare `403`, and `skippedGates` is a list of rule names.
 
 The definition:
 

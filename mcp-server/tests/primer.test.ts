@@ -110,7 +110,7 @@ const NON_VERB_TOKENS = new Set([
   "advance_use_finish", // 409 error code (task_advance toward a review or terminal state)
   "advance_ambiguous", // 409 error code (task_advance with several forward stages and no to)
   "advance_target_invalid", // 409 error code (task_advance with a to that is not a forward stage)
-  "grounding_advance_unsupported", // 409 error code (task_advance on a Grounding-provisioned task)
+  "grounding_advance_unsupported", // 409 error code (legacy: an older backend's task_advance refusal on a Grounding-provisioned task)
   "pr_merge", // the github:pr_merge scope-name fragment (the "Merged outside agent-tasks" section)
 ]);
 
@@ -914,7 +914,6 @@ describe("every DEFAULT-registered tool's description mentions only known verb n
     "self_merge", // projects_get_effective_gates: GateCode example
     "task_status_for_merge", // projects_get_effective_gates: GateCode example
     "pr_repo_matches_project", // projects_get_effective_gates: GateCode example
-    "grounding_advance_unsupported", // task_advance: 409 error code for a Grounding-provisioned task
   ]);
 
   // rc-v1-C007: a pruned verb's bare name may appear in a DEFAULT tool's

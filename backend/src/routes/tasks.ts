@@ -82,8 +82,7 @@ import {
   defaultWorkflowDefinition,
   resolveEffectiveDefinition, withInReviewState,
   resolveProjectEffectiveDefinition,
-  expectedFinishStateFromDefinition, finishTargetFrom, reachableFinishTarget,
-  advanceTargetsFrom, resolveAdvanceTarget,
+  expectedFinishStateFromDefinition, finishTargetFrom,
   isInitialState,
   isTerminalState,
   isReviewState,
@@ -94,9 +93,10 @@ import {
   requestChangesTarget,
   terminalTargetFrom,
   isKnownState,
-  gatesForTransition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
+import { advanceResponseFields, advanceTaskSchema, decideAdvance,
+  gatesForTransitionOrNull, workStagePreview, advanceIdempotencyKeySchema as sharedAdvanceIdempotencyKeySchema } from "../services/task-advance.js";
 import {
   buildTaskStatusFilter,
   findActiveAgentClaim,
@@ -2308,50 +2308,6 @@ taskRouter.post("/tasks/pickup", async (c) => {
 //
 // See ADR 0008.
 
-/**
- * Preview the gates configured on a transition edge, distinguishing "edge
- * exists with no `requires`" ([]) from "edge does not exist" (null).
- *
- * `gatesForTransition` alone collapses both cases to [] — fine for its
- * original finish-time lookup (a missing edge already 400s with
- * `no_transition` before the gate list matters there), but wrong for a
- * preview: a workflow that keeps `review → done` while dropping
- * `in_progress → review` is persistable (workflowDefinitionSchema doesn't
- * require graph connectivity), and `finish: []` would misread as "nothing
- * required" when finish will actually 400. `to` is optional so callers can
- * feed an `approveTarget`/`requestChangesTarget` result straight through
- * without a separate undefined-check.
- */
-function gatesForTransitionOrNull(
-  def: WorkflowDefinitionShape,
-  from: string,
-  to: string | undefined,
-): string[] | null {
-  if (to === undefined) return null;
-  const exists = def.transitions.some((t) => t.from === from && t.to === to);
-  return exists ? gatesForTransition(def, from, to) : null;
-}
-
-/**
- * What a work-claim holder can do next from `state`, for the `task_start` and
- * `task_advance` responses: the state a work `task_finish` (without autoMerge)
- * moves the task to, null when that finish would be refused for lack of an
- * edge; the gates configured on that edge, null likewise; and the states
- * `task_advance` can take the task to.
- */
-function workStagePreview(def: WorkflowDefinitionShape, state: string): {
-  expectedFinishState: string | null;
-  finishGates: string[] | null;
-  advanceTargets: string[];
-} {
-  const expectedFinishState = reachableFinishTarget(def, state);
-  return {
-    expectedFinishState,
-    finishGates: gatesForTransitionOrNull(def, state, expectedFinishState ?? undefined),
-    advanceTargets: advanceTargetsFrom(def, state),
-  };
-}
-
 taskRouter.post("/tasks/:id/start", async (c) => {
   const actor = c.get("actor") as Actor;
 
@@ -4190,19 +4146,11 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 // second time (services/idempotency.ts, the store the PR routes use); without
 // the header every call executes.
 //
-// A Grounding-provisioned task is refused: its status changes run through the
-// Grounding direct transition route, which this verb does not join.
-const advanceTaskSchema = z.object({
-  to: z
-    .string()
-    .min(1)
-    .max(64, "to must be at most 64 characters")
-    .regex(/^[a-z0-9_]+$/, "to is a workflow state name: lowercase letters, digits and underscores")
-    .optional(),
-});
-const advanceIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
-
-const quoteList = (states: string[]) => states.map((s) => `'${s}'`).join(", ");
+// The claim check, the edge choice, its refusals and the response preview are
+// shared with the Grounding direct route (services/task-advance.ts), which
+// serves this path for a Grounding-provisioned task through the Grounding
+// mutation protocol; only an unprovisioned task reaches this handler.
+const advanceIdempotencyKeySchema = sharedAdvanceIdempotencyKeySchema;
 
 taskRouter.post("/tasks/:id/advance", async (c) => {
   const actor = c.get("actor") as Actor;
@@ -4241,118 +4189,11 @@ taskRouter.post("/tasks/:id/advance", async (c) => {
   }
 
   const advance = async (): Promise<Response> => {
-    const holdsWorkClaim =
-      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
-      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
-    if (!holdsWorkClaim) {
-      return forbidden(
-        c,
-        "You do not hold the work claim on this task. Call task_start to claim it before task_advance; a review claim does not advance a task.",
-      );
-    }
-
-    let grounding: GroundingRouteContext;
-    try {
-      grounding = await selectGroundingRouteContext(prisma, { taskId: task.id, projectId: task.projectId });
-    } catch (error) {
-      if (error instanceof GroundingAccessError) {
-        return c.json({ error: error.code, ...(error.detail ? { message: error.detail } : {}) }, error.status);
-      }
-      throw error;
-    }
-    if (grounding.mode !== "UNPROVISIONED") {
-      return c.json(
-        {
-          error: "grounding_advance_unsupported",
-          message:
-            "task_advance does not move a Grounding-provisioned task. Its status changes run through the Grounding direct transition route (POST /api/tasks/:id/transition).",
-        },
-        409,
-      );
-    }
-
     const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
     const from = task.status;
-
-    if (!isWorkState(effectiveDefinition, from)) {
-      return c.json(
-        { error: "bad_state", message: `task_advance requires a work state (non-initial, non-terminal), got '${from}'` },
-        409,
-      );
-    }
-    if (isReviewState(effectiveDefinition, from)) {
-      return c.json(
-        {
-          error: "advance_use_finish",
-          message: `Task is in the review state '${from}'. task_advance moves a task between work stages only; the review is decided with task_finish and an outcome.`,
-          from,
-          finishTarget: null,
-          choices: [],
-        },
-        409,
-      );
-    }
-
-    const resolution = resolveAdvanceTarget(effectiveDefinition, from, requested);
-    if (!resolution.ok) {
-      const { choices } = resolution;
-      const choicesHint =
-        choices.length > 0 ? ` task_advance can move it to ${quoteList(choices)}.` : "";
-      if (resolution.reason === "finish_state") {
-        const subject =
-          resolution.requested !== null
-            ? `'${resolution.requested}' is a ${isTerminalState(effectiveDefinition, resolution.requested) ? "terminal" : "review"} state, which task_advance never moves a task into.`
-            : `'${from}' has no forward edge to another work stage.`;
-        const finishHint =
-          resolution.finishTarget !== null
-            ? ` Call task_finish, which moves the task from '${from}' to '${resolution.finishTarget}'.`
-            : ` task_finish has no edge from '${from}' either.`;
-        return c.json(
-          {
-            error: "advance_use_finish",
-            message: `${subject}${finishHint}${choicesHint}`,
-            from,
-            ...(resolution.requested !== null ? { requested: resolution.requested } : {}),
-            finishTarget: resolution.finishTarget,
-            choices,
-          },
-          409,
-        );
-      }
-      if (resolution.reason === "ambiguous") {
-        return c.json(
-          {
-            error: "advance_ambiguous",
-            message: `'${from}' has ${choices.length} forward edges to work stages (${quoteList(choices)}). Call task_advance again with to set to one of them.`,
-            from,
-            choices,
-          },
-          409,
-        );
-      }
-      if (resolution.reason === "not_forward") {
-        return c.json(
-          {
-            error: "advance_target_invalid",
-            message: `'${resolution.requested}' is not a forward edge from '${from}' to a work stage.${choicesHint || ` '${from}' has no forward edge to another work stage.`}`,
-            from,
-            requested: resolution.requested,
-            choices,
-          },
-          409,
-        );
-      }
-      return c.json(
-        {
-          error: "advance_no_forward_edge",
-          message: `'${from}' has no forward edge to another work stage, and task_finish has no edge from it either.`,
-          from,
-          choices,
-        },
-        409,
-      );
-    }
-    const targetStatus = resolution.to;
+    const decision = decideAdvance(effectiveDefinition, task, actor, requested);
+    if (!decision.ok) return c.json(decision.body, decision.status);
+    const targetStatus = decision.to;
 
     // Same gate evaluation as the work finish, on the chosen edge. The task
     // row is the whole gate context: task_advance takes no PR payload.
@@ -4406,16 +4247,9 @@ taskRouter.post("/tasks/:id/advance", async (c) => {
       payload: { from, to: targetStatus, actorType: actor.type, via: "task_advance" },
     });
 
-    const preview = workStagePreview(effectiveDefinition, targetStatus);
     return c.json({
-      kind: "work",
+      ...advanceResponseFields(effectiveDefinition, from, targetStatus),
       task: write.task,
-      previousStatus: from,
-      targetStatus,
-      // The same preview task_start returns, from the stage just reached.
-      expectedFinishState: preview.expectedFinishState,
-      effectiveGates: { finish: preview.finishGates },
-      advanceTargets: preview.advanceTargets,
       ...(gateResult.skipped.length > 0 ? { skippedGates: gateResult.skipped } : {}),
     });
   };

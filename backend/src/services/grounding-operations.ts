@@ -22,7 +22,12 @@ export const routeInputSchema = z.object({
 export function routeTransportFingerprint(transport: GroundingRouteTransport) {
   const parsed = routeTransportSchema.safeParse(transport);
   if (!parsed.success) throw new GroundingAccessError("bad_state", 409);
-  return createHash("sha256").update(canonicalGroundingJson({ routeTransport: parsed.data })).digest("hex");
+  // A task_advance's intent is the edge it asked for (its `advance` marker,
+  // see directAdvanceTransport); the status it resolved to depends on the
+  // task, so a same-key retry after the task moved on still replays. The
+  // marker keeps an advance and a /transition apart under one key.
+  const intent = parsed.data.endpoint === "transition" && "advance" in parsed.data.body ? { endpoint: parsed.data.endpoint, body: { advance: parsed.data.body.advance } } : parsed.data;
+  return createHash("sha256").update(canonicalGroundingJson({ routeTransport: intent })).digest("hex");
 }
 
 export const operationRequestSchema = z.object({

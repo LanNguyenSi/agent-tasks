@@ -474,12 +474,16 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   goes), `409 advance_ambiguous` (several forward edges and no `to`) and
   `409 advance_target_invalid` (a `to` that is not a forward edge to a work
   stage) each carry `detail.choices`, the stages `task_advance` can reach.
-  `409 grounding_advance_unsupported` (the task is Grounding-provisioned,
-  and no Grounding route carries an advance yet) names `tasks_get`, the
-  operator's Grounding transition route and `task_abandon`. A `422
-  precondition_failed` from `task_advance` where only `branchPresent` failed
-  names the draft-PR path (`task_submit_pr`) and the abandon and restart with
-  `task_start { branchName }` path.
+  `409 grounding_advance_unsupported` (legacy: only a backend older than
+  the Grounding route's advance refuses a Grounding-provisioned task this
+  way) names `tasks_get`, the operator's Grounding transition route and
+  `task_abandon`. A `422 precondition_failed` from `task_advance` where only
+  `branchPresent` failed names the draft-PR path (`task_submit_pr`) and the
+  abandon and restart with `task_start { branchName }` path. A `409
+  precondition_failed` from `task_advance` (a Grounding-provisioned task,
+  whose gate refusal names the edge's gates in its message but carries no
+  `failed[]`) names `task_submit_pr` for a branch or PR gate, then a retry
+  of `task_advance`.
 
 ## Onboarding channels by rate of change
 
@@ -529,12 +533,17 @@ only where the receiving route enforces operation keys:
   `_idempotent_replay: true`; the same key with a different payload returns
   `409` (`backend/src/services/idempotency.ts`). The Grounding GitHub router
   keys its durable operation on the same value.
-- `task_advance`: on every backend. The advance route
+- `task_advance`: on every backend. The REST advance route
   (`POST /api/tasks/:id/advance`) stores one `tool_invocations` row per
   successful call under the header key and replays the stored 2xx response
   with `_idempotent_replay: true` on a same-key retry, instead of advancing
-  a second time; the same key with a different payload returns `409`. A
-  Grounding-provisioned task is refused before any effect.
+  a second time; the same key with a different payload returns `409`. For a
+  Grounding-provisioned task the Grounding direct route keys its durable
+  operation on the same value instead and replays the stored response
+  without the `_idempotent_replay` marker; the same key with another `to`,
+  or a key first used for `/transition`, answers `409
+  grounding_operation_conflict`. An empty or malformed key is the same `400`
+  on both routes.
 - `task_finish`, `task_merge` and `task_abandon`: only for a provisioned task
   on a Grounding-configured backend. On an unconfigured backend, or for an
   unprovisioned task, the request either reaches the legacy completion

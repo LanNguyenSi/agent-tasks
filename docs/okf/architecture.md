@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-11-02T14:07:42Z
+timestamp: 2026-11-03T08:38:21Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -79,8 +79,8 @@ All state lives in one PostgreSQL database (Prisma schema at `backend/prisma/sch
 **Grounding composition**: the backend's optional per-app grounding
 dependencies are mounted before the historical task router. Authoritative
 provisioning selects the completion adapter for finish, merge and abandon, the
-direct adapter for transition, review, PATCH, respec and enrolled deletion
-checks, and an optional server-owned creation-policy adapter for selected new
+direct adapter for transition, advance, review, PATCH, respec and enrolled
+deletion checks, and an optional server-owned creation-policy adapter for selected new
 tasks/import rows. Absent selection reaches the historical compatibility
 routes. On a configured app the routers make only exact decisions: admission,
 task lookup, the caller's access, durable keyed history, enrollment mode, and

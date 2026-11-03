@@ -3,11 +3,23 @@ import { templateDataSchema } from "../lib/confidence.js";
 import { isoDatetime } from "../lib/zod-formats.js";
 import { httpUrl } from "../lib/url-guard.js";
 import { canonicalGroundingJson, GroundingAccessError, mismatch, type GroundingTask } from "./grounding-context.js";
-import type { OperationRequest } from "./grounding-operations.js";
+import type { GroundingRouteTransport, OperationRequest } from "./grounding-operations.js";
 import { directDescriptorSchema } from "./grounding-direct-context.js";
 
 const status = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 export const directTransitionSchema = z.object({ status, force: z.boolean().optional(), forceReason: z.string().max(500).optional() }).strict();
+/**
+ * A task_advance rides the transition transport: `status` is the forward edge
+ * the route resolved, and the `advance` marker carries the edge the caller
+ * asked for (null without `to`). The /transition body schema above refuses
+ * the marker, so a /transition request can never carry it, and the transport
+ * fingerprint keys an advance on the marker alone (routeTransportFingerprint).
+ */
+export const directAdvanceTransportSchema = z.object({ status, advance: z.object({ to: status.nullable() }).strict() }).strict();
+/** The advance transport; without `target`, the state-independent form the replay lookup fingerprints. */
+export function directAdvanceTransport(requested: string | null, target?: string): GroundingRouteTransport {
+  return { endpoint: "transition", body: { ...(target !== undefined ? { status: target } : {}), advance: { to: requested } } };
+}
 export const directReviewSchema = z.object({ action: z.enum(["approve", "request_changes"]), comment: z.string().max(5000).optional() }).strict();
 export const directPatchSchema = z.object({
   title: z.string().min(1).max(255).optional(), description: z.string().nullable().optional(),
@@ -27,13 +39,14 @@ export function readDirectOperation(request: OperationRequest) {
   if (request.route?.kind !== "direct") return null;
   const endpoint = request.route.transport.endpoint;
   if (!["transition", "patch", "review"].includes(endpoint)) mismatch();
-  const schema = endpoint === "transition" ? directTransitionSchema : endpoint === "review" ? directReviewSchema : directPatchSchema;
+  const advance = endpoint === "transition" && "advance" in request.route.transport.body;
+  const schema = advance ? directAdvanceTransportSchema : endpoint === "transition" ? directTransitionSchema : endpoint === "review" ? directReviewSchema : directPatchSchema;
   const parsed = schema.safeParse(request.route.transport.body);
   if (!parsed.success || !request.route.direct) throw new GroundingAccessError("bad_state", 409);
   const descriptor = directDescriptorSchema.parse(request.route.direct);
   if (descriptor.endpoint !== endpoint || (endpoint !== "review" && (parsed.data as { status?: string }).status !== descriptor.target)) mismatch();
-  const force = endpoint === "transition" && (parsed.data as z.infer<typeof directTransitionSchema>).force === true;
-  const forceReason = endpoint === "transition" ? (parsed.data as z.infer<typeof directTransitionSchema>).forceReason?.trim() : undefined;
+  const force = !advance && endpoint === "transition" && (parsed.data as z.infer<typeof directTransitionSchema>).force === true;
+  const forceReason = !advance && endpoint === "transition" ? (parsed.data as z.infer<typeof directTransitionSchema>).forceReason?.trim() : undefined;
   if (force ? !forceReason || request.overrideReason !== forceReason : request.overrideReason !== null) throw new GroundingAccessError("bad_state", 409);
-  return { descriptor, body: parsed.data, force };
+  return { descriptor, body: parsed.data, force, advance: advance ? (parsed.data as z.infer<typeof directAdvanceTransportSchema>).advance : null };
 }

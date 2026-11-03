@@ -449,14 +449,9 @@ describe("claims, scopes and access", () => {
     expect(res.status).toBe(404);
   });
 
-  it("a Grounding-provisioned task is refused with 409 grounding_advance_unsupported", async () => {
-    const taskId = await seedTask("spec", PIPELINE);
-    await db.groundingCohort.create({ data: { taskId, projectId, mode: "OFF", protected: false, provenance: "test-server" } });
-    const res = await advance(author, taskId);
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe("grounding_advance_unsupported");
-    expect((await row(taskId)).status).toBe("spec");
-  });
+  // A Grounding-provisioned task never reaches this handler in the mounted
+  // app: the Grounding direct route in front of it serves the advance
+  // (grounding-direct-advance.test.ts).
 });
 
 describe("gates and the status write are the finish route's", () => {

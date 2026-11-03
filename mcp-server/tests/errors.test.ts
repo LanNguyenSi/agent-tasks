@@ -725,11 +725,12 @@ describe("mapBackendError catalog", () => {
     expect(err.error.detail).toEqual({ choices: ["ok", `${"z".repeat(57)}...`], totalChoices: 2 });
   });
 
-  it("grounding_advance_unsupported: recipe tasks_get, the operator's Grounding transition route, or task_abandon; matched on 409 only", () => {
+  it("grounding_advance_unsupported (legacy, an older backend): recipe tasks_get, the operator's Grounding transition route, or task_abandon; matched on 409 only", () => {
     const message = "task_advance does not move a Grounding-provisioned task.";
     const err = mapBackendError(409, { error: "grounding_advance_unsupported", message }, "task_advance");
     expect(err.error.code).toBe("grounding_advance_unsupported");
     expect(err.error.message).toBe(message);
+    expect(err.error.recipe).toMatch(/^an older backend refuses to advance a Grounding-provisioned task/);
     expect(err.error.recipe).toMatch(/tasks_get/);
     expect(err.error.recipe).toMatch(/operator/);
     expect(err.error.recipe).toMatch(/task_abandon/);
@@ -752,6 +753,32 @@ describe("mapBackendError catalog", () => {
     expect(err.error.recipe).toMatch(/task_abandon and task_start again with branchName/);
     expect(err.error.allowedNext).toEqual(["task_submit_pr", "task_advance", "task_abandon", "task_start"]);
     assertAllowedNextRegistered(err, registered);
+  });
+
+  it("precondition_failed 409 from task_advance (the Grounding route's gate refusal): message passed through, task_submit_pr then task_advance, no detail", () => {
+    const message = "Transition blocked: a workflow gate on plan -> implement is not met (this edge requires branchPresent)";
+    const err = mapBackendError(409, { error: "precondition_failed", message }, "task_advance");
+    expect(err.error.code).toBe("precondition_failed");
+    expect(err.error.message).toBe(message);
+    expect(err.error.recipe).toBe(
+      "a gate on this edge is not met: for branchPresent or prPresent, push a commit, open a draft PR (`gh pr create --draft`) and call task_submit_pr, then retry task_advance; for ciGreen or prMerged wait for CI or the merge",
+    );
+    expect(err.error.recipe.length).toBeLessThanOrEqual(240);
+    expect(err.error.allowedNext).toEqual(["task_submit_pr", "task_advance", "tasks_get"]);
+    expect(err.error.detail).toBeUndefined();
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("precondition_failed 409: a bare body from task_advance gets this module's message; another verb, or no verb, keeps the generic degrade", () => {
+    const bare = mapBackendError(409, { error: "precondition_failed" }, "task_advance");
+    expect(bare.error.code).toBe("precondition_failed");
+    expect(bare.error.message).toBe("a workflow gate on this edge is not yet satisfied");
+    expect(bare.error.allowedNext).toEqual(["task_submit_pr", "task_advance", "tasks_get"]);
+    for (const verb of ["task_finish", undefined] as const) {
+      const other = mapBackendError(409, { error: "precondition_failed" }, verb);
+      expect(other.error.message).toBe("request failed with status 409");
+      expect(other.error.recipe).toBe("call workflow_primer for the full lifecycle reference and today's known traps");
+    }
   });
 
   it("precondition_failed from task_advance keeps the generic recipe when another gate fails too, and the branch-only recipe is task_advance's alone", () => {
@@ -846,6 +873,7 @@ describe("mapBackendError catalog", () => {
     task_abandon: "no detail sent; this verb is refused for: a missing tasks:claim scope, project write access, or holding neither the work claim nor the review claim (see workflow_primer)",
     pull_requests_create: "no detail sent; this verb is refused for: a missing tasks:update or github:pr_create scope, project access, or no allowAgentPrCreate consent from a team member with a connected GitHub account (see workflow_primer)",
     task_grounding_attempt_create: "no detail sent; this verb is refused for: a missing tasks:transition scope, project write access, neither work nor review claim held, or (intent merge) the merge gates (see workflow_primer)",
+    task_advance: "no detail sent; this verb is refused for: the edge's requiredRole (a Grounding-provisioned task names no role), write access lost under the task lock, or an Idempotency-Key another caller already used on this task (see workflow_primer)",
   };
   it.each(Object.entries(NO_DETAIL))("grounding 403: a body with no message gets %s's own precondition list, exactly", (verb, recipe) => {
     const err = mapBackendError(403, { error: "forbidden" }, verb);
@@ -2261,6 +2289,10 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
     {
       label: "grounding_advance_unsupported",
       err: mapBackendError(409, { error: "grounding_advance_unsupported", message: "x" }, "task_advance"),
+    },
+    {
+      label: "precondition_failed (task_advance, 409 Grounding gate refusal)",
+      err: mapBackendError(409, { error: "precondition_failed", message: "x" }, "task_advance"),
     },
     {
       label: "precondition_failed (task_advance, branch only)",
