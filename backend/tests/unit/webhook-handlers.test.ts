@@ -477,18 +477,54 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
     expect(mockTaskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("two bound projects, only one has the task: the audit row is written for the project without it", async () => {
+  it("two bound projects, only one has the open task: the other project writes no warn and no audit row", async () => {
     mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }, { id: "proj-2", soloMode: false }]);
-    mockTaskFindMany.mockImplementation(async (args: { where: { projectId: string } }) =>
-      args.where.projectId === "proj-1" ? [makeTask({ status: "in_progress" })] : [],
+    // Only the open-task lookup finds it; the echo lookup (an OR over the strong bindings) must not be what silences the other project.
+    mockTaskFindMany.mockImplementation(async (args: { where: { projectId: string; OR?: unknown } }) =>
+      !args.where.OR && args.where.projectId === "proj-1" ? [makeTask({ status: "in_progress" })] : [],
     );
 
     await handlePullRequestEvent(delivery("closed", true));
 
-    expect(unmatchedAudit().map(([arg]) => (arg as { projectId?: string }).projectId)).toEqual(["proj-2"]);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toMatchObject({ projectId: "proj-2", reason: "no_task" });
+    expect(warn).not.toHaveBeenCalled();
+    expect(unmatchedAudit()).toHaveLength(0);
     expect(mockCommentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("two bound projects, the match is in the later one: the earlier one stays silent too", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }, { id: "proj-2", soloMode: false }]);
+    // Only the open-task lookup finds it; the echo lookup (an OR over the strong bindings) must not be what silences the other project.
+    mockTaskFindMany.mockImplementation(async (args: { where: { projectId: string; OR?: unknown } }) =>
+      !args.where.OR && args.where.projectId === "proj-2" ? [makeTask({ projectId: "proj-2", status: "in_progress" })] : [],
+    );
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(unmatchedAudit()).toHaveLength(0);
+  });
+
+  it("two bound projects, only one holds the echo of an earlier merge: the other stays silent", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }, { id: "proj-2", soloMode: false }]);
+    mockTaskFindMany.mockImplementation(async (args: { where: { projectId: string; OR?: unknown } }) =>
+      args.where.OR && args.where.projectId === "proj-2" ? [{ id: "task-9" }] : [],
+    );
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(unmatchedAudit()).toHaveLength(0);
+  });
+
+  it("two bound projects, none matches: one warn and one audit row per bound project, each naming its project", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }, { id: "proj-2", soloMode: false }]);
+    mockTaskFindMany.mockResolvedValue([]);
+
+    await handlePullRequestEvent(delivery("closed", true));
+
+    expect(warn.mock.calls.map(([arg]: unknown[]) => (arg as { projectId?: string }).projectId)).toEqual(["proj-1", "proj-2"]);
+    expect(unmatchedAudit().map(([arg]) => (arg as { projectId?: string }).projectId)).toEqual(["proj-1", "proj-2"]);
+    expect(unmatchedAudit().every(([arg]) => (arg as { payload: { reason: string } }).payload.reason === "no_task")).toBe(true);
   });
 
   it("a matching open task: no unmatched warn and no unmatched audit row", async () => {
@@ -510,22 +546,96 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
     expect(unmatchedAudit()).toHaveLength(0);
   });
 
-  it("the unfiltered lookup covers every binding the open lookup uses (prNumber, prUrl, branch, title)", async () => {
-    mockTaskFindMany.mockResolvedValue([]);
+  describe("echo of an earlier merge: only the strong bindings suppress the diagnostics", () => {
+    type Row = { prNumber: number | null; prUrl: string | null; branchName: string | null; title: string; deliverableRepo?: string | null };
+    type OrClause = {
+      prNumber?: number;
+      prUrl?: string;
+      branchName?: string;
+      title?: { contains: string };
+      OR?: Array<{ deliverableRepo: null | { equals: string; mode?: string } }>;
+    };
+    const repoScopeHolds = (c: OrClause, row: Row) =>
+      (c.OR ?? []).some((r) =>
+        r.deliverableRepo === null ? (row.deliverableRepo ?? null) === null : r.deliverableRepo.mode === "insensitive"
+          ? (row.deliverableRepo ?? "").toLowerCase() === r.deliverableRepo.equals.toLowerCase()
+          : row.deliverableRepo === r.deliverableRepo.equals,
+      );
+    // The open lookups come back empty; the unfiltered OR lookup is evaluated against one terminal task row.
+    const withTerminalTask = (row: Row) =>
+      mockTaskFindMany.mockImplementation(async (args: { where: { OR?: OrClause[] } }) => {
+        if (!args.where.OR) return [];
+        const hit = args.where.OR.some(
+          (c) =>
+            (c.prNumber !== undefined && c.prNumber === row.prNumber && repoScopeHolds(c, row)) ||
+            (c.prUrl !== undefined && c.prUrl === row.prUrl) ||
+            (c.branchName !== undefined && c.branchName === row.branchName) ||
+            (c.title !== undefined && row.title.includes(c.title.contains)),
+        );
+        return hit ? [{ id: "task-1" }] : [];
+      });
+    const none: Row = { prNumber: null, prUrl: null, branchName: null, title: "Unrelated" };
 
-    await handlePullRequestEvent(delivery("closed", true));
-
-    const orCall = mockTaskFindMany.mock.calls.map(([arg]) => arg as { where: { OR?: unknown[] }; take?: number }).find((arg) => arg.where.OR);
-    expect(orCall?.where).toMatchObject({
-      projectId: "proj-1",
-      OR: [
-        { prNumber: 42 },
-        { prUrl: "https://github.com/test/repo/pull/42" },
-        { branchName: "fix/bug" },
-        { title: { contains: "[PR #42]" } },
-      ],
+    it("a done task with the same prNumber: no warn, no audit row", async () => {
+      withTerminalTask({ ...none, prNumber: 42 });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).not.toHaveBeenCalled();
+      expect(unmatchedAudit()).toHaveLength(0);
     });
-    expect(orCall?.take).toBe(1);
+
+    it("a done task with the same prNumber whose deliverableRepo is another repo: warns and audits", async () => {
+      withTerminalTask({ ...none, prNumber: 42, deliverableRepo: "acme/other" });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(unmatchedAudit()).toHaveLength(1);
+    });
+
+    it("a done task with the same prNumber whose deliverableRepo is the repo in another letter case: no warn, no audit row", async () => {
+      withTerminalTask({ ...none, prNumber: 42, deliverableRepo: "Test/Repo" });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).not.toHaveBeenCalled();
+      expect(unmatchedAudit()).toHaveLength(0);
+    });
+
+    it("a done task with the same prUrl: no warn, no audit row", async () => {
+      withTerminalTask({ ...none, prUrl: "https://github.com/test/repo/pull/42" });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).not.toHaveBeenCalled();
+      expect(unmatchedAudit()).toHaveLength(0);
+    });
+
+    it("a done task that only shares the branch name (a reused branch): warns and audits", async () => {
+      withTerminalTask({ ...none, branchName: "fix/bug" });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(unmatchedAudit()).toHaveLength(1);
+    });
+
+    it("a done task that only carries the [PR #N] title: warns and audits", async () => {
+      withTerminalTask({ ...none, title: "Old work [PR #42]" });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(unmatchedAudit()).toHaveLength(1);
+    });
+
+    it("a done task with none of the bindings: warns and audits", async () => {
+      withTerminalTask(none);
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(unmatchedAudit()).toHaveLength(1);
+    });
+
+    it("the unfiltered lookup is scoped to the project and asks for the repo-scoped prNumber and the prUrl only", async () => {
+      mockTaskFindMany.mockResolvedValue([]);
+      await handlePullRequestEvent(delivery("closed", true));
+      const orCall = mockTaskFindMany.mock.calls.map(([arg]) => arg as { where: { OR?: unknown[] }; take?: number }).find((arg) => arg.where.OR);
+      expect(orCall?.where).toEqual({ projectId: "proj-1", OR: [
+          { prNumber: 42, OR: [{ deliverableRepo: null }, { deliverableRepo: { equals: "test/repo", mode: "insensitive" } }] },
+          { prUrl: "https://github.com/test/repo/pull/42" },
+        ],
+      });
+      expect(orCall?.take).toBe(1);
+    });
   });
 
   it.each([

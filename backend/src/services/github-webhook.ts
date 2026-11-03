@@ -171,17 +171,27 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
  * delivery for such a task is the normal echo of a merge agent-tasks did
  * itself (or of a task that was closed by hand), not a delivery that matched
  * nothing, so the unmatched-merge diagnostics must not fire for it.
+ *
+ * Only the strong bindings count: the exact PR URL, and the PR number when
+ * the task's PR lives in the delivery's repo. A project can hold a task whose
+ * PR belongs to another repo (`deliverableRepo`), and PR numbers repeat across
+ * repos, so the number arm needs `deliverableRepo` unset (the PR is then in the
+ * project's own repo) or equal to the delivery's repo, case-insensitively. A
+ * branch name or a `[PR #N]` title is reusable (a later PR can reuse a branch
+ * name that an earlier, finished task carried), so those would hide a real
+ * `no_task`.
  */
-async function hasUnopenedTaskForPr(projectId: string, hint: PrBindingHint): Promise<boolean> {
-  const { prNumber, prUrl, headBranch } = hint;
+async function hasUnopenedTaskForPr(projectId: string, hint: PrBindingHint, repoFullName: string): Promise<boolean> {
+  const { prNumber, prUrl } = hint;
   const rows = await prisma.task.findMany({
     where: {
       projectId,
       OR: [
-        { prNumber },
+        {
+          prNumber,
+          OR: [{ deliverableRepo: null }, { deliverableRepo: githubRepoEqualsInsensitive(repoFullName) }],
+        },
         ...(prUrl ? [{ prUrl }] : []),
-        ...(headBranch ? [{ branchName: headBranch }] : []),
-        { title: { contains: `[PR #${prNumber}]` } },
       ],
     },
     select: { id: true },
@@ -518,6 +528,20 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
     headBranch: payload.pull_request.head?.ref,
   };
 
+  // A merged delivery is "unmatched" only when no bound project matched it:
+  // the open-task lookup (or the echo of an earlier merge) of any one project
+  // accounts for the merge, so the bound projects stay silent. Same rule as
+  // the grounding webhook service. The lookups are done once, up front.
+  const mergedTasks = new Map<string, Awaited<ReturnType<typeof findTasksByPr>>>();
+  let mergeHandled = false;
+  if (payload.action === "closed" && payload.pull_request.merged) {
+    for (const project of projects) {
+      const found = await findTasksByPr(project.id, hint);
+      mergedTasks.set(project.id, found);
+      if (found.length > 0 || (await hasUnopenedTaskForPr(project.id, hint, repoFullName))) mergeHandled = true;
+    }
+  }
+
   for (const project of projects) {
     if (payload.action === "opened") {
       // Backfill binding fields on existing tasks; do NOT create new tasks.
@@ -543,7 +567,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         });
       }
     } else if (payload.action === "closed") {
-      const tasks = await findTasksByPr(project.id, hint);
+      const tasks = mergedTasks.get(project.id) ?? (await findTasksByPr(project.id, hint));
 
       if (payload.pull_request.merged) {
         // Policy: PR merged → terminal state (AUTONOMOUS) OR → review-like
@@ -561,7 +585,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         // it is always a state of that workflow; a workflow without a
         // review-like state gets no confirmation-required transition.
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
-        if (tasks.length === 0 && !(await hasUnopenedTaskForPr(project.id, hint))) {
+        if (!mergeHandled) {
           await reportUnmatchedMerge({
             repo: repoFullName,
             prNumber,
