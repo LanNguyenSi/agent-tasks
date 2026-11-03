@@ -32,6 +32,23 @@ function routeError(error: unknown, c: Context<{ Variables: AppVariables }>, des
   return c.json({ error: "grounding_verification_unavailable" }, 503);
 }
 
+/** The REST handlers' refusals of a caller without project access and of a read-only caller (routes/tasks.ts). */
+const NO_PROJECT_ACCESS = "Access denied to this project";
+const READ_ONLY_ACCESS = "Requires write access (PROJECT_VIEWER is read-only)";
+
+/**
+ * The Idempotency-Key header as the REST /advance handler reads it: an absent
+ * header is no key, and any present value, the empty string included, must
+ * match advanceIdempotencyKeySchema or the request is refused with that
+ * handler's 400 before anything is written.
+ */
+function idempotencyKey(c: Context<{ Variables: AppVariables }>): { key: string | null } | { refusal: Response } {
+  const header = c.req.header("Idempotency-Key");
+  if (header === undefined) return { key: null };
+  const parsed = advanceIdempotencyKeySchema.safeParse(header);
+  return parsed.success ? { key: parsed.data } : { refusal: c.json({ error: "validation_error", message: "Invalid Idempotency-Key header" }, 400) };
+}
+
 /** Only authoritative enrollment selects these adapters; legacy metadata never selects a policy. */
 export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDependencies = { db: prisma }) {
   const router = new Hono<{ Variables: AppVariables }>();
@@ -42,20 +59,43 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
       try {
         const actor = c.get("actor");
         if (!actor) return c.json({ error: "unauthorized" }, 401);
+        // The REST handler's agent refusal for this endpoint: DELETE refuses
+        // every agent, the others name the scope they require. Every REST
+        // handler but PATCH answers it before the task lookup; PATCH answers
+        // it after the access check.
+        const scope = endpoint === "respec" || endpoint === "patch" ? "tasks:update" : "tasks:transition";
+        const scopeRefusal = actor.type !== "agent" ? null : endpoint === "delete" ? "Agents cannot delete tasks" : actor.scopes.includes(scope) ? null : `Missing scope: ${scope}`;
+        const scopeFirst = endpoint === "patch" ? null : scopeRefusal;
         const taskId = c.req.param("id")!;
         const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-        if (!task) throw new GroundingAccessError("not_found", 404);
-        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
+        // A missing task and a caller without write access are refused here,
+        // before the enrollment is read, in the REST handler's order and
+        // wording, so the answer is the same for every task. An unprovisioned
+        // task the caller can write reaches the REST handler, which answers
+        // its scope and body refusals itself; a provisioned one gets the same
+        // scope refusal after the mode selection below.
+        if (!task) return scopeFirst ? forbidden(c, scopeFirst) : notFound(c);
+        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) {
+          // DELETE checks write access alone, so a non-member reads the viewer's refusal there.
+          return forbidden(c, scopeFirst ?? (endpoint !== "delete" && !await hasProjectAccess(actor, task.projectId, deps.db) ? NO_PROJECT_ACCESS : READ_ONLY_ACCESS));
+        }
         const mode = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         if (mode.mode === "UNPROVISIONED") return next();
+        if (scopeRefusal) return forbidden(c, scopeRefusal);
         if (endpoint === "delete") { await rejectEnrolledDelete(deps.db, taskId, actor); return next(); }
-        if (actor.type === "agent" && !actor.scopes.includes(endpoint === "respec" || endpoint === "patch" ? "tasks:update" : "tasks:transition")) throw new GroundingAccessError("forbidden", 403);
         const raw: unknown = await c.req.json().catch(() => null);
         if (endpoint === "respec") return c.json(await mutateDirectTask(deps.db, task, actor, "respec", directRespecSchema.parse(raw)));
         const body = (endpoint === "patch" ? actor.type === "agent" ? directAgentPatchSchema : directPatchSchema : endpoint === "review" ? directReviewSchema : directTransitionSchema).parse(raw);
         const transport: GroundingRouteTransport = { endpoint, body };
-        const keyHeader = c.req.header("Idempotency-Key");
-        const key = keyHeader ? z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).parse(keyHeader) : null;
+        // A status PATCH that restores an abandoned task is handed to the REST
+        // handler below (the no-op and backlog cases answer before it), and
+        // REST reads no key, so an empty or invalid key is ignored there as on
+        // REST. A valid key still looks up this route's own history first.
+        const patchStatus = endpoint === "patch" ? (body as { status?: string }).status : undefined;
+        const restoresAbandoned = task.status === "abandoned" && patchStatus !== undefined && patchStatus !== task.status && patchStatus !== "backlog";
+        const header = idempotencyKey(c);
+        if ("refusal" in header) return restoresAbandoned ? next() : header.refusal;
+        const { key } = header;
         if (key && deps.service) {
           const history = await deps.service.lookupRouteOperation(taskId, actor, key, transport);
           if (history) {
@@ -73,7 +113,7 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         // decision above rests on a read taken before the task lock, so a task
         // that turns abandoned in between is reopened by the service below;
         // the observer passed to dispose() covers that race.
-        if (endpoint === "patch" && task.status === "abandoned") return next();
+        if (restoresAbandoned) return next();
         if (!deps.service) unavailable();
         // A backlog discard (backlog -> abandoned) lands in dispose() below and
         // writes no finalDisposition, like the REST discard: a backlog task has
@@ -119,17 +159,16 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
       const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
       if (!task) return notFound(c);
       if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) {
-        return forbidden(c, await hasProjectAccess(actor, task.projectId, deps.db) ? "Requires write access (PROJECT_VIEWER is read-only)" : "Access denied to this project");
+        return forbidden(c, await hasProjectAccess(actor, task.projectId, deps.db) ? READ_ONLY_ACCESS : NO_PROJECT_ACCESS);
       }
       const mode = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
       if (mode.mode === "UNPROVISIONED") return next();
       const parsed = advanceTaskSchema.safeParse(await c.req.json().catch(() => ({})));
       if (!parsed.success) return c.json({ error: "bad_request", message: parsed.error.message }, 400);
       const requested = parsed.data.to ?? null;
-      const keyHeader = c.req.header("Idempotency-Key");
-      const keyCheck = keyHeader === undefined ? undefined : advanceIdempotencyKeySchema.safeParse(keyHeader);
-      if (keyCheck?.success === false) return c.json({ error: "validation_error", message: "Invalid Idempotency-Key header" }, 400);
-      const key = keyCheck?.success ? keyCheck.data : null;
+      const header = idempotencyKey(c);
+      if ("refusal" in header) return header.refusal;
+      const { key } = header;
       if (key && deps.service) {
         const history = await deps.service.lookupRouteOperation(taskId, actor, key, directAdvanceTransport(requested));
         if (history) {

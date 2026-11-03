@@ -153,8 +153,13 @@ the previous behavior and follows the redirect.
 Every Grounding router checks the caller's access before it reads or locks any
 Grounding state, and answers a caller without access the same way whatever the
 task's or project's Grounding state: the GitHub create and merge routes with
-the legacy handler's own `404` or `403`, the direct, attempt and migration
-routes with one `403 {"error":"forbidden"}`, the completion routes with the
+the legacy handler's own `404` or `403`, the direct task routes (transition,
+review, PATCH, respec, DELETE and `/advance`) with the REST handler's own
+`404` or `403` (`Access denied to this project` for a caller without project
+access, `Requires write access (PROJECT_VIEWER is read-only)` for a read-only
+one; DELETE checks write access alone and answers a caller without project
+access with the read-only wording too), the attempt and migration routes with
+one `403 {"error":"forbidden"}`, the completion routes with the
 same `403` carrying `message: "No write access to this project"`, and the
 creation router
 with the legacy creator's own validation and `403`, so whether a project is
