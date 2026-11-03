@@ -60,7 +60,10 @@
 // advance_target_invalid (409, task_advance could not pick a forward edge to
 // a work stage) -- see advanceUseFinishError and its siblings below -- and
 // grounding_advance_unsupported (409, task_advance on a Grounding-provisioned
-// task) -- see groundingAdvanceUnsupportedError. Plus recipe branches for the grounding write
+// task, legacy: only a backend older than the provisioned task_advance sends
+// it) -- see groundingAdvanceUnsupportedError. Plus a 409 precondition_failed
+// from task_advance (the Grounding route's gate refusal on a provisioned task,
+// which names no failing rule) -- see groundedAdvancePreconditionError. Plus recipe branches for the grounding write
 // verbs' (pull_requests_create, pull_requests_merge, task_merge,
 // task_finish, task_abandon, task_grounding_attempt_create) 403 `forbidden`:
 // re-mint guidance for a message naming a missing `github:*` scope, that
@@ -950,20 +953,39 @@ function advanceTargetInvalidError(body: BackendErrorBody, message: string): Tea
   });
 }
 
-// grounding_advance_unsupported: task_advance on a Grounding-provisioned task.
-// The Grounding routers own those tasks' status writes, and none of them
-// carries an advance transport yet, so the backend refuses rather than write
-// the status outside the Grounding mutation protocol. No MCP verb on the
-// default surface moves such a task between stages (the REST route behind
-// the legacy tasks_transition does), so the honest recipe is to read the
-// task, have the operator move the stage, or give the claim up.
+// grounding_advance_unsupported (legacy): task_advance on a Grounding-
+// provisioned task, refused by a backend older than the one whose Grounding
+// direct route serves the advance. A current backend never sends it; the entry
+// stays for an mcp-server that talks to such an older backend, where no MCP
+// verb on the default surface moves the task between stages, so the honest
+// recipe is to read the task, have the operator move the stage, or give the
+// claim up.
 function groundingAdvanceUnsupportedError(message: string): TeachingError {
   return buildTeachingError({
     code: "grounding_advance_unsupported",
     message,
     recipe:
-      "this task is Grounding-provisioned and cannot be advanced here: call tasks_get for its stage, ask the operator to move it through the Grounding direct transition route, or call task_abandon to release it",
+      "an older backend refuses to advance a Grounding-provisioned task: call tasks_get for its stage, ask the operator to move it through the Grounding direct transition route, or call task_abandon to release it",
     allowedNext: ["tasks_get", "task_abandon"],
+  });
+}
+
+// precondition_failed (409) from task_advance: a Grounding-provisioned task's
+// advance runs through the Grounding direct route, whose gate refusal is a 409
+// that names the edge and its configured gates in `message` but carries no
+// `failed[]` (the REST route's 422 does, see preconditionFailedError). The
+// failing rule is therefore unknown here, so the recipe covers the gates the
+// coding-agent template puts on its edges: the branch and PR gates, which
+// task_submit_pr satisfies, and the GitHub gates, which only time clears.
+function groundedAdvancePreconditionError(body: BackendErrorBody): TeachingError {
+  return buildTeachingError({
+    code: "precondition_failed",
+    // A backend that sent no message gets this module's own wording rather
+    // than the generic "request failed with status 409".
+    message: typeof body.message === "string" && body.message.length > 0 ? body.message : "a workflow gate on this edge is not yet satisfied",
+    recipe:
+      "a gate on this edge is not met: for branchPresent or prPresent, push a commit, open a draft PR (`gh pr create --draft`) and call task_submit_pr, then retry task_advance; for ciGreen or prMerged wait for CI or the merge",
+    allowedNext: ["task_submit_pr", "task_advance", "tasks_get"],
   });
 }
 
@@ -987,10 +1009,10 @@ function groundingAdvanceUnsupportedError(message: string): TeachingError {
 //    or a deliberately bare no-access answer) gets that verb's own list of
 //    possible preconditions as the recipe, from GROUNDING_FORBIDDEN_
 //    PRECONDITIONS. The table is keyed by the verbContext the tool passes
-//    to wrap(); its keys are the six verbs whose Grounding routes answer
+//    to wrap(); its keys are the seven verbs whose Grounding routes answer
 //    this 403 (task_merge, pull_requests_merge, task_finish, task_abandon,
-//    pull_requests_create, task_grounding_attempt_create), each of which
-//    passes its own name. Each list names only the preconditions that
+//    pull_requests_create, task_grounding_attempt_create, task_advance),
+//    each of which passes its own name. Each list names only the preconditions that
 //    verb's route can refuse on. A verbContext outside the table (such as
 //    task_grounding_receipt_upload), or none, makes no causal claim: the
 //    result falls through to the generic degrade.
@@ -1033,6 +1055,8 @@ const GROUNDING_FORBIDDEN_PRECONDITIONS: Record<string, string> = {
     "a missing tasks:update or github:pr_create scope, project access, or no allowAgentPrCreate consent from a team member with a connected GitHub account",
   task_grounding_attempt_create:
     "a missing tasks:transition scope, project write access, neither work nor review claim held, or (intent merge) the merge gates",
+  task_advance:
+    "the edge's requiredRole (a Grounding-provisioned task names no role), write access lost under the task lock, or an Idempotency-Key another caller already used on this task",
 };
 
 function groundingForbiddenError(body: BackendErrorBody, message: string, verbContext?: string): TeachingError | undefined {
@@ -1840,6 +1864,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 422 && code === "precondition_failed") {
     return preconditionFailedError(body, verbContext);
+  }
+  if (status === 409 && code === "precondition_failed" && verbContext === "task_advance") {
+    return groundedAdvancePreconditionError(body);
   }
   if (status === 422 && code === "low_confidence") {
     return lowConfidenceError(body, message);

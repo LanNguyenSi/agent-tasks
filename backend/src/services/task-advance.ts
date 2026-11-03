@@ -33,6 +33,17 @@ export const advanceTaskSchema = z.object({
 });
 
 /**
+ * The message of the Grounding direct route's 409 precondition_failed for an
+ * advance. That refusal does not say which rule failed (the REST handler's
+ * 422 lists them in `failed`), so the message names the edge and the gates
+ * configured on it.
+ */
+export function advanceGateRefusalMessage(def: WorkflowDefinitionShape, from: string, to: string): string {
+  const gates = gatesForTransition(def, from, to);
+  return `Transition blocked: a workflow gate on ${from} -> ${to} is not met${gates.length > 0 ? ` (this edge requires ${gates.join(", ")})` : ""}`;
+}
+
+/**
  * Preview the gates configured on a transition edge, distinguishing "edge
  * exists with no `requires`" ([]) from "edge does not exist" (null).
  *

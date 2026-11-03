@@ -16,7 +16,10 @@ import { GroundingDemoteRefused, resolveDirectGroundingTarget } from "../service
 import { demoteSourceStatusMessage } from "../services/task-demote.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
 import { clearDisposition } from "../services/confidence-telemetry.js";
-import { advanceTaskSchema, decideAdvance, GroundingAdvanceRefused } from "../services/task-advance.js";
+import { advanceGateRefusalMessage, advanceTaskSchema, decideAdvance, GroundingAdvanceRefused } from "../services/task-advance.js";
+import { GroundingDecisionError } from "../services/grounding-transaction.js";
+import { hasProjectAccess } from "../services/team-access.js";
+import { forbidden, notFound } from "../middleware/error.js";
 
 function routeError(error: unknown, c: Context<{ Variables: AppVariables }>, descriptor?: GroundingDirectDescriptor) {
   if (error instanceof z.ZodError) return c.json({ error: "validation_error", details: error.issues }, 400);
@@ -102,16 +105,24 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
   // An advance target is never review-like or terminal, so it is always a
   // disposition and never needs a receipt.
   router.post("/tasks/:id/advance", async (c, next) => {
+    // Set once the edge is chosen: the Grounding gate refusal names no rule,
+    // so the 409 precondition_failed below carries this message instead.
+    let gateRefusal: string | undefined;
     try {
       const actor = c.get("actor");
       if (!actor) return c.json({ error: "unauthorized" }, 401);
+      // Scope, existence and access answer in the REST handler's order and
+      // wording, so these refusals read the same for every task, provisioned
+      // or not, although they are answered before next().
+      if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) return c.json({ error: "forbidden", message: "Missing scope: tasks:transition" }, 403);
       const taskId = c.req.param("id")!;
       const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-      if (!task) throw new GroundingAccessError("not_found", 404);
-      if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
+      if (!task) return notFound(c);
+      if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) {
+        return forbidden(c, await hasProjectAccess(actor, task.projectId, deps.db) ? "Requires write access (PROJECT_VIEWER is read-only)" : "Access denied to this project");
+      }
       const mode = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
       if (mode.mode === "UNPROVISIONED") return next();
-      if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) return c.json({ error: "forbidden", message: "Missing scope: tasks:transition" }, 403);
       const parsed = advanceTaskSchema.safeParse(await c.req.json().catch(() => ({})));
       if (!parsed.success) return c.json({ error: "bad_request", message: parsed.error.message }, 400);
       const requested = parsed.data.to ?? null;
@@ -128,11 +139,15 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
       const { def } = await groundingWorkflow(deps.db, task);
       const decision = decideAdvance(def, task, actor, requested ?? undefined);
       if (!decision.ok) return c.json(decision.body, decision.status);
+      gateRefusal = advanceGateRefusalMessage(def, task.status, decision.to);
       const direct: GroundingDirectDescriptor = { version: 1, endpoint: "transition", target: decision.to };
       const input: OperationInput = { action: "transition", route: { kind: "direct", transport: directAdvanceTransport(requested, decision.to), direct } };
       const result = await deps.service.dispose(taskId, actor, key ?? randomUUID(), input);
       return c.json(z.object({ route: z.record(z.string(), z.unknown()) }).parse(result).route);
-    } catch (error) { return routeError(error, c); }
+    } catch (error) {
+      if (gateRefusal !== undefined && error instanceof GroundingDecisionError && error.code === "precondition_failed") return c.json({ error: "precondition_failed", message: gateRefusal }, 409);
+      return routeError(error, c);
+    }
   });
   return router;
 }

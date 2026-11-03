@@ -9,6 +9,10 @@
  *   - the response and every refusal (work claim, advance_use_finish,
  *     advance_ambiguous, advance_target_invalid, advance_no_forward_edge,
  *     bad_state) equal the REST handler's answer for an unprovisioned twin;
+ *   - the edge's workflow gates and requiredRole hold (409 precondition_failed
+ *     naming the edge, a bare 403), with no operation written;
+ *   - a missing task, a missing scope and a caller without (write) access get
+ *     the REST handler's bodies, whether or not the task is provisioned;
  *   - the claim check and the edge choice run again under the task lock;
  *   - an Idempotency-Key replays the stored response, refuses a different
  *     body, and never crosses between /advance and /transition;
@@ -252,6 +256,84 @@ describe("the same answer as the REST handler", () => {
     expect(grounded.body.error).toBe("bad_request");
     expect(grounded.body).toEqual(legacy.body);
     expect(await f.snapshot()).toEqual(before);
+  });
+});
+
+describe("workflow gates and roles on the edge", () => {
+  it("plan -> implement without a branch: 409 precondition_failed naming the edge, no operation, nothing written (the REST twin answers 422)", async () => {
+    await setTask(f.taskId, { status: "plan", branchName: null });
+    const plain = await twin("plan", { branchName: null });
+    const before = await f.snapshot();
+    const grounded = await advance(f.taskId);
+    const legacy = await advance(plain);
+    expect(grounded.status).toBe(409);
+    expect(grounded.body).toEqual({ error: "precondition_failed", message: "Transition blocked: a workflow gate on plan -> implement is not met (this edge requires branchPresent)" });
+    expect(legacy.status).toBe(422);
+    expect(legacy.body.failed.map((r: any) => r.rule)).toEqual(["branchPresent"]);
+    expect(await operations(f.taskId)).toEqual([]);
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  it("an edge whose requiredRole the caller lacks: a bare 403, no operation, nothing written (the REST twin names the role)", async () => {
+    await useWorkflow({ ...codingAgent, transitions: codingAgent.transitions.map(t => (t.from === "spec" && t.to === "plan" ? { ...t, requiredRole: "ADMIN" } : t)) });
+    const plain = await twin("spec");
+    const before = await f.snapshot();
+    const grounded = await advance(f.taskId);
+    const legacy = await advance(plain);
+    expect(grounded.status).toBe(403);
+    expect(grounded.body).toEqual({ error: "forbidden" });
+    expect(legacy.status).toBe(403);
+    expect(legacy.body).toEqual({ error: "forbidden", message: "Requires role: ADMIN" });
+    expect(await operations(f.taskId)).toEqual([]);
+    expect(await f.snapshot()).toEqual(before);
+  });
+});
+
+describe("refusals before the enrollment is read keep the REST bodies", () => {
+  it("a task that does not exist: 404 Resource not found", async () => {
+    const res = await advance(randomUUID());
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "not_found", message: "Resource not found" });
+  });
+
+  it("an agent token without tasks:transition on a task that does not exist: the scope refusal comes first, as in the REST handler", async () => {
+    await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: ["tasks:read", "tasks:claim"] } });
+    const res = await advance(randomUUID());
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "forbidden", message: "Missing scope: tasks:transition" });
+  });
+
+  it("an unprovisioned task in another team's project: 403 Access denied to this project, nothing written", async () => {
+    const teamId = randomUUID();
+    const projectId = randomUUID();
+    const taskId = randomUUID();
+    await store.db.team.create({ data: { id: teamId, name: "Elsewhere", slug: `elsewhere-${teamId}` } });
+    await store.db.project.create({ data: { id: projectId, teamId, name: "Elsewhere", slug: randomUUID() } });
+    await store.db.task.create({ data: { id: taskId, projectId, title: "Foreign", status: "spec", createdByAgentId: ids.agent, ...claimedBy(ids.agent) } });
+    const res = await advance(taskId);
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "forbidden", message: "Access denied to this project" });
+    expect((await store.db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("spec");
+  });
+
+  it.each(["provisioned", "unprovisioned"] as const)("a project viewer on a %s task: 403 Requires write access, answered by the Grounding route", async kind => {
+    const viewer = randomUUID();
+    await store.db.user.create({ data: { id: viewer, login: `viewer-${viewer}` } });
+    await store.db.projectMember.create({ data: { projectId: f.projectId, userId: viewer, role: "PROJECT_VIEWER", invitedById: ids.user } });
+    const taskId = kind === "provisioned" ? f.taskId : await twin("spec");
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", async (c, next) => {
+      c.set("actor", { type: "human", userId: viewer });
+      c.set("groundingRemoteTargetGuard", null);
+      await next();
+    });
+    const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
+    app.route("/api", createGroundingDirectTaskRouter({ db: store.db, service: f.service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }));
+    app.post("/api/tasks/:id/advance", c => c.json({ error: "fell_through" }, 418));
+    const res = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": `k-${randomUUID()}` }, body: "{}" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "forbidden", message: "Requires write access (PROJECT_VIEWER is read-only)" });
+    expect((await store.db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("spec");
   });
 });
 
