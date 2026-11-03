@@ -949,3 +949,5 @@ Re-verified after the Grounding routes and services gave their 403 refusals a `m
 ## 2026-11-03 (governance-merge.md: unmatched merged-PR diagnostics across bound projects)
 
 Re-verified `governance-merge.md` after `backend/src/services/github-webhook.ts` changed: `handlePullRequestEvent` looks a merged PR up in every bound project first and writes the `no_task` warn and `pr_merged_unmatched` audit rows (still one per bound project, schema unchanged) only when none matched, and `hasUnopenedTaskForPr` counts only `prNumber` and exact `prUrl`. The doc's webhook paragraph was updated to say so; it cites no line of that file. The doc was re-stamped.
+
+The same change touched `backend/src/services/github-webhook.ts`, which `backend.md`, `workflow-gates.md` and `signals-and-notification-delivery.md` also list as a source. Their claims (the file's place among the PR-lifecycle services, the claim-guarded legacy status writers, the signal acknowledgement on a terminal webhook move) concern code this change did not touch: only the unmatched-merge reporting and `hasUnopenedTaskForPr` changed. The three docs were re-stamped.
