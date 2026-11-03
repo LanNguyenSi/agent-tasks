@@ -87,8 +87,14 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         if (endpoint === "respec") return c.json(await mutateDirectTask(deps.db, task, actor, "respec", directRespecSchema.parse(raw)));
         const body = (endpoint === "patch" ? actor.type === "agent" ? directAgentPatchSchema : directPatchSchema : endpoint === "review" ? directReviewSchema : directTransitionSchema).parse(raw);
         const transport: GroundingRouteTransport = { endpoint, body };
+        // A status PATCH that restores an abandoned task is handed to the REST
+        // handler below (the no-op and backlog cases answer before it), and
+        // REST reads no key, so an empty or invalid key is ignored there as on
+        // REST. A valid key still looks up this route's own history first.
+        const patchStatus = endpoint === "patch" ? (body as { status?: string }).status : undefined;
+        const restoresAbandoned = task.status === "abandoned" && patchStatus !== undefined && patchStatus !== task.status && patchStatus !== "backlog";
         const header = idempotencyKey(c);
-        if ("refusal" in header) return header.refusal;
+        if ("refusal" in header) return restoresAbandoned ? next() : header.refusal;
         const { key } = header;
         if (key && deps.service) {
           const history = await deps.service.lookupRouteOperation(taskId, actor, key, transport);
@@ -107,7 +113,7 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         // decision above rests on a read taken before the task lock, so a task
         // that turns abandoned in between is reopened by the service below;
         // the observer passed to dispose() covers that race.
-        if (endpoint === "patch" && task.status === "abandoned") return next();
+        if (restoresAbandoned) return next();
         if (!deps.service) unavailable();
         // A backlog discard (backlog -> abandoned) lands in dispose() below and
         // writes no finalDisposition, like the REST discard: a backlog task has

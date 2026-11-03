@@ -2,22 +2,32 @@
  * The Grounding direct transition, review, PATCH, respec and DELETE routes in
  * the mounted app against a real database (tracker task 97615ee1):
  *
- *   - a missing task, a project viewer, a caller without project access and
- *     an agent without the endpoint's scope get the REST handler's status and
- *     body, in the REST handler's order, whether or not the task is
- *     provisioned. The oracle is the REST task router mounted alone. Order:
- *     transition, review and respec refuse the scope before the task lookup,
- *     PATCH after the access check, DELETE refuses every agent first; DELETE
- *     checks write access alone, so a non-member reads the viewer's refusal;
- *   - the routes that read an Idempotency-Key (transition, review, PATCH)
- *     treat an absent header as no key and refuse any present value that is
- *     not a valid key, the empty string included, with the REST /advance 400
- *     (the REST transition, review and PATCH handlers read no key), writing
- *     nothing; an empty-key retry of a disposition therefore never executes;
+ *   - for a request with a valid body, a missing task, a project viewer, a
+ *     caller without project access and an agent without the endpoint's scope
+ *     get the REST handler's status and body, in the REST handler's order of
+ *     those refusals, whether or not the task is provisioned. The oracle is
+ *     the REST task router mounted alone. Order: transition, review and respec
+ *     refuse the scope before the task lookup, PATCH after the access check,
+ *     DELETE refuses every agent first; DELETE checks write access alone, so a
+ *     non-member reads the viewer's refusal;
+ *   - not matched, and pinned where noted: REST validates the body before any
+ *     of these refusals, so a missing task with an invalid body answers 404
+ *     here and 400 on REST; on transition a viewer gets the read-only refusal
+ *     before REST's force-admin, edge and requiredRole checks (pinned for
+ *     force: true);
+ *   - on a provisioned task the routes that read an Idempotency-Key
+ *     (transition, review, PATCH) treat an absent header as no key and refuse
+ *     any present value that is not a valid key, the empty string, a
+ *     whitespace-only and a duplicated header included, with the REST /advance
+ *     400 (the REST transition, review and PATCH handlers read no key),
+ *     writing nothing; an empty-key retry of a disposition never executes;
+ *   - an unprovisioned task the caller can write, and a PATCH restoring an
+ *     abandoned provisioned task, reach the REST handler with any key, which
+ *     answers as it answers the same request;
  *   - respec and DELETE read no key on either handler.
  */
 import { createHash, randomUUID } from "node:crypto";
-import type { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { completionStore, completionFixture } from "../helpers/grounding-completion-fixtures.js";
@@ -79,10 +89,13 @@ function bodyFor(endpoint: Endpoint, caller: keyof typeof auth): unknown {
   if (endpoint === "respec") return { description: "Respecified" };
   return undefined;
 }
-function request(endpoint: Endpoint, taskId: string, caller: keyof typeof auth, key: string | null = null, body = bodyFor(endpoint, caller)) {
+/** `key` null sends no Idempotency-Key; an array sends one header line per entry. */
+function request(endpoint: Endpoint, taskId: string, caller: keyof typeof auth, key: string | string[] | null = null, body = bodyFor(endpoint, caller)) {
+  const headers = new Headers({ "Content-Type": "application/json", Authorization: `Bearer ${auth[caller]}` });
+  for (const value of key === null ? [] : Array.isArray(key) ? key : [key]) headers.append("Idempotency-Key", value);
   return new Request(`http://localhost/api/tasks/${taskId}${endpoint === "patch" || endpoint === "delete" ? "" : `/${endpoint}`}`, {
     method: endpoint === "patch" ? "PATCH" : endpoint === "delete" ? "DELETE" : "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth[caller]}`, ...(key === null ? {} : { "Idempotency-Key": key }) },
+    headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
@@ -120,6 +133,40 @@ async function twin(data: Record<string, unknown> = {}) {
       branchName: "branch", prNumber: 42, prUrl: "https://github.com/acme/repo/pull/42", ...data,
     },
   });
+  return id;
+}
+/** `value` with the task's own id and every timestamp masked, so the rows and answers of two twins compare equal. */
+function masked(value: unknown, taskId: string): unknown {
+  return JSON.parse(JSON.stringify(value).replaceAll(taskId, "<task>").replace(/"\d{4}-\d{2}-\d{2}T[^"]*"/g, '"<time>"'));
+}
+/** The task row and what was written about it after `since` (audit row ids taken before the request), masked for a comparison with its twin. */
+async function effects(taskId: string, since: Set<string>) {
+  const rows = await written(taskId);
+  const audits = rows.audits.filter(a => !since.has(a.id)).map(a => JSON.stringify([a.action, a.payload])).sort();
+  return masked({ task: rows.task, operations: rows.operations, attempts: rows.attempts, audits, comments: rows.comments.map(c => c.content) }, taskId);
+}
+const auditIds = async (taskId: string) => new Set((await store.db.auditLog.findMany({ where: { taskId }, select: { id: true } })).map(a => a.id));
+/**
+ * Sends the request to the configured app for `grounded` and to the REST
+ * router alone for its twin `oracle` (same state, never provisioned): the
+ * answers and what each wrote must match, and the configured app wrote no
+ * Grounding operation.
+ */
+async function sameAsRest(grounded: string, oracle: string, make: (taskId: string) => Request) {
+  const [groundedAudits, oracleAudits] = [await auditIds(grounded), await auditIds(oracle)];
+  const answer = await send(mounted(), make(grounded));
+  const legacy = await send(rest(), make(oracle));
+  expect(masked(answer, grounded)).toEqual(masked(legacy, oracle));
+  // Some audit rows are written after the response, so wait for both twins to settle.
+  await vi.waitFor(async () => expect(await effects(grounded, groundedAudits)).toEqual(await effects(oracle, oracleAudits)));
+  expect(await store.db.groundingOperation.count({ where: { taskId: grounded } })).toBe(0);
+  return answer;
+}
+/** An unprovisioned copy of `taskId`'s row (every column but the id). */
+async function copyOf(taskId: string) {
+  const { id: _id, templateData, metadata, ...row } = await store.db.task.findUniqueOrThrow({ where: { id: taskId } });
+  const id = randomUUID();
+  await store.db.task.create({ data: { ...row, id, templateData: templateData ?? Prisma.JsonNull, metadata: metadata ?? Prisma.JsonNull } });
   return id;
 }
 const taskOf = (kind: Kind) => (kind === "provisioned" ? Promise.resolve(f.taskId) : twin());
@@ -207,6 +254,18 @@ describe("refusals answered before the enrollment is read keep the REST body and
   }
 });
 
+describe("not matched: the read-only refusal comes before REST's own transition checks", () => {
+  it.each(KINDS)("a project viewer sending force: true on a %s task: 403 Requires write access, nothing written, where REST names the force-admin rule", async kind => {
+    const taskId = await taskOf(kind);
+    const body = { status: "open", force: true, forceReason: "Operator exception" };
+    const before = await written(taskId);
+    expect(await send(mounted(), request("transition", taskId, "viewer", null, body))).toEqual({ status: 403, body: READ_ONLY });
+    expect(await written(taskId)).toEqual(before);
+    expect(await send(rest(), request("transition", taskId, "viewer", null, body))).toEqual({ status: 403, body: { error: "forbidden", message: "Only team admins and project admins can force a transition" } });
+    expect(await written(taskId)).toEqual(before);
+  });
+});
+
 describe("Idempotency-Key on the routes that read one", () => {
   // Each body is a disposition on the provisioned task: without a key it
   // executes under a generated key, so a key taken as absent would write.
@@ -216,10 +275,12 @@ describe("Idempotency-Key on the routes that read one", () => {
     { endpoint: "patch", status: "in_progress", body: { status: "open" }, caller: "human" },
   ];
   for (const { endpoint, status, body, caller } of dispositions) {
-    it.each([
+    it.each<[string, string | string[]]>([
       ["an empty", ""],
+      ["a whitespace-only", "   "],
       ["a malformed", "bad key"],
       ["a too long", "k".repeat(129)],
+      ["a duplicated (a, b)", ["a", "b"]],
     ])(`${endpoint}: %s key is the REST /advance 400, nothing written`, async (_label, key) => {
       await setTask(f.taskId, { status });
       const before = await written(f.taskId);
@@ -248,6 +309,42 @@ describe("Idempotency-Key on the routes that read one", () => {
       expect(await store.db.groundingOperation.count({ where: { taskId: f.taskId } })).toBe(1);
     });
   }
+
+  for (const { endpoint, status, body, caller } of dispositions) {
+    it.each([
+      ["an empty", ""],
+      ["a malformed", "bad key"],
+    ])(`${endpoint} on an unprovisioned task: %s key reaches the REST handler, which answers and writes as it does for the same request`, async (_label, key) => {
+      const plain = await twin({ status });
+      const oracle = await twin({ status });
+      const answer = await sameAsRest(plain, oracle, taskId => request(endpoint, taskId, caller, key, body));
+      expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+    });
+  }
+
+  it.each<[string, string | null]>([
+    ["an empty", ""],
+    ["a malformed", "bad key"],
+    ["a valid", "restore-key"],
+    ["no", null],
+  ])("PATCH restoring an abandoned provisioned task with %s key reaches the REST handler, which restores it as it does an unprovisioned twin", async (_label, key) => {
+    await setTask(f.taskId, { status: "abandoned", claimedByAgentId: null, claimedAt: null });
+    const oracle = await copyOf(f.taskId);
+    const answer = await sameAsRest(f.taskId, oracle, taskId => request("patch", taskId, "human", key, { status: "open" }));
+    expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+    expect((await f.task()).status).toBe("open");
+  });
+
+  it.each([
+    ["an edit without a status", { title: "Renamed" }],
+    ["a status it already has", { status: "abandoned" }],
+    ["a move to backlog", { status: "backlog" }],
+  ])("PATCH on an abandoned provisioned task that does not restore it (%s) stays with this route: an empty key is the 400, nothing written", async (_label, body) => {
+    await setTask(f.taskId, { status: "abandoned", claimedByAgentId: null, claimedAt: null });
+    const before = await written(f.taskId);
+    expect(await send(mounted(), request("patch", f.taskId, "human", "", body))).toEqual({ status: 400, body: INVALID_KEY });
+    expect(await written(f.taskId)).toEqual(before);
+  });
 
   it("PATCH: an invalid key refuses a no-op edit too, before anything is written", async () => {
     const before = await written(f.taskId);
