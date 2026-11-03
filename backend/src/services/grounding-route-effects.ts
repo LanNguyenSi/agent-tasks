@@ -10,6 +10,7 @@ import type { GroundingDecision } from "./grounding-completion.js";
 import type { OperationRequest } from "./grounding-operations.js";
 import { isReviewState, isTerminalState } from "./default-workflow.js";
 import { canonicalGithubRepo, sameGithubPrUrl } from "./grounding-github-fence.js";
+import { advanceResponseFields, decideAdvance, GroundingAdvanceRefused } from "./task-advance.js";
 
 const text = z.string().max(32768);
 const contextSchema = z.object({
@@ -35,7 +36,10 @@ const planSchema = z.object({
   kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "github_merge", "abandon", "direct"]),
   action: z.enum(["finish", "approve", "request_changes", "merge", "abandon", "transition"]),
   remote: z.boolean(), alreadyMerged: z.boolean().optional(), patch: patchSchema,
-  response: z.object({ kind: z.enum(["work", "review"]).optional(), targetStatus: z.string().max(128).optional(), outcome: z.enum(["approve", "request_changes"]).optional(), skippedGates: z.array(z.string().max(128)).max(128).optional() }).strict(),
+  response: z.object({ kind: z.enum(["work", "review"]).optional(), targetStatus: z.string().max(128).optional(), outcome: z.enum(["approve", "request_changes"]).optional(), skippedGates: z.array(z.string().max(128)).max(128).optional(),
+    // task_advance's preview of the stage it reached (services/task-advance.ts).
+    previousStatus: z.string().max(128).optional(), expectedFinishState: z.string().max(128).nullable().optional(),
+    effectiveGates: z.object({ finish: z.array(z.string().max(128)).max(128).nullable() }).strict().optional(), advanceTargets: z.array(z.string().max(128)).max(128).optional() }).strict(),
   acknowledge: z.boolean(),
   signals: z.array(z.object({ type: z.enum(["review_needed", "changes_requested", "task_approved", "self_merge_notice", "task_available", "task_force_transitioned"]), recipientAgentId: z.guid().nullable(), recipientUserId: z.guid().nullable(), context: contextSchema }).strict()).max(10000),
   comments: z.array(text).max(10),
@@ -136,6 +140,13 @@ async function buildDirectPlan(db: Prisma.TransactionClient, task: GroundingTask
   const direct = readDirectOperation(request)!;
   if (remote) throw new GroundingAccessError("bad_state", 409);
   const resolved = await resolveDirectGroundingTarget(db, task, actor, direct.descriptor, undefined, direct.force);
+  if (direct.advance) {
+    // The route chose the edge from an unlocked read: the claim check and the
+    // edge choice run again on the locked row, and a different answer refuses.
+    const again = decideAdvance(resolved.def, task, actor, direct.advance.to ?? undefined);
+    if (!again.ok) throw new GroundingAdvanceRefused(again);
+    if (again.to !== direct.descriptor.target) throw new GroundingAccessError("bad_state", 409);
+  }
   const actorId = actor.type === "agent" ? actor.tokenId : actor.userId;
   const actorName = actor.type === "agent" ? (await db.agentToken.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? "Agent" : (await db.user.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? "Human";
   const context: z.infer<typeof contextSchema> = { taskTitle: task.title, taskStatus: decision.to, projectSlug: task.project.slug, projectName: task.project.name, branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber, actor: { type: actor.type, name: actorName } };
@@ -146,7 +157,9 @@ async function buildDirectPlan(db: Prisma.TransactionClient, task: GroundingTask
     if (task.claimedByAgentId || task.claimedByUserId) plan.signals.push({ type: body.action === "approve" ? "task_approved" : "changes_requested", recipientAgentId: task.claimedByAgentId, recipientUserId: task.claimedByUserId, context: { ...context, ...(body.comment ? { reviewComment: body.comment } : {}) } });
     plan.audits.push({ action: "task.reviewed", payload: { reviewAction: body.action, from: decision.from, to: decision.to, actorType: actor.type, reviewerId: actorId } });
   } else {
-    plan.audits.push({ action: direct.force ? "task.transitioned.forced" : resolved.special ?? "task.transitioned", payload: { from: decision.from, to: decision.to, actorType: actor.type, via: direct.descriptor.endpoint, ...(direct.force ? { forceReason: request.overrideReason } : {}) } });
+    plan.audits.push({ action: direct.force ? "task.transitioned.forced" : resolved.special ?? "task.transitioned", payload: { from: decision.from, to: decision.to, actorType: actor.type, via: direct.advance ? "task_advance" : direct.descriptor.endpoint, ...(direct.force ? { forceReason: request.overrideReason } : {}) } });
+    // The advance response, stored with the operation so a same-key replay returns it unchanged.
+    if (direct.advance) plan.response = advanceResponseFields(resolved.def, decision.from, decision.to);
     if (isReviewState(resolved.def, decision.to) && !isReviewState(resolved.def, decision.from)) {
       const agents = await db.agentToken.findMany({ where: { teamId: task.project.teamId, revokedAt: null, scopes: { has: "tasks:transition" }, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }], ...(task.claimedByAgentId ? { id: { not: task.claimedByAgentId } } : {}) }, select: { id: true, name: true }, orderBy: { id: "asc" } });
       const humans = await db.teamMember.findMany({ where: { teamId: task.project.teamId, role: { in: ["REVIEWER", "ADMIN"] }, ...(task.claimedByUserId ? { userId: { not: task.claimedByUserId } } : {}) }, select: { userId: true, user: { select: { name: true, login: true } } }, orderBy: { userId: "asc" } });

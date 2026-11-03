@@ -391,8 +391,10 @@ function buildServer(token: string): McpServer {
     GENERATED_KEY_NOTE +
     " Reusing your own key on a retry makes that retry idempotent only where the backend enforces operation keys (a provisioned task on a Grounding-configured backend). On an unconfigured backend, or for an unprovisioned task, the key is ignored and a retry is not deduplicated.";
   // task_advance always dedupes on its key, whether or not Grounding is
-  // provisioned: the advance route stores one tool_invocations row per
-  // successful call and replays it on a same-key retry (services/idempotency.ts).
+  // provisioned: for an unprovisioned task the advance route stores one
+  // tool_invocations row per successful call and replays it on a same-key
+  // retry (services/idempotency.ts); for a provisioned one the Grounding
+  // direct route keys its durable operation on the same value.
   const ADVANCE_KEY_HINT =
     " operationKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." + GENERATED_KEY_NOTE +
     " To retry the same advance safely (for example after a network timeout), generate your own key up front and pass the same value on the retry: the backend replays the stored 2xx response instead of advancing a second time, and rejects the same key with a different payload with 409.";
@@ -424,7 +426,7 @@ function buildServer(token: string): McpServer {
     "task_advance",
     {
       description:
-        "Move a task you hold the work claim on along one forward edge of its workflow to the next work stage (forward: the target is listed later in the workflow's states), keeping the claim. Without `to` the single forward edge is taken; several answer 409 advance_ambiguous with the choices. A review or terminal target answers 409 advance_use_finish: task_finish moves a task into review or done. Gates are evaluated on the edge (422 precondition_failed). A four-state workflow has nothing to advance." + ADVANCE_KEY_HINT,
+        "Move a task you hold the work claim on along one forward edge of its workflow to the next work stage (forward: the target is listed later in the workflow's states), keeping the claim. Without `to` the single forward edge is taken; several answer 409 advance_ambiguous with the choices. A review or terminal target answers 409 advance_use_finish: task_finish moves a task into review or done. Gates are evaluated on the edge (422 precondition_failed). A four-state workflow has nothing to advance. A Grounding-provisioned task advances the same way through the Grounding protocol, without a receipt; there a failed gate answers 409 precondition_failed." + ADVANCE_KEY_HINT,
       inputSchema: {
         taskId: uuid(),
         to: z.string().min(1).max(64).regex(/^[a-z0-9_]+$/).optional(),
