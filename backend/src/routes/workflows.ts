@@ -138,11 +138,16 @@ const workflowTransitionSchema = z.object({
 // label/agentInstructions stay configurable per project as before. What the
 // engine still pins, and this schema therefore enforces server-side so a
 // direct API caller cannot persist a graph the engine mishandles:
-//   - `initialState` is "open". The engine keys pickup, the claimable pool,
-//     start, promote, demote and reopen on the literal status "open", so a
+//   - `initialState` is "open". Task creation, start, claim and release
+//     already read the workflow's initialState, but pickup, the claimable
+//     pool (GET /tasks/claimable), promote (backlog -> open), demote, reopen
+//     and the task_available signal still key on the literal status "open",
+//     as do the Grounding direct-route mirrors of promote and demote. A
 //     different initial state would persist a workflow whose tasks are never
-//     picked up or started. This slice unlocks state NAMES only; lifting the
-//     initialState pin needs an engine change first.
+//     picked up. State NAMES are free; lifting the initialState pin needs
+//     those sites rekeyed first (the cross-project pool queries need an
+//     "initial" kind in buildTaskStatusFilter), and is deliberately not
+//     planned until a workflow needs a non-open initial state.
 //   - `backlog` and `abandoned` are reserved. Both are written by dedicated
 //     routes (promote/demote/discard, creator-abandon, unabandon), never by a
 //     workflow edge, and the stored-definition sanitizer strips backlog; a
