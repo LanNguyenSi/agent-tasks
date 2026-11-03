@@ -59,11 +59,8 @@
 // mergeInProgressError below. Plus advance_use_finish, advance_ambiguous and
 // advance_target_invalid (409, task_advance could not pick a forward edge to
 // a work stage) -- see advanceUseFinishError and its siblings below -- and
-// grounding_advance_unsupported (409, task_advance on a Grounding-provisioned
-// task, legacy: only a backend older than the provisioned task_advance sends
-// it) -- see groundingAdvanceUnsupportedError. Plus a 409 precondition_failed
-// from task_advance (the Grounding route's gate refusal on a provisioned task,
-// which names no failing rule) -- see groundedAdvancePreconditionError. Plus recipe branches for the grounding write
+// grounding_advance_unsupported (409, task_advance on a Grounding-provisioned task; legacy, only an older backend sends it) -- see groundingAdvanceUnsupportedError,
+// and a 409 precondition_failed from task_advance (that route's gate refusal) -- see groundedAdvancePreconditionError. Plus recipe branches for the grounding write
 // verbs' (pull_requests_create, pull_requests_merge, task_merge,
 // task_finish, task_abandon, task_grounding_attempt_create) 403 `forbidden`:
 // re-mint guidance for a message naming a missing `github:*` scope, that
