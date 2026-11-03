@@ -457,6 +457,8 @@ it("HOOK two projects bound to one repo, only one matches the merged PR: no unma
   const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
   const other = await completionFixture(store);
   await store.db.project.update({ where: { id: other.projectId }, data: { githubRepo: repo } });
+  // The second project's task must not match PR 42 by number, URL, branch or title.
+  await store.db.task.update({ where: { id: other.taskId }, data: { prNumber: null, prUrl: null, branchName: null, title: "Unrelated task" } });
   expect((await request(payload("merged"), "two-projects")).status).toBe(200);
   expect(warn).not.toHaveBeenCalled();
   expect(await unmatchedRows({ projectId: { in: [f.projectId, other.projectId] } })).toHaveLength(0);

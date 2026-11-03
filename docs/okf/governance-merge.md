@@ -276,8 +276,9 @@ pr_merged_unmatched` (no `projectId` for `no_project`, the project's id for
 `no_task`, one row per bound project, written only when no bound project
 matched: an open task of any one project, or the echo below in any one project,
 silences all of them, as in the grounding webhook service); a task already in a
-terminal state or `backlog` that carries the PR by `prNumber` or exact `prUrl`
-(`hasUnopenedTaskForPr`; a reused branch name or a `[PR #N]` title does not
+terminal state or `backlog` that carries the PR by exact `prUrl`, or by
+`prNumber` with no `deliverableRepo` or one equal to the delivery's repo
+case-insensitively (`hasUnopenedTaskForPr`; a reused branch name or a `[PR #N]` title does not
 count) is the echo of an earlier merge and writes neither, and an unmerged
 `closed` or an `opened` never writes this row. The configured grounding webhook service writes the same
 warn (component `grounding-github-webhook`, with the `deliveryId`) and audit

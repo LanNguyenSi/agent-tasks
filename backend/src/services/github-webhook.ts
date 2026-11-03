@@ -172,17 +172,27 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
  * itself (or of a task that was closed by hand), not a delivery that matched
  * nothing, so the unmatched-merge diagnostics must not fire for it.
  *
- * Only the strong bindings count: the PR number (a project is bound to one
- * repo, so a number is unique within it) and the exact PR URL. A branch name
- * or a `[PR #N]` title is reusable (a later PR can reuse a branch name that an
- * earlier, finished task carried), so those would hide a real `no_task`.
+ * Only the strong bindings count: the exact PR URL, and the PR number when
+ * the task's PR lives in the delivery's repo. A project can hold a task whose
+ * PR belongs to another repo (`deliverableRepo`), and PR numbers repeat across
+ * repos, so the number arm needs `deliverableRepo` unset (the PR is then in the
+ * project's own repo) or equal to the delivery's repo, case-insensitively. A
+ * branch name or a `[PR #N]` title is reusable (a later PR can reuse a branch
+ * name that an earlier, finished task carried), so those would hide a real
+ * `no_task`.
  */
-async function hasUnopenedTaskForPr(projectId: string, hint: PrBindingHint): Promise<boolean> {
+async function hasUnopenedTaskForPr(projectId: string, hint: PrBindingHint, repoFullName: string): Promise<boolean> {
   const { prNumber, prUrl } = hint;
   const rows = await prisma.task.findMany({
     where: {
       projectId,
-      OR: [{ prNumber }, ...(prUrl ? [{ prUrl }] : [])],
+      OR: [
+        {
+          prNumber,
+          OR: [{ deliverableRepo: null }, { deliverableRepo: githubRepoEqualsInsensitive(repoFullName) }],
+        },
+        ...(prUrl ? [{ prUrl }] : []),
+      ],
     },
     select: { id: true },
     take: 1,
@@ -528,7 +538,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
     for (const project of projects) {
       const found = await findTasksByPr(project.id, hint);
       mergedTasks.set(project.id, found);
-      if (found.length > 0 || (await hasUnopenedTaskForPr(project.id, hint))) mergeHandled = true;
+      if (found.length > 0 || (await hasUnopenedTaskForPr(project.id, hint, repoFullName))) mergeHandled = true;
     }
   }
 

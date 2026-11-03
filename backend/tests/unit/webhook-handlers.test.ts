@@ -547,15 +547,27 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
   });
 
   describe("echo of an earlier merge: only the strong bindings suppress the diagnostics", () => {
-    type Row = { prNumber: number | null; prUrl: string | null; branchName: string | null; title: string };
-    type OrClause = { prNumber?: number; prUrl?: string; branchName?: string; title?: { contains: string } };
+    type Row = { prNumber: number | null; prUrl: string | null; branchName: string | null; title: string; deliverableRepo?: string | null };
+    type OrClause = {
+      prNumber?: number;
+      prUrl?: string;
+      branchName?: string;
+      title?: { contains: string };
+      OR?: Array<{ deliverableRepo: null | { equals: string; mode?: string } }>;
+    };
+    const repoScopeHolds = (c: OrClause, row: Row) =>
+      (c.OR ?? []).some((r) =>
+        r.deliverableRepo === null ? (row.deliverableRepo ?? null) === null : r.deliverableRepo.mode === "insensitive"
+          ? (row.deliverableRepo ?? "").toLowerCase() === r.deliverableRepo.equals.toLowerCase()
+          : row.deliverableRepo === r.deliverableRepo.equals,
+      );
     // The open lookups come back empty; the unfiltered OR lookup is evaluated against one terminal task row.
     const withTerminalTask = (row: Row) =>
       mockTaskFindMany.mockImplementation(async (args: { where: { OR?: OrClause[] } }) => {
         if (!args.where.OR) return [];
         const hit = args.where.OR.some(
           (c) =>
-            (c.prNumber !== undefined && c.prNumber === row.prNumber) ||
+            (c.prNumber !== undefined && c.prNumber === row.prNumber && repoScopeHolds(c, row)) ||
             (c.prUrl !== undefined && c.prUrl === row.prUrl) ||
             (c.branchName !== undefined && c.branchName === row.branchName) ||
             (c.title !== undefined && row.title.includes(c.title.contains)),
@@ -566,6 +578,20 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
 
     it("a done task with the same prNumber: no warn, no audit row", async () => {
       withTerminalTask({ ...none, prNumber: 42 });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).not.toHaveBeenCalled();
+      expect(unmatchedAudit()).toHaveLength(0);
+    });
+
+    it("a done task with the same prNumber whose deliverableRepo is another repo: warns and audits", async () => {
+      withTerminalTask({ ...none, prNumber: 42, deliverableRepo: "acme/other" });
+      await handlePullRequestEvent(delivery("closed", true));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(unmatchedAudit()).toHaveLength(1);
+    });
+
+    it("a done task with the same prNumber whose deliverableRepo is the repo in another letter case: no warn, no audit row", async () => {
+      withTerminalTask({ ...none, prNumber: 42, deliverableRepo: "Test/Repo" });
       await handlePullRequestEvent(delivery("closed", true));
       expect(warn).not.toHaveBeenCalled();
       expect(unmatchedAudit()).toHaveLength(0);
@@ -599,11 +625,15 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
       expect(unmatchedAudit()).toHaveLength(1);
     });
 
-    it("the unfiltered lookup is scoped to the project and asks for the prNumber and prUrl only", async () => {
+    it("the unfiltered lookup is scoped to the project and asks for the repo-scoped prNumber and the prUrl only", async () => {
       mockTaskFindMany.mockResolvedValue([]);
       await handlePullRequestEvent(delivery("closed", true));
       const orCall = mockTaskFindMany.mock.calls.map(([arg]) => arg as { where: { OR?: unknown[] }; take?: number }).find((arg) => arg.where.OR);
-      expect(orCall?.where).toEqual({ projectId: "proj-1", OR: [{ prNumber: 42 }, { prUrl: "https://github.com/test/repo/pull/42" }] });
+      expect(orCall?.where).toEqual({ projectId: "proj-1", OR: [
+          { prNumber: 42, OR: [{ deliverableRepo: null }, { deliverableRepo: { equals: "test/repo", mode: "insensitive" } }] },
+          { prUrl: "https://github.com/test/repo/pull/42" },
+        ],
+      });
       expect(orCall?.take).toBe(1);
     });
   });
