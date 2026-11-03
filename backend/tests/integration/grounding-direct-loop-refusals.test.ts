@@ -21,9 +21,12 @@
  *     whitespace-only and a duplicated header included, with the REST /advance
  *     400 (the REST transition, review and PATCH handlers read no key),
  *     writing nothing; an empty-key retry of a disposition never executes;
- *   - an unprovisioned task the caller can write, and a PATCH restoring an
- *     abandoned provisioned task, reach the REST handler with any key, which
- *     answers as it answers the same request;
+ *   - an unprovisioned task the caller can write reaches the REST handler
+ *     with any key, and a PATCH restoring an abandoned provisioned task with
+ *     an empty or invalid key; the REST handler answers as it answers the
+ *     same request. A valid key on that restore is first looked up in this
+ *     route's history: a same-key retry replays the stored response and
+ *     another body under the key answers 409 grounding_operation_conflict;
  *   - respec and DELETE read no key on either handler.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -147,6 +150,24 @@ async function effects(taskId: string, since: Set<string>) {
 }
 const auditIds = async (taskId: string) => new Set((await store.db.auditLog.findMany({ where: { taskId }, select: { id: true } })).map(a => a.id));
 /**
+ * Some audit rows (the task_available_signal one, for example) are written
+ * after the response. Polls `taskId`'s audit rows written after `since` until
+ * two polls 150 ms apart see the same set holding at least `atLeast` rows (at
+ * most 3 s), and returns how many there are.
+ */
+async function settledAudits(taskId: string, since: Set<string>, atLeast = 0) {
+  const newer = async () => [...await auditIds(taskId)].filter(id => !since.has(id)).sort().join(",");
+  const deadline = Date.now() + 3000;
+  let previous = await newer();
+  for (;;) {
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const current = await newer();
+    const count = current === "" ? 0 : current.split(",").length;
+    if ((current === previous && count >= atLeast) || Date.now() > deadline) return count;
+    previous = current;
+  }
+}
+/**
  * Sends the request to the configured app for `grounded` and to the REST
  * router alone for its twin `oracle` (same state, never provisioned): the
  * answers and what each wrote must match, and the configured app wrote no
@@ -157,8 +178,9 @@ async function sameAsRest(grounded: string, oracle: string, make: (taskId: strin
   const answer = await send(mounted(), make(grounded));
   const legacy = await send(rest(), make(oracle));
   expect(masked(answer, grounded)).toEqual(masked(legacy, oracle));
-  // Some audit rows are written after the response, so wait for both twins to settle.
-  await vi.waitFor(async () => expect(await effects(grounded, groundedAudits)).toEqual(await effects(oracle, oracleAudits)));
+  // Settle the REST twin first, then wait for the configured app's twin to hold as many rows, and compare once.
+  await settledAudits(grounded, groundedAudits, await settledAudits(oracle, oracleAudits));
+  expect(await effects(grounded, groundedAudits)).toEqual(await effects(oracle, oracleAudits));
   expect(await store.db.groundingOperation.count({ where: { taskId: grounded } })).toBe(0);
   return answer;
 }
@@ -333,6 +355,23 @@ describe("Idempotency-Key on the routes that read one", () => {
     const answer = await sameAsRest(f.taskId, oracle, taskId => request("patch", taskId, "human", key, { status: "open" }));
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
     expect((await f.task()).status).toBe("open");
+  });
+
+  it("PATCH restoring an abandoned provisioned task with a valid key used before: this route's history answers first, a same-key retry replays and another body is 409, nothing written", async () => {
+    const first = await send(mounted(), request("patch", f.taskId, "human", "restore-pin", { status: "open" }));
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect((await f.task()).status).toBe("open");
+    await settledAudits(f.taskId, new Set());
+    await setTask(f.taskId, { status: "abandoned", claimedByAgentId: null, claimedAt: null });
+    const before = await written(f.taskId);
+    expect(before.operations).toHaveLength(1);
+    const retry = await send(mounted(), request("patch", f.taskId, "human", "restore-pin", { status: "open" }));
+    expect(retry).toEqual(first);
+    expect(await written(f.taskId)).toEqual(before);
+    expect((await f.task()).status).toBe("abandoned");
+    const other = await send(mounted(), request("patch", f.taskId, "human", "restore-pin", { status: "in_progress" }));
+    expect(other).toEqual({ status: 409, body: { error: "grounding_operation_conflict" } });
+    expect(await written(f.taskId)).toEqual(before);
   });
 
   it.each([
