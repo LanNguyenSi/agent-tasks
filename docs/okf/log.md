@@ -1,3 +1,4 @@
+- 2026-11-03T08:44:38Z: comment-only move in `backend/src/services/task-advance.ts` (each schema keeps its own doc comment); backend, task-lifecycle and workflow-gates re-stamped, claims unchanged.
 - 2026-11-03T08:38:21Z: the provisioned `POST /tasks/:id/advance` now validates the `Idempotency-Key` header
   with the REST handler's shared schema (`advanceIdempotencyKeySchema` in
   `backend/src/services/task-advance.ts`; an empty or malformed key is `400 validation_error`).
