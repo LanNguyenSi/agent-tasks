@@ -22,10 +22,10 @@ import {
 } from "./default-workflow.js";
 import { GroundingAccessError } from "./grounding-context.js";
 
-/** Body of POST /tasks/:id/advance: an optional work stage to move to. */
 /** Idempotency-Key header accepted by both /advance handlers (REST and the Grounding direct route). */
 export const advanceIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 
+/** Body of POST /tasks/:id/advance: an optional work stage to move to. */
 export const advanceTaskSchema = z.object({
   to: z
     .string()
