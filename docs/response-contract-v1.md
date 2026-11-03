@@ -533,12 +533,17 @@ only where the receiving route enforces operation keys:
   `_idempotent_replay: true`; the same key with a different payload returns
   `409` (`backend/src/services/idempotency.ts`). The Grounding GitHub router
   keys its durable operation on the same value.
-- `task_advance`: on every backend. The advance route
+- `task_advance`: on every backend. The REST advance route
   (`POST /api/tasks/:id/advance`) stores one `tool_invocations` row per
   successful call under the header key and replays the stored 2xx response
   with `_idempotent_replay: true` on a same-key retry, instead of advancing
-  a second time; the same key with a different payload returns `409`. A
-  Grounding-provisioned task is refused before any effect.
+  a second time; the same key with a different payload returns `409`. For a
+  Grounding-provisioned task the Grounding direct route keys its durable
+  operation on the same value instead and replays the stored response
+  without the `_idempotent_replay` marker; the same key with another `to`,
+  or a key first used for `/transition`, answers `409
+  grounding_operation_conflict`. An empty or malformed key is the same `400`
+  on both routes.
 - `task_finish`, `task_merge` and `task_abandon`: only for a provisioned task
   on a Grounding-configured backend. On an unconfigured backend, or for an
   unprovisioned task, the request either reaches the legacy completion

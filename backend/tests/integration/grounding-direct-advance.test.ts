@@ -463,6 +463,20 @@ describe("Idempotency-Key", () => {
     expect(await operations(f.taskId)).toHaveLength(1);
   });
 
+  it.each([
+    ["empty", ""],
+    ["too long", "k".repeat(129)],
+    ["with a space", "bad key"],
+  ])("an %s Idempotency-Key is the REST handler's 400, nothing written", async (_label, header) => {
+    const res = await mounted().fetch(new Request(`http://localhost/api/tasks/${f.taskId}/advance`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "Idempotency-Key": header }, body: "{}",
+    }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "validation_error", message: "Invalid Idempotency-Key header" });
+    expect((await f.task()).status).toBe("spec");
+    expect(await operations(f.taskId)).toHaveLength(0);
+  });
+
   it("without a key every call executes and is judged on the state it finds", async () => {
     expect((await advance(f.taskId, {}, null)).body.targetStatus).toBe("plan");
     expect((await advance(f.taskId, {}, null)).body.targetStatus).toBe("implement");

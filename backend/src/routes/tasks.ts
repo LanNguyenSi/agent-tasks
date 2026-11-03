@@ -96,7 +96,7 @@ import {
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
 import { advanceResponseFields, advanceTaskSchema, decideAdvance,
-  gatesForTransitionOrNull, workStagePreview } from "../services/task-advance.js";
+  gatesForTransitionOrNull, workStagePreview, advanceIdempotencyKeySchema as sharedAdvanceIdempotencyKeySchema } from "../services/task-advance.js";
 import {
   buildTaskStatusFilter,
   findActiveAgentClaim,
@@ -4150,7 +4150,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 // shared with the Grounding direct route (services/task-advance.ts), which
 // serves this path for a Grounding-provisioned task through the Grounding
 // mutation protocol; only an unprovisioned task reaches this handler.
-const advanceIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+const advanceIdempotencyKeySchema = sharedAdvanceIdempotencyKeySchema;
 
 taskRouter.post("/tasks/:id/advance", async (c) => {
   const actor = c.get("actor") as Actor;

@@ -16,7 +16,7 @@ import { GroundingDemoteRefused, resolveDirectGroundingTarget } from "../service
 import { demoteSourceStatusMessage } from "../services/task-demote.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
 import { clearDisposition } from "../services/confidence-telemetry.js";
-import { advanceGateRefusalMessage, advanceTaskSchema, decideAdvance, GroundingAdvanceRefused } from "../services/task-advance.js";
+import { advanceGateRefusalMessage, advanceIdempotencyKeySchema, advanceTaskSchema, decideAdvance, GroundingAdvanceRefused } from "../services/task-advance.js";
 import { GroundingDecisionError } from "../services/grounding-transaction.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { forbidden, notFound } from "../middleware/error.js";
@@ -127,7 +127,9 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
       if (!parsed.success) return c.json({ error: "bad_request", message: parsed.error.message }, 400);
       const requested = parsed.data.to ?? null;
       const keyHeader = c.req.header("Idempotency-Key");
-      const key = keyHeader ? z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).parse(keyHeader) : null;
+      const keyCheck = keyHeader === undefined ? undefined : advanceIdempotencyKeySchema.safeParse(keyHeader);
+      if (keyCheck?.success === false) return c.json({ error: "validation_error", message: "Invalid Idempotency-Key header" }, 400);
+      const key = keyCheck?.success ? keyCheck.data : null;
       if (key && deps.service) {
         const history = await deps.service.lookupRouteOperation(taskId, actor, key, directAdvanceTransport(requested));
         if (history) {
