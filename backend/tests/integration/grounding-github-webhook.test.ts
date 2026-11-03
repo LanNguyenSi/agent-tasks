@@ -453,6 +453,26 @@ it("HOOK a merged PR that no task of the bound project matches warns and writes 
   expect(after.task).toEqual(before.task); expect(after.observations).toEqual(before.observations); expect(after.comments).toEqual(before.comments);
 });
 
+it("HOOK two projects bound to one repo, only one matches the merged PR: no unmatched diagnostics for either", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+  const other = await completionFixture(store);
+  await store.db.project.update({ where: { id: other.projectId }, data: { githubRepo: repo } });
+  expect((await request(payload("merged"), "two-projects")).status).toBe(200);
+  expect(warn).not.toHaveBeenCalled();
+  expect(await unmatchedRows({ projectId: { in: [f.projectId, other.projectId] } })).toHaveLength(0);
+});
+
+it("HOOK two projects bound to one repo, none matches the merged PR: one warn, one audit row per bound project", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+  const other = await completionFixture(store);
+  await store.db.project.update({ where: { id: other.projectId }, data: { githubRepo: repo } });
+  expect((await request(mergedFor(repo, 999), "two-projects-none")).status).toBe(200);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0]![0]).toMatchObject({ reason: "no_task", projectIds: expect.arrayContaining([f.projectId, other.projectId]) });
+  expect(await unmatchedRows({ projectId: f.projectId })).toHaveLength(1);
+  expect(await unmatchedRows({ projectId: other.projectId })).toHaveLength(1);
+});
+
 it("HOOK a matched merge, an unmatched PR that is not a merge and an ignored event write no unmatched-merge diagnostics", async () => {
   const warn = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
   expect((await request(payload("merged"), "matched")).status).toBe(200);
