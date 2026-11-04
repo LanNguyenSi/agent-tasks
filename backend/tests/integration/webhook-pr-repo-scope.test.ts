@@ -3,7 +3,8 @@
  *
  * PR numbers repeat across repositories and one project can hold tasks that
  * deliver into several repos (`deliverableRepo`). A delivery from repo A must
- * only match, by PR number, the tasks whose PR lives in repo A: the task's
+ * only match, by PR number, branch name or `[PR #N]` title (not by the exact
+ * prUrl), the tasks whose PR lives in repo A: the task's
  * `deliverableRepo` when set (compared case-insensitively and literally),
  * otherwise the project's own repo.
  */
