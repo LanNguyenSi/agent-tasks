@@ -241,8 +241,27 @@ describe("/settings/team follows the header team", () => {
     // DOM update findByText saw, so wait for it instead of reading the count.
     await waitFor(() => expect(vi.mocked(getAvailableScopes)).toHaveBeenCalledTimes(1));
 
+    // Beta's token load on a hand-held promise: the window between the pick
+    // and Beta's answer is exactly where a section mounted for Beta and
+    // seeded with Alpha's tokens would show.
+    const pendingB = deferred<AgentToken[]>();
+    mockGetAgentTokens.mockImplementation((teamId: string) =>
+      teamId === "team-b" ? pendingB.promise : Promise.resolve([token("tok-team-a", "alpha-bot")]),
+    );
+
     pick("Beta");
+    await waitFor(() => expect(mockGetAgentTokens).toHaveBeenCalledWith("team-b"));
+
+    // Pending: the page is Beta's (its loading placeholder names Beta) and
+    // shows none of Alpha's tokens.
+    expect(screen.queryByText("alpha-bot")).not.toBeInTheDocument();
+    expect(pageTeam()).toBe("Beta");
+
+    await act(async () => {
+      pendingB.resolve([token("tok-team-b", "beta-bot")]);
+    });
     expect(await screen.findByText("beta-bot")).toBeInTheDocument();
+    expect(screen.queryByText("alpha-bot")).not.toBeInTheDocument();
 
     // Exactly one more mount: Beta's own, once its tokens had arrived. A
     // Beta section seeded with Alpha's tokens (before Beta's load started)

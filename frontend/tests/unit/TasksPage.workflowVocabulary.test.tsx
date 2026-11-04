@@ -116,6 +116,19 @@ async function lastStatusIs(expected: string | undefined) {
   await waitFor(async () => expect((await statusRequests()).at(-1)).toBe(expected));
 }
 
+/** The options object of the last getTeamTasks request, with the filters the
+ * page left unset dropped: the page hands "no filter" as an explicit
+ * undefined (`status: statusKey || undefined`), and toHaveProperty counts
+ * such a key as present, so the unset keys are removed before the property
+ * check. Waits for at least one request, so "never requested" cannot pass. */
+async function lastRequestOptions(): Promise<Record<string, unknown>> {
+  const calls = await waitForCall(vi.mocked(getTeamTasks));
+  const last = calls[calls.length - 1]!;
+  expect(last[1]).toBeDefined();
+  const opts = last[1] as unknown as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined));
+}
+
 /** The status chips only: the buttons between the Status and the Priority label. */
 function statusChips(): HTMLButtonElement[] {
   const label = screen.getByText("Status", { selector: ".tasks-filter-label" });
@@ -335,7 +348,24 @@ describe("/tasks status parameter", () => {
 
   it("the clear-all sentinel still clears the status filter", async () => {
     await renderAt("scope=review&status=__any__");
-    await lastStatusIs(undefined);
+    // The resolved preset must be known while the sentinel holds: a request
+    // that merely predates the workflows proves nothing was cleared.
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledTimes(2));
+    await waitForCall(vi.mocked(getTeamTasks));
+    const opts = await lastRequestOptions();
+    // The last request was made and carries no status at all: not a status
+    // the preset would have produced, not even a status property.
+    expect(opts).toBeDefined();
+    expect(opts).not.toHaveProperty("status");
+    // And the UI shows the cleared status as cleared: no pressed chip.
+    await waitFor(() => expect(pressedStatusChips()).toEqual([]));
+    expect(statusChips().length).toBeGreaterThan(0);
+  });
+
+  it("the same scope without the sentinel asks for the preset's status (what the sentinel clears)", async () => {
+    await renderAt("scope=review");
+    await lastStatusIs("review,qa");
+    expect(await lastRequestOptions()).toHaveProperty("status", "review,qa");
   });
 });
 

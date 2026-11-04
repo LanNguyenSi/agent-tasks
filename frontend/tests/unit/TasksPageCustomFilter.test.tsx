@@ -22,8 +22,21 @@ import { waitForCall } from "./helpers/waitForCall";
 import userEvent from "@testing-library/user-event";
 import type { Task, User, Team, TeamTasksProject } from "../../src/lib/api";
 
-const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+// The mocked URL and router move together: router.replace writes through to
+// the search the mocked useSearchParams reports, the way the real router
+// updates the page's URL. The page then converges (its own URL writes, the
+// teamId of useCurrentTeam or the snap-back of an out-of-range page, land
+// and stop) instead of every effect re-deriving its write from a URL that
+// never moves and racing the test's click for the last replace.
 const nav = vi.hoisted(() => ({ search: "" }));
+const routerMocks = vi.hoisted(() => ({
+  replace: vi.fn((href: string) => {
+    nav.search = String(href).split("?")[1] ?? "";
+  }),
+  push: vi.fn((href: string) => {
+    nav.search = String(href).split("?")[1] ?? "";
+  }),
+}));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/tasks",
   useRouter: () => routerMocks,
@@ -79,11 +92,36 @@ async function renderAt(search: string) {
   await screen.findByRole("heading", { level: 1 });
 }
 
-/** The URL of the most recent router.replace (the page writes ?teamId= in
-once the current team resolves, so the asserted action is never calls[0]). */
-async function lastReplace(): Promise<URLSearchParams> {
-  const calls = await waitForCall(routerMocks.replace);
-  const href = String(calls[calls.length - 1]![0]);
+/** The URL as the mocked useSearchParams reports it right now: router.replace
+ * writes through to it, so this is the page's current URL. */
+function currentUrl(): URLSearchParams {
+  return new URLSearchParams(nav.search);
+}
+
+/** Wait until the page has settled: the session and the team list resolved
+ * (the first list request went out) and the page's own teamId write landed.
+ * The mocked useSearchParams follows router.replace, so once the URL carries
+ * the resolved team the page has no URL write left on its own: the next
+ * replace is one the test causes. A page write with another trigger (the
+ * snap-back of an out-of-range page) is waited for by the test that sets it
+ * up, on its own parameter. */
+async function settled(): Promise<void> {
+  await waitFor(() => expect(getTeamTasks).toHaveBeenCalled());
+  await vi.waitFor(() => expect(currentUrl().get("teamId")).toBe("team-1"));
+}
+
+/** Run `click` and return the query of the router.replace that click
+ * produced. settled() first: the page then has no write of its own pending,
+ * so the first replace after the click is the click's own and any later
+ * write of the click's new URL is outside the recorded window. */
+async function replaceOfClick(click: () => Promise<unknown>): Promise<URLSearchParams> {
+  let before = 0;
+  await vi.waitFor(() => {
+    before = routerMocks.replace.mock.calls.length;
+  });
+  await click();
+  const calls = await waitForCall(routerMocks.replace, { times: before + 1 });
+  const href = String(calls[before]![0]);
   return new URLSearchParams(href.split("?")[1] ?? "");
 }
 
@@ -160,8 +198,10 @@ describe("/tasks custom-filter detection", () => {
 describe("/tasks custom-filter Reset", () => {
   it("keeps the active scope tab and drops only the custom overrides", async () => {
     await renderAt("scope=mine&status=backlog&priority=LOW&mine=1&projectId=proj-1");
-    await userEvent.click(screen.getByRole("button", { name: "Reset to My Tasks" }));
-    const q = await lastReplace();
+    await settled();
+    const q = await replaceOfClick(() =>
+      userEvent.click(screen.getByRole("button", { name: "Reset to My Tasks" })),
+    );
     // Target: the active tab's preset (scope=mine stays; mine=1 is the
     // preset value again, so it is dropped from the URL too).
     expect(q.get("scope")).toBe("mine");
@@ -174,8 +214,14 @@ describe("/tasks custom-filter Reset", () => {
 
   it("keeps the scope and teamId parameters", async () => {
     await renderAt("scope=open&status=open&teamId=team-1&page=2");
-    await userEvent.click(screen.getByRole("button", { name: "Reset to Active" }));
-    const q = await lastReplace();
+    await settled();
+    // The page snaps its out-of-range page=2 back on its own (one task on
+    // screen): wait for that write too, it is the replace that used to race
+    // the click, and it still carries the status when it goes out.
+    await vi.waitFor(() => expect(currentUrl().has("page")).toBe(false));
+    const q = await replaceOfClick(() =>
+      userEvent.click(screen.getByRole("button", { name: "Reset to Active" })),
+    );
     expect(q.get("scope")).toBe("open");
     expect(q.get("teamId")).toBe("team-1");
     expect(q.has("status")).toBe(false);
@@ -185,16 +231,20 @@ describe("/tasks custom-filter Reset", () => {
 
   it("Reset to All on the All tab (no scope parameter) stays on the All tab", async () => {
     await renderAt("status=backlog");
-    await userEvent.click(screen.getByRole("button", { name: "Reset to All" }));
-    const q = await lastReplace();
+    await settled();
+    const q = await replaceOfClick(() =>
+      userEvent.click(screen.getByRole("button", { name: "Reset to All" })),
+    );
     expect(q.has("scope")).toBe(false);
     expect(q.has("status")).toBe(false);
   });
 
   it("picking another tab from the custom state leaves that state for the new tab's preset", async () => {
     await renderAt("scope=open&status=open");
-    await userEvent.click(screen.getByRole("tab", { name: "Recently Done" }));
-    const q = await lastReplace();
+    await settled();
+    const q = await replaceOfClick(() =>
+      userEvent.click(screen.getByRole("tab", { name: "Recently Done" })),
+    );
     expect(q.get("scope")).toBe("done");
     expect(q.has("status")).toBe(false);
   });
@@ -208,8 +258,10 @@ describe("/tasks Mine toggle removed in favour of the My Tasks tab", () => {
 
   it("the My Tasks tab links scope=mine and that scope fetches mine=true", async () => {
     await renderAt("");
-    await userEvent.click(screen.getByRole("tab", { name: "My Tasks" }));
-    const q = await lastReplace();
+    await settled();
+    const q = await replaceOfClick(() =>
+      userEvent.click(screen.getByRole("tab", { name: "My Tasks" })),
+    );
     expect(q.get("scope")).toBe("mine");
   });
 
