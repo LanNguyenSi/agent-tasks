@@ -104,13 +104,19 @@ describe("findTasksByPr — binding strategy", () => {
     expect(branchCalls).toHaveLength(0);
   });
 
-  it("scopes only the prNumber arm to the delivery's repo (deliverableRepo null or equal, case-insensitive)", async () => {
+  it("scopes the prNumber, branchName and title arms to the delivery's repo; the prUrl arm stays unscoped", async () => {
     await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42", headBranch: "feat/x" }, "Acme/My_Repo");
 
     const wheres = (mockTaskFindMany.mock.calls as Array<[{ where: Record<string, unknown> }]>).map(([a]) => a.where);
+    const scope = [{ deliverableRepo: null }, { deliverableRepo: { equals: "Acme/My\\_Repo", mode: "insensitive" } }];
     const numberArm = wheres.find((w) => w.prNumber === 42)!;
-    expect(numberArm.OR).toEqual([{ deliverableRepo: null }, { deliverableRepo: { equals: "Acme/My\\_Repo", mode: "insensitive" } }]);
-    for (const w of wheres.filter((w) => w.prNumber !== 42)) expect(w.OR).toBeUndefined();
+    const branchArm = wheres.find((w) => w.branchName === "feat/x")!;
+    const titleArm = wheres.find((w) => w.title !== undefined)!;
+    const urlArm = wheres.find((w) => w.prUrl === "https://pr/42")!;
+    expect(numberArm.OR).toEqual(scope);
+    expect(branchArm.OR).toEqual(scope);
+    expect(titleArm.OR).toEqual(scope);
+    expect(urlArm.OR).toBeUndefined();
   });
 
   it("returns empty array when no strategies match", async () => {

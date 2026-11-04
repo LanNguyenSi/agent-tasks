@@ -152,17 +152,19 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint, repo
           where: { projectId, prUrl, ...open },
         })
       : Promise.resolve([]),
-    // 3. branchName
+    // 3. branchName, scoped to the delivery's repo like the prNumber arm: a
+    // branch name is reusable across repos
     headBranch
       ? prisma.task.findMany({
-          where: { projectId, branchName: headBranch, ...open },
+          where: { projectId, branchName: headBranch, ...taskPrRepoScope(repoFullName), ...open },
         })
       : Promise.resolve([]),
-    // 4. title pattern (legacy fallback)
+    // 4. title pattern (legacy fallback), repo-scoped for the same reason
     prisma.task.findMany({
       where: {
         projectId,
         title: { contains: `[PR #${prNumber}]` },
+        ...taskPrRepoScope(repoFullName),
         ...open,
       },
     }),

@@ -124,8 +124,8 @@ Always set `branchName` and `prNumber` on your task so webhooks can reliably mat
 
 1. **`prNumber`**: strongest, set via `task_submit_pr` (or PATCH); counted only when the task's PR is in the repo the event came from (the task's `deliverableRepo`, else the project's `githubRepo`)
 2. **`prUrl`**: set via `task_submit_pr` (or PATCH)
-3. **`branchName`**: matches PR's `head.ref`
-4. **title pattern**: fallback, matches `[PR #N]`
+3. **`branchName`**: matches PR's `head.ref`; counted only when the task's PR is in the repo the event came from, like `prNumber`
+4. **title pattern**: fallback, matches `[PR #N]`; repo-scoped like `prNumber`
 
 **Cross-repo PR guard.** `task_finish` (and `task_submit_pr`) reject a
 `prUrl` whose `owner/repo` does not match the bound `project.githubRepo`.

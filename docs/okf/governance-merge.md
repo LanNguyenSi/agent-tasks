@@ -291,10 +291,14 @@ and the repo;
 timeline entries and moves a task in `review` back to `in_progress` on
 `changes_requested`. Other events are ignored. `findTasksByPr` matches a PR
 to tasks by `prNumber` (only tasks whose `deliverableRepo` is unset or equal to the
-delivery's repo case-insensitively, `taskPrRepoScope`, the same rule as the echo lookup above;
-the other arms are not repo-scoped), then `prUrl`, then a `branchName` equal to the PR
-head branch, then a title containing `[PR #<n>]`, deduplicated in that
-order. Both lookups skip `backlog` and every task in a terminal state of its
+delivery's repo case-insensitively, `taskPrRepoScope`, the same rule as the echo lookup above),
+then `prUrl` (not repo-scoped: a full PR URL is repo-specific), then a `branchName` equal to the PR
+head branch, then a title containing `[PR #<n>]` (both repo-scoped with `taskPrRepoScope`, because
+a branch name or title can be reused across repos), deduplicated in that
+order. The legacy handler never looks across projects: a task whose `deliverableRepo` differs
+from its project's repo is moved by neither repo's deliveries here (the project's repo is
+matched by `deliverableRepo: null` or an equal value only) and is closed through the API; only
+the grounding webhook path (mounted when grounding is configured, `backend/src/app.ts`) reaches such a task. Both lookups skip `backlog` and every task in a terminal state of its
 own workflow; the terminal states are read per workflow
 (`taskStatusByWorkflow`, `backend/src/services/workflow-status-filter.ts`), so
 a state name that is terminal in one workflow and open in another is judged by

@@ -1,5 +1,5 @@
 /**
- * PR-number lookup of the legacy GitHub webhook against a real database.
+ * PR lookup (number, branch and title arms) of the legacy GitHub webhook against a real database.
  *
  * PR numbers repeat across repositories and one project can hold tasks that
  * deliver into several repos (`deliverableRepo`). A delivery from repo A must
@@ -85,18 +85,18 @@ async function task(overrides: Record<string, unknown> = {}) {
   return id;
 }
 
-function mergedDelivery(fullName: string, number = PR): GitHubPullRequestPayload {
+function mergedDelivery(fullName: string, number = PR, extra: { ref?: string; title?: string } = {}): GitHubPullRequestPayload {
   return {
     action: "closed",
     pull_request: {
       number,
       state: "closed",
-      title: "work",
+      title: extra.title ?? "work",
       body: null,
       html_url: `https://github.com/${fullName}/pull/${number}`,
       merged: true,
       merged_by: { login: "merger" },
-      head: { ref: `branch-${randomUUID().slice(0, 8)}` },
+      head: { ref: extra.ref ?? `branch-${randomUUID().slice(0, 8)}` },
     },
     repository: { full_name: fullName },
   } as GitHubPullRequestPayload;
@@ -138,17 +138,31 @@ describe("findTasksByPr: the prNumber arm is scoped to the delivery's repo", () 
     expect(await findTasksByPr(projectId, { prNumber: PR }, "acme/my_repo")).toEqual([]);
   });
 
-  it("only the prNumber arm is scoped: prUrl, branch and title bindings still match", async () => {
-    const byUrl = await task({ prNumber: null, prUrl: "https://github.com/x/y/pull/7", deliverableRepo: repoB });
-    const byBranch = await task({ prNumber: null, branchName: "feat/scope", deliverableRepo: repoB });
-    const byTitle = await task({ prNumber: null, title: `[PR #${PR}] work`, deliverableRepo: repoB });
+  it("branch arm: a task of another repo is not found, a null or equal-repo task is, case-insensitively", async () => {
+    const other = await task({ prNumber: null, branchName: "feat/scope", deliverableRepo: repoB });
+    const own = await task({ prNumber: null, branchName: "feat/scope", deliverableRepo: null });
+    const equal = await task({ prNumber: null, branchName: "feat/scope", deliverableRepo: repoA.toLowerCase() });
 
-    const found = await findTasksByPr(
-      projectId,
-      { prNumber: PR, prUrl: "https://github.com/x/y/pull/7", headBranch: "feat/scope" },
-      repoA,
-    );
-    expect(found.map((t) => t.id).sort()).toEqual([byUrl, byBranch, byTitle].sort());
+    const found = (await findTasksByPr(projectId, { prNumber: PR + 1, headBranch: "feat/scope" }, repoA)).map((t) => t.id);
+    expect(found).not.toContain(other);
+    expect(found.sort()).toEqual([own, equal].sort());
+  });
+
+  it("title arm: a task of another repo is not found, a null or equal-repo task is, case-insensitively", async () => {
+    const title = `[PR #${PR}] work`;
+    const other = await task({ prNumber: null, title, deliverableRepo: repoB });
+    const own = await task({ prNumber: null, title, deliverableRepo: null });
+    const equal = await task({ prNumber: null, title, deliverableRepo: repoA.toUpperCase() });
+
+    const found = (await findTasksByPr(projectId, { prNumber: PR }, repoA)).map((t) => t.id);
+    expect(found).not.toContain(other);
+    expect(found.sort()).toEqual([own, equal].sort());
+  });
+
+  it("prUrl arm stays unscoped: a full PR URL is repo-specific, so it matches whatever the deliverableRepo", async () => {
+    const byUrl = await task({ prNumber: null, prUrl: "https://github.com/x/y/pull/7", deliverableRepo: repoB });
+    const found = await findTasksByPr(projectId, { prNumber: PR + 1, prUrl: "https://github.com/x/y/pull/7" }, repoA);
+    expect(found.map((t) => t.id)).toEqual([byUrl]);
   });
 });
 
@@ -173,6 +187,26 @@ describe("a merged delivery moves only the task bound to the PR in its own repo"
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toMatchObject({ reason: "no_task", prNumber: PR });
     expect(await unmatched()).toHaveLength(1);
+  });
+
+  it("a reused branch name in repo A does not move the task of repo B, but moves the task of repo A", async () => {
+    const inB = await task({ prNumber: null, branchName: "feat/reused", deliverableRepo: repoB });
+    const inA = await task({ prNumber: null, branchName: "feat/reused", deliverableRepo: null });
+
+    await handlePullRequestEvent(mergedDelivery(repoA, PR + 5, { ref: "feat/reused" }));
+
+    expect(await statusOf(inB)).toBe("in_progress");
+    expect(await statusOf(inA)).toBe("done");
+  });
+
+  it("a [PR #N] title in repo A's delivery does not move the task of repo B, but moves the task of repo A", async () => {
+    const inB = await task({ prNumber: null, title: `[PR #${PR + 6}] work`, deliverableRepo: repoB });
+    const inA = await task({ prNumber: null, title: `[PR #${PR + 6}] work`, deliverableRepo: null });
+
+    await handlePullRequestEvent(mergedDelivery(repoA, PR + 6));
+
+    expect(await statusOf(inB)).toBe("in_progress");
+    expect(await statusOf(inA)).toBe("done");
   });
 
   it("the delivery's repo in another letter case still moves the null and the equal-repo task", async () => {
