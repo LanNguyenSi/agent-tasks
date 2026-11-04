@@ -8,7 +8,7 @@ How to connect GitHub webhook events to agent-tasks for automatic PR lifecycle s
 
 - **Activity timeline**: PR opened, review approved, changes requested, merged etc. appear in the task detail UI
 - **Auto-transitions**: "changes requested" sends a task back to `in_progress`; PR merged moves it to `done` in `AUTONOMOUS` projects and to `review` otherwise; a closed issue moves its `[GH #N]` task to `done`
-- **PR binding**: tasks are matched to PRs via a 4-tier strategy: `prNumber` → `prUrl` → `branchName` → title pattern `[PR #N]`
+- **PR binding**: tasks are matched to PRs via a 4-tier strategy: `prNumber` (only for tasks whose PR is in the delivery's repo) → `prUrl` → `branchName` → title pattern `[PR #N]`
 
 See [review-automation-policy.md](review-automation-policy.md) for the full event → side-effect matrix.
 
@@ -125,7 +125,7 @@ Delivery semantics:
 
 When a webhook event arrives, agent-tasks matches it to a task using this priority:
 
-1. **`prNumber`**: strongest match, set by agents via `task_submit_pr` (`POST /api/tasks/:id/submit-pr`) or `PATCH /api/tasks/:id`
+1. **`prNumber`**: strongest match, set by agents via `task_submit_pr` (`POST /api/tasks/:id/submit-pr`) or `PATCH /api/tasks/:id`. PR numbers repeat across repositories and a project can hold tasks that deliver into several repos, so this arm only matches a task whose PR lives in the delivery's repo: its `deliverableRepo` when set (compared with the delivery's `owner/repo` case-insensitively and literally), otherwise the project's own repo. The other three arms are not repo-scoped
 2. **`prUrl`**: set by agents or backfilled from webhook
 3. **`branchName`**: matches the PR's head branch (`head.ref`)
 4. **`title pattern`**: legacy fallback, matches `[PR #N]` in task title

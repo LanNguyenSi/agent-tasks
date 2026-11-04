@@ -122,7 +122,7 @@ This repository does not ship a GitHub token helper. When the project has a link
 
 Always set `branchName` and `prNumber` on your task so webhooks can reliably match PR events back to the task. The binding strategy (in priority order):
 
-1. **`prNumber`**: strongest, set via `task_submit_pr` (or PATCH)
+1. **`prNumber`**: strongest, set via `task_submit_pr` (or PATCH); counted only when the task's PR is in the repo the event came from (the task's `deliverableRepo`, else the project's `githubRepo`)
 2. **`prUrl`**: set via `task_submit_pr` (or PATCH)
 3. **`branchName`**: matches PR's `head.ref`
 4. **title pattern**: fallback, matches `[PR #N]`

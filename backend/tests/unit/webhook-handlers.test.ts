@@ -563,8 +563,9 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
       );
     // The open lookups come back empty; the unfiltered OR lookup is evaluated against one terminal task row.
     const withTerminalTask = (row: Row) =>
-      mockTaskFindMany.mockImplementation(async (args: { where: { OR?: OrClause[] } }) => {
-        if (!args.where.OR) return [];
+      mockTaskFindMany.mockImplementation(async (args: { where: { OR?: OrClause[] }; take?: number }) => {
+        // Only the echo lookup (take: 1) is evaluated; the open lookups carry their own repo-scope OR.
+        if (args.take !== 1 || !args.where.OR) return [];
         const hit = args.where.OR.some(
           (c) =>
             (c.prNumber !== undefined && c.prNumber === row.prNumber && repoScopeHolds(c, row)) ||
@@ -628,7 +629,7 @@ describe("handlePullRequestEvent: merged delivery that matches no project or no 
     it("the unfiltered lookup is scoped to the project and asks for the repo-scoped prNumber and the prUrl only", async () => {
       mockTaskFindMany.mockResolvedValue([]);
       await handlePullRequestEvent(delivery("closed", true));
-      const orCall = mockTaskFindMany.mock.calls.map(([arg]) => arg as { where: { OR?: unknown[] }; take?: number }).find((arg) => arg.where.OR);
+      const orCall = mockTaskFindMany.mock.calls.map(([arg]) => arg as { where: { OR?: unknown[] }; take?: number }).find((arg) => arg.take === 1);
       expect(orCall?.where).toEqual({ projectId: "proj-1", OR: [
           { prNumber: 42, OR: [{ deliverableRepo: null }, { deliverableRepo: { equals: "test/repo", mode: "insensitive" } }] },
           { prUrl: "https://github.com/test/repo/pull/42" },

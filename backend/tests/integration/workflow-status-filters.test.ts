@@ -493,6 +493,8 @@ describe("single-active-claim check follows the task's workflow", () => {
 
 describe("webhook status filters follow the task's workflow", () => {
   const PR = 42;
+  // The seeded tasks carry no deliverableRepo, so they belong to whichever repo the delivery came from.
+  const REPO = "acme/filters";
   const PR_URL = "https://github.com/acme/filters/pull/42";
   const BRANCH = "feat/filters";
 
@@ -506,7 +508,7 @@ describe("webhook status filters follow the task's workflow", () => {
   ) {
     const byStatus = new Map<string, string>();
     for (const status of statuses) byStatus.set(status, await seedTask(project, { status, workflowId, ...binding }));
-    const found = await findTasksByPr(project, hint);
+    const found = await findTasksByPr(project, hint, REPO);
     return { byStatus, foundIds: found.map((t) => t.id) };
   }
 
@@ -544,7 +546,7 @@ describe("webhook status filters follow the task's workflow", () => {
     for (const status of ["in_progress", "review", "done", "backlog"]) {
       byStatus.set(status, await seedTask(project, { status, workflowId: status === "review" ? wf : null, prNumber: PR }));
     }
-    const ids = (await findTasksByPr(project, { prNumber: PR })).map((t) => t.id);
+    const ids = (await findTasksByPr(project, { prNumber: PR }, REPO)).map((t) => t.id);
     expect(ids.sort()).toEqual([byStatus.get("in_progress")!, byStatus.get("review")!].sort());
   });
 
@@ -558,7 +560,7 @@ describe("webhook status filters follow the task's workflow", () => {
     const pinnedDone = await seedTask(project, { status: "done", workflowId: pinnedWf, ...binding });
     const pinnedShipped = await seedTask(project, { status: "shipped", workflowId: pinnedWf, ...binding });
 
-    const ids = (await findTasksByPr(project, { prNumber: PR })).map((t) => t.id);
+    const ids = (await findTasksByPr(project, { prNumber: PR }, REPO)).map((t) => t.id);
     expect(ids).toContain(unpinnedDone);
     expect(ids).toContain(pinnedDone);
     expect(ids).not.toContain(unpinnedShipped);
@@ -589,7 +591,7 @@ describe("webhook status filters follow the task's workflow", () => {
     const closingShipped = await seedTask(project, { status: "shipped", workflowId: closingWf, ...binding });
     const closingClosed = await seedTask(project, { status: "closed", workflowId: closingWf, ...binding });
 
-    const ids = (await findTasksByPr(project, { prNumber: PR })).map((t) => t.id);
+    const ids = (await findTasksByPr(project, { prNumber: PR }, REPO)).map((t) => t.id);
     expect(ids.sort()).toEqual([customClosed, closingShipped].sort());
     expect(ids).not.toContain(customShipped);
     expect(ids).not.toContain(closingClosed);

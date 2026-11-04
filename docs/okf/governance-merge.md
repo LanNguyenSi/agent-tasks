@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-11-03T15:00:15Z
+timestamp: 2026-11-04T05:09:12Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -290,7 +290,9 @@ and the repo;
 `pull_request_review` records `approved`, `commented` and `dismissed` as
 timeline entries and moves a task in `review` back to `in_progress` on
 `changes_requested`. Other events are ignored. `findTasksByPr` matches a PR
-to tasks by `prNumber`, then `prUrl`, then a `branchName` equal to the PR
+to tasks by `prNumber` (only tasks whose `deliverableRepo` is unset or equal to the
+delivery's repo case-insensitively, `taskPrRepoScope`, the same rule as the echo lookup above;
+the other arms are not repo-scoped), then `prUrl`, then a `branchName` equal to the PR
 head branch, then a title containing `[PR #<n>]`, deduplicated in that
 order. Both lookups skip `backlog` and every task in a terminal state of its
 own workflow; the terminal states are read per workflow

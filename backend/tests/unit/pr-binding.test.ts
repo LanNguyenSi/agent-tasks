@@ -33,7 +33,7 @@ describe("findTasksByPr — binding strategy", () => {
       return Promise.resolve([]);
     });
 
-    const result = await findTasksByPr("p1", { prNumber: 42 });
+    const result = await findTasksByPr("p1", { prNumber: 42 }, "acme/repo");
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("t1");
   });
@@ -44,7 +44,7 @@ describe("findTasksByPr — binding strategy", () => {
       return Promise.resolve([]);
     });
 
-    const result = await findTasksByPr("p1", { prNumber: 99, prUrl: "https://pr/42" });
+    const result = await findTasksByPr("p1", { prNumber: 99, prUrl: "https://pr/42" }, "acme/repo");
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("t1");
   });
@@ -55,7 +55,7 @@ describe("findTasksByPr — binding strategy", () => {
       return Promise.resolve([]);
     });
 
-    const result = await findTasksByPr("p1", { prNumber: 99, headBranch: "feat/x" });
+    const result = await findTasksByPr("p1", { prNumber: 99, headBranch: "feat/x" }, "acme/repo");
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("t2");
   });
@@ -66,7 +66,7 @@ describe("findTasksByPr — binding strategy", () => {
       return Promise.resolve([]);
     });
 
-    const result = await findTasksByPr("p1", { prNumber: 99 });
+    const result = await findTasksByPr("p1", { prNumber: 99 }, "acme/repo");
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("t3");
   });
@@ -79,13 +79,13 @@ describe("findTasksByPr — binding strategy", () => {
       return Promise.resolve([]);
     });
 
-    const result = await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42" });
+    const result = await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42" }, "acme/repo");
     expect(result).toHaveLength(1);
   });
 
   it("skips prUrl query when not provided", async () => {
     mockTaskFindMany.mockResolvedValue([]);
-    await findTasksByPr("p1", { prNumber: 42 });
+    await findTasksByPr("p1", { prNumber: 42 }, "acme/repo");
 
     // Should have been called 3 times: prNumber, branchName(skipped→resolved), title
     // prUrl query is skipped (resolves empty), branchName is skipped too
@@ -97,16 +97,25 @@ describe("findTasksByPr — binding strategy", () => {
 
   it("skips branchName query when not provided", async () => {
     mockTaskFindMany.mockResolvedValue([]);
-    await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42" });
+    await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42" }, "acme/repo");
 
     const calls = mockTaskFindMany.mock.calls;
     const branchCalls = calls.filter((c: unknown[]) => (c[0] as { where: Record<string, unknown> }).where.branchName !== undefined);
     expect(branchCalls).toHaveLength(0);
   });
 
+  it("scopes only the prNumber arm to the delivery's repo (deliverableRepo null or equal, case-insensitive)", async () => {
+    await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42", headBranch: "feat/x" }, "Acme/My_Repo");
+
+    const wheres = (mockTaskFindMany.mock.calls as Array<[{ where: Record<string, unknown> }]>).map(([a]) => a.where);
+    const numberArm = wheres.find((w) => w.prNumber === 42)!;
+    expect(numberArm.OR).toEqual([{ deliverableRepo: null }, { deliverableRepo: { equals: "Acme/My\\_Repo", mode: "insensitive" } }]);
+    for (const w of wheres.filter((w) => w.prNumber !== 42)) expect(w.OR).toBeUndefined();
+  });
+
   it("returns empty array when no strategies match", async () => {
     mockTaskFindMany.mockResolvedValue([]);
-    const result = await findTasksByPr("p1", { prNumber: 999 });
+    const result = await findTasksByPr("p1", { prNumber: 999 }, "acme/repo");
     expect(result).toEqual([]);
   });
 
@@ -118,7 +127,7 @@ describe("findTasksByPr — binding strategy", () => {
   // any one strategy is caught even if the others still filter correctly.
   it("every matching strategy's where clause excludes both done and backlog statuses", async () => {
     mockTaskFindMany.mockResolvedValue([]);
-    await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42", headBranch: "feat/x" });
+    await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42", headBranch: "feat/x" }, "acme/repo");
 
     const calls = mockTaskFindMany.mock.calls as Array<[{ where: Record<string, unknown> }]>;
     expect(calls).toHaveLength(4);
