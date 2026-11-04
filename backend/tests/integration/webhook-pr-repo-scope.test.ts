@@ -27,7 +27,13 @@ vi.mock("../../src/lib/prisma.js", () => ({
   ),
 }));
 
-import { findTasksByPr, handlePullRequestEvent, type GitHubPullRequestPayload } from "../../src/services/github-webhook.js";
+import {
+  findTasksByPr,
+  handlePullRequestEvent,
+  handlePullRequestReviewEvent,
+  type GitHubPullRequestPayload,
+  type GitHubPullRequestReviewPayload,
+} from "../../src/services/github-webhook.js";
 import { logger } from "../../src/lib/logger.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
@@ -193,5 +199,54 @@ describe("a merged delivery moves only the task bound to the PR in its own repo"
     });
     await handlePullRequestEvent(mergedDelivery(other.githubRepo!));
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the delivery's repo reaches every other findTasksByPr call site", () => {
+  const commentsOf = async (id: string) => (await db.comment.findMany({ where: { taskId: id } })).map((c) => c.content);
+
+  it("opened: a task with the equal repo is found by prNumber alone and gets the url and branch backfilled", async () => {
+    const inA = await task({ deliverableRepo: repoA.toLowerCase() });
+    const inB = await task({ deliverableRepo: repoB });
+    const delivery = { ...mergedDelivery(repoA.toUpperCase()), action: "opened" } as GitHubPullRequestPayload;
+    delivery.pull_request.merged = false;
+
+    await handlePullRequestEvent(delivery);
+
+    expect(await db.task.findUniqueOrThrow({ where: { id: inA } })).toMatchObject({
+      prUrl: delivery.pull_request.html_url,
+      branchName: delivery.pull_request.head!.ref,
+    });
+    expect(await db.task.findUniqueOrThrow({ where: { id: inB } })).toMatchObject({ prUrl: null, branchName: null });
+  });
+
+  it("closed without merge: the timeline entry goes only to the task of the delivery's repo", async () => {
+    const inA = await task({ deliverableRepo: repoA.toLowerCase() });
+    const inB = await task({ deliverableRepo: repoB });
+    const delivery = mergedDelivery(repoA.toUpperCase());
+    delivery.pull_request.merged = false;
+
+    await handlePullRequestEvent(delivery);
+
+    expect(await commentsOf(inA)).toEqual([`[webhook] PR #${PR} closed without merge`]);
+    expect(await commentsOf(inB)).toEqual([]);
+    expect(await statusOf(inA)).toBe("in_progress");
+  });
+
+  it("pull_request_review changes_requested: only the task of the delivery's repo moves review -> in_progress", async () => {
+    const inA = await task({ status: "review", deliverableRepo: repoA.toLowerCase() });
+    const inB = await task({ status: "review", deliverableRepo: repoB });
+    const review = {
+      action: "submitted",
+      review: { state: "changes_requested", user: { login: "rev" }, html_url: "https://github.com/x" },
+      pull_request: { number: PR, title: "work", html_url: `https://github.com/${repoA}/pull/${PR}`, head: { ref: "some-branch" } },
+      repository: { full_name: repoA.toUpperCase() },
+    } as GitHubPullRequestReviewPayload;
+
+    await handlePullRequestReviewEvent(review);
+
+    expect(await statusOf(inA)).toBe("in_progress");
+    expect(await statusOf(inB)).toBe("review");
+    expect(await commentsOf(inB)).toEqual([]);
   });
 });
