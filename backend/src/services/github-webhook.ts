@@ -86,7 +86,8 @@ export interface GitHubPullRequestReviewPayload {
  * Find tasks bound to a PR within a project.
  *
  * Matching strategy (priority order per ADR 0014):
- *   1. prNumber field  — strongest, set by agents or webhook
+ *   1. prNumber field  — strongest, set by agents or webhook; counted only
+ *      for tasks whose PR is in the delivery's repo (`taskPrRepoScope`)
  *   2. prUrl field     — set by agents or webhook
  *   3. branchName      — matches head branch from PR payload
  *   4. title pattern   — legacy fallback ([PR #N])
@@ -117,7 +118,20 @@ async function openTaskStatusFilter(projectId: string): Promise<Prisma.TaskWhere
   return { status: { not: BACKLOG_STATE }, AND: [notTerminal] };
 }
 
-export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
+/**
+ * Where-fragment for the tasks whose PR lives in `repoFullName`: the task's
+ * `deliverableRepo` when set, otherwise the project's own repo (the repo the
+ * webhook delivery was matched to the project by, so `deliverableRepo: null`
+ * always qualifies). PR numbers repeat across repos and one project can hold
+ * tasks delivering into several of them, so a bare `prNumber` match would let
+ * a delivery from repo A move the task bound to PR #N in repo B. The compare is
+ * case-insensitive and literal (see `githubRepoEqualsInsensitive`).
+ */
+function taskPrRepoScope(repoFullName: string): Prisma.TaskWhereInput {
+  return { OR: [{ deliverableRepo: null }, { deliverableRepo: githubRepoEqualsInsensitive(repoFullName) }] };
+}
+
+export async function findTasksByPr(projectId: string, hint: PrBindingHint, repoFullName: string) {
   const { prNumber, prUrl, headBranch } = hint;
 
   // The task's own workflow decides which statuses are terminal, so the
@@ -128,9 +142,9 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
 
   // Run all matching strategies in parallel
   const queries = [
-    // 1. prNumber (strongest)
+    // 1. prNumber (strongest), only for tasks whose PR is in the delivery's repo
     prisma.task.findMany({
-      where: { projectId, prNumber, ...open },
+      where: { projectId, prNumber, ...taskPrRepoScope(repoFullName), ...open },
     }),
     // 2. prUrl
     prUrl
@@ -187,10 +201,7 @@ async function hasUnopenedTaskForPr(projectId: string, hint: PrBindingHint, repo
     where: {
       projectId,
       OR: [
-        {
-          prNumber,
-          OR: [{ deliverableRepo: null }, { deliverableRepo: githubRepoEqualsInsensitive(repoFullName) }],
-        },
+        { prNumber, ...taskPrRepoScope(repoFullName) },
         ...(prUrl ? [{ prUrl }] : []),
       ],
     },
@@ -536,7 +547,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
   let mergeHandled = false;
   if (payload.action === "closed" && payload.pull_request.merged) {
     for (const project of projects) {
-      const found = await findTasksByPr(project.id, hint);
+      const found = await findTasksByPr(project.id, hint, repoFullName);
       mergedTasks.set(project.id, found);
       if (found.length > 0 || (await hasUnopenedTaskForPr(project.id, hint, repoFullName))) mergeHandled = true;
     }
@@ -546,7 +557,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
     if (payload.action === "opened") {
       // Backfill binding fields on existing tasks; do NOT create new tasks.
       // Task creation is a deliberate agent/human action, not a webhook side effect.
-      const existing = await findTasksByPr(project.id, hint);
+      const existing = await findTasksByPr(project.id, hint, repoFullName);
       if (existing.length > 0) {
         for (const task of existing) {
           const updates: Record<string, unknown> = {};
@@ -567,7 +578,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         });
       }
     } else if (payload.action === "closed") {
-      const tasks = mergedTasks.get(project.id) ?? (await findTasksByPr(project.id, hint));
+      const tasks = mergedTasks.get(project.id) ?? (await findTasksByPr(project.id, hint, repoFullName));
 
       if (payload.pull_request.merged) {
         // Policy: PR merged → terminal state (AUTONOMOUS) OR → review-like
@@ -653,7 +664,7 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
   };
 
   for (const project of projects) {
-    const tasks = await findTasksByPr(project.id, hint);
+    const tasks = await findTasksByPr(project.id, hint, repoFullName);
 
     for (const task of tasks) {
       switch (reviewState) {
