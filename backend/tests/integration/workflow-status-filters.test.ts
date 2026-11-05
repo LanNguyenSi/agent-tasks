@@ -215,6 +215,52 @@ describe("the free-edge fixtures", () => {
   });
 });
 
+describe("review pickup and the distinct-reviewer exclusion (real SQL: `<>` never matches NULL)", () => {
+  it("offers a human-created task (createdByAgentId NULL) in review to an agent", async () => {
+    const project = await seedProject();
+    const humanTask = await seedTask(project, { status: "review", createdByAgentId: null });
+    const body = await (await pickup(worker)).json();
+    expect(body.kind).toBe("review");
+    expect(body.task.id).toBe(humanTask);
+  });
+
+  it("does not offer a task the same agent created", async () => {
+    const project = await seedProject();
+    await seedTask(project, { status: "review", ...authoredBy(worker) });
+    expect(await (await pickup(worker)).json()).toEqual({ kind: "idle" });
+  });
+
+  it("offers a task another agent created", async () => {
+    const project = await seedProject();
+    const task = await seedTask(project, { status: "review", ...authoredBy(author) });
+    const body = await (await pickup(worker)).json();
+    expect(body.kind).toBe("review");
+    expect(body.task.id).toBe(task);
+  });
+
+  it("with all three in one pool, skips only the caller's own task", async () => {
+    const project = await seedProject();
+    // Oldest first within equal priority: the caller's own task would win if it were not excluded.
+    const own = await seedTask(project, { status: "review", ...authoredBy(worker), createdAt: new Date("2026-01-01T00:00:00Z") });
+    const human = await seedTask(project, { status: "review", createdByAgentId: null, createdAt: new Date("2026-01-02T00:00:00Z") });
+    const other = await seedTask(project, { status: "review", ...authoredBy(author), createdAt: new Date("2026-01-03T00:00:00Z") });
+    const first = await (await pickup(worker)).json();
+    expect(first.kind).toBe("review");
+    expect(first.task.id).toBe(human);
+    await db.task.update({ where: { id: human }, data: { reviewClaimedByAgentId: author.type === "agent" ? author.tokenId : null, reviewClaimedAt: new Date() } });
+    const second = await (await pickup(worker)).json();
+    expect(second.kind).toBe("review");
+    expect(second.task.id).toBe(other);
+    expect(second.task.id).not.toBe(own);
+  });
+
+  it("a human-created task whose review is already claimed stays out of the pool", async () => {
+    const project = await seedProject();
+    await seedTask(project, { status: "review", createdByAgentId: null, ...reviewedBy(author) });
+    expect(await (await pickup(worker)).json()).toEqual({ kind: "idle" });
+  });
+});
+
 describe("review pickup follows the task's workflow", () => {
   it("offers a task in the review-like state of a pinned custom workflow, not one in its terminal state or in a literal `review`", async () => {
     const project = await seedProject();
