@@ -2161,14 +2161,14 @@ taskRouter.post("/tasks/pickup", async (c) => {
   }
 
   // ── 2. Review pickup ──────────────────────────────────────────────────────
-  // Distinct-reviewer: the agent must not be the author of the task.
+  // Distinct-reviewer: the agent must not be the author of the task. Null-safe (`IS NULL OR <>`):
+  // a human-created task has no createdByAgentId, and `{ not: id }` (`<> id`) never matches NULL.
   const reviewStatusFilter = buildTaskStatusFilter(workflowRows, { kind: "review", match: "in" });
   const reviewTask = await prisma.task.findFirst({
     where: {
-      AND: [reviewStatusFilter],
+      AND: [reviewStatusFilter, { OR: [{ createdByAgentId: null }, { createdByAgentId: { not: actor.tokenId } }] }],
       reviewClaimedByAgentId: null,
       reviewClaimedByUserId: null,
-      createdByAgentId: { not: actor.tokenId },
       ...teamFilter,
       ...noUnresolvedBlocker,
     },

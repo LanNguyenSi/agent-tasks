@@ -1142,6 +1142,44 @@ export interface EffectiveWorkflow {
   definition: WorkflowDefinition;
 }
 
+/** A task a workflow change left on a status the workflow it follows does not have. */
+export interface StrandedTaskRef {
+  id: string;
+  status: string;
+}
+
+/**
+ * What a successful workflow write reports about tasks it leaves where they
+ * are (backend `strandingReportFields`): finished tasks whose status the new
+ * definition lacks, and tasks already on a status their definition does not
+ * have; each list holds at most 50 and its `...Truncated` flag says it was cut.
+ * Every field is optional: an older backend sends none of them.
+ */
+export interface StrandingReport {
+  terminalOutsideWorkflow?: StrandedTaskRef[];
+  terminalOutsideTruncated?: boolean;
+  outsideWorkflow?: StrandedTaskRef[];
+  outsideTruncated?: boolean;
+}
+
+function pickStrandingReport(body: StrandingReport): StrandingReport {
+  return {
+    terminalOutsideWorkflow: body.terminalOutsideWorkflow,
+    terminalOutsideTruncated: body.terminalOutsideTruncated,
+    outsideWorkflow: body.outsideWorkflow,
+    outsideTruncated: body.outsideTruncated,
+  };
+}
+
+function withReport(data: EffectiveWorkflow & StrandingReport): EffectiveWorkflow & { report: StrandingReport } {
+  return {
+    source: data.source,
+    workflowId: data.workflowId,
+    definition: data.definition,
+    report: pickStrandingReport(data),
+  };
+}
+
 export async function getWorkflowRules(): Promise<WorkflowRule[]> {
   const data = await request<{ rules: WorkflowRule[] }>(`/api/workflow-rules`);
   return data.rules;
@@ -1159,10 +1197,13 @@ export async function customizeProjectWorkflow(projectId: string): Promise<Effec
   });
 }
 
-export async function resetProjectWorkflow(projectId: string): Promise<EffectiveWorkflow> {
-  return request<EffectiveWorkflow>(`/api/projects/${projectId}/workflow`, {
+export async function resetProjectWorkflow(
+  projectId: string,
+): Promise<EffectiveWorkflow & { report: StrandingReport }> {
+  const data = await request<EffectiveWorkflow & StrandingReport>(`/api/projects/${projectId}/workflow`, {
     method: "DELETE",
   });
+  return withReport(data);
 }
 
 export interface WorkflowTemplateSummary {
@@ -1178,10 +1219,15 @@ export async function listWorkflowTemplates(): Promise<WorkflowTemplateSummary[]
   return data.templates;
 }
 
-export async function applyWorkflowTemplate(projectId: string, slug: string): Promise<EffectiveWorkflow> {
-  return request<EffectiveWorkflow>(`/api/projects/${projectId}/workflow/apply-template/${slug}`, {
-    method: "POST",
-  });
+export async function applyWorkflowTemplate(
+  projectId: string,
+  slug: string,
+): Promise<EffectiveWorkflow & { report: StrandingReport }> {
+  const data = await request<EffectiveWorkflow & StrandingReport>(
+    `/api/projects/${projectId}/workflow/apply-template/${slug}`,
+    { method: "POST" },
+  );
+  return withReport(data);
 }
 
 export interface Workflow {
@@ -1202,23 +1248,23 @@ export async function getWorkflows(projectId: string): Promise<Workflow[]> {
 export async function createWorkflow(
   projectId: string,
   body: { name: string; isDefault?: boolean; definition: WorkflowDefinition },
-): Promise<Workflow> {
-  const data = await request<{ workflow: Workflow }>(`/api/projects/${projectId}/workflows`, {
+): Promise<Workflow & { report: StrandingReport }> {
+  const data = await request<{ workflow: Workflow } & StrandingReport>(`/api/projects/${projectId}/workflows`, {
     method: "POST",
     body: JSON.stringify(body),
   });
-  return data.workflow;
+  return { ...data.workflow, report: pickStrandingReport(data) };
 }
 
 export async function updateWorkflow(
   workflowId: string,
   body: { name?: string; isDefault?: boolean; definition?: WorkflowDefinition },
-): Promise<Workflow> {
-  const data = await request<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, {
+): Promise<{ workflow: Workflow; report: StrandingReport }> {
+  const data = await request<{ workflow: Workflow } & StrandingReport>(`/api/workflows/${workflowId}`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
-  return data.workflow;
+  return { workflow: data.workflow, report: pickStrandingReport(data) };
 }
 
 export async function getProjectAuditLogs(projectId: string, limit = 50): Promise<AuditLog[]> {

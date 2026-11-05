@@ -420,9 +420,13 @@ describe("POST /tasks/pickup", () => {
 
     // The 2nd findFirst call (review pickup) must include distinct-reviewer filter
     const reviewCall = prismaMocks.taskFindFirst.mock.calls[1]![0];
-    expect(reviewCall.where.createdByAgentId).toEqual({ not: "agent-1" });
+    // Null-safe: a human-created task (createdByAgentId NULL) is not excluded.
+    expect(reviewCall.where.createdByAgentId).toBeUndefined();
     // No workflow row: every task resolves to the built-in workflow, whose review-like state is `review`.
-    expect(reviewCall.where.AND).toEqual([{ OR: [{ workflowId: null, status: { in: ["review"] } }] }]);
+    expect(reviewCall.where.AND).toEqual([
+      { OR: [{ workflowId: null, status: { in: ["review"] } }] },
+      { OR: [{ createdByAgentId: null }, { createdByAgentId: { not: "agent-1" } }] },
+    ]);
     expect(reviewCall.where.reviewClaimedByAgentId).toBeNull();
     expect(reviewCall.where.reviewClaimedByUserId).toBeNull();
   });

@@ -178,7 +178,7 @@ Login-flow endpoints are public:
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `GET` | `/api/auth/sso/discover?email=...` | Returns the matching team's login URL if an enabled SSO connection claims the email domain, else `null`. |
-| `GET` | `/api/auth/sso/:teamSlug` | Start the OIDC authorize flow (redirects to the IdP). |
+| `GET` | `/api/auth/sso/:teamSlug` | Start the OIDC authorize flow (redirects to the IdP). An optional `?redirect=` deep-link target (`/invite/...` or `/projects/<id>...`, validated again here) is kept in the short-lived `sso_redirect` cookie, and the callback sends the user there instead of `/home`; a missing or invalid target means `/home`. |
 | `GET` | `/api/auth/sso/:teamSlug/callback` | IdP callback. Validates state, nonce, PKCE verifier, ID token signature, issuer, audience, and expiry, then upserts the user and issues a session cookie. |
 
 ## Troubleshooting

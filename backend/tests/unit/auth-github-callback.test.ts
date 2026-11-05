@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import type { AppVariables } from "../../src/types/hono.js";
 
 const mocks = vi.hoisted(() => ({
   exchangeCodeForToken: vi.fn(),
@@ -58,6 +60,7 @@ vi.mock("../../src/services/user.js", () => ({
 }));
 
 import { authRouter } from "../../src/routes/auth.js";
+import { buildAuthorizationUrl, generateState } from "../../src/services/github-oauth.js";
 
 const LOGIN_COOKIES = "oauth_state=STATE123; oauth_intent=login";
 const CONNECT_COOKIES = "oauth_state=STATE123; oauth_intent=connect; oauth_connect_user=user-1";
@@ -93,12 +96,133 @@ describe("GET /github/callback redirect targets", () => {
   });
 });
 
+function isCleared(res: Response, name: string): boolean {
+  return res
+    .headers.getSetCookie()
+    .some((v) => v.startsWith(`${name}=;`) && v.includes("Max-Age=0"));
+}
+
+// The deep-link target (an /invite/ or /projects/ path) travels across the
+// GitHub round-trip in the `oauth_redirect` cookie: set on the start request
+// only for the login intent and only when valid, honoured on the callback
+// only for the login intent, cleared on every exit.
+describe("GitHub login carries the redirect target", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(generateState).mockReturnValue("STATE123");
+    vi.mocked(buildAuthorizationUrl).mockReturnValue("https://github.com/login/oauth/authorize?x=1");
+    mocks.exchangeCodeForToken.mockResolvedValue({ access_token: "gh-token" });
+    mocks.fetchGitHubUser.mockResolvedValue({ id: 1, login: "octocat" });
+    mocks.upsertUserFromGitHub.mockResolvedValue({ id: "user-1" });
+    mocks.createSessionToken.mockResolvedValue("session-token");
+    mocks.extractSessionCookie.mockReturnValue("session-token");
+    mocks.verifySessionToken.mockResolvedValue({ userId: "user-1" });
+    mocks.connectGitHubToExistingUser.mockResolvedValue(undefined);
+  });
+
+  function redirectCookie(res: Response): string | undefined {
+    return res.headers.getSetCookie().find((v) => v.startsWith("oauth_redirect=") && !v.includes("Max-Age=0"));
+  }
+
+  describe("start: GET /github", () => {
+    it("a valid target is stored in a short-lived HttpOnly cookie", async () => {
+      const res = await authRouter.request(
+        `/github?redirect=${encodeURIComponent("/projects/p1/board?view=list")}`,
+      );
+      expect(res.status).toBe(302);
+      const cookie = redirectCookie(res);
+      expect(cookie).toBe(
+        `oauth_redirect=${encodeURIComponent("/projects/p1/board?view=list")}; HttpOnly; SameSite=Lax; Max-Age=600; Path=/`,
+      );
+    });
+
+    it("no target: no cookie is set and a stale one is cleared", async () => {
+      const res = await authRouter.request("/github");
+      expect(redirectCookie(res)).toBeUndefined();
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+    });
+
+    it.each([["//evil.com"], ["/etc/passwd"], ["https://evil.com"], ["/projects/p1/../x"]])(
+      "an invalid target (%s) sets no cookie",
+      async (value) => {
+        const res = await authRouter.request(`/github?redirect=${encodeURIComponent(value)}`);
+        expect(res.status).toBe(302);
+        expect(redirectCookie(res)).toBeUndefined();
+        expect(isCleared(res, "oauth_redirect")).toBe(true);
+      },
+    );
+
+    it("the connect start never stores a target (it ignores ?redirect=)", async () => {
+      const app = new Hono<{ Variables: AppVariables }>();
+      app.use("*", async (c, next) => {
+        c.set("actor", { type: "human", userId: "user-1" } as never);
+        await next();
+      });
+      app.route("/", authRouter);
+      const res = await app.request("/github/connect?redirect=%2Finvite%2Fabc");
+      expect(res.status).toBe(302);
+      expect(redirectCookie(res)).toBeUndefined();
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+      expect(res.headers.getSetCookie().some((v) => v.startsWith("oauth_intent=connect"))).toBe(true);
+    });
+  });
+
+  describe("callback: GET /github/callback", () => {
+    const callback = (cookies: string) =>
+      authRouter.request("/github/callback?code=C&state=STATE123", { headers: { Cookie: cookies } });
+
+    it("login with a valid cookie: 302 to the target, cookie cleared", async () => {
+      const res = await callback(`${LOGIN_COOKIES}; oauth_redirect=${encodeURIComponent("/projects/p1/board?view=list")}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/projects/p1/board?view=list");
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+      expect(res.headers.getSetCookie().some((v) => v.startsWith("session="))).toBe(true);
+    });
+
+    it("login with an /invite/ cookie: 302 to the invite", async () => {
+      const res = await callback(`${LOGIN_COOKIES}; oauth_redirect=${encodeURIComponent("/invite/abc")}`);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/invite/abc");
+    });
+
+    it("login without the cookie: /home", async () => {
+      const res = await callback(LOGIN_COOKIES);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+    });
+
+    it.each([
+      ["protocol-relative", "//evil"],
+      ["outside the allowlist", "/etc"],
+      ["absolute URL", "https://x"],
+      ["dot segment", "/projects/p1/../x"],
+    ])("login with an invalid cookie value (%s): /home, cookie cleared", async (_label, value) => {
+      const res = await callback(`${LOGIN_COOKIES}; oauth_redirect=${encodeURIComponent(value)}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+    });
+
+    it("connect intent ignores the cookie and keeps /settings?github_connected=1", async () => {
+      const res = await callback(`${CONNECT_COOKIES}; oauth_redirect=${encodeURIComponent("/invite/abc")}`);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/settings?github_connected=1");
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+    });
+
+    it("a failed login (token exchange throws) clears the cookie and lands on the error page", async () => {
+      mocks.exchangeCodeForToken.mockRejectedValue(new Error("boom"));
+      const res = await callback(`${LOGIN_COOKIES}; oauth_redirect=${encodeURIComponent("/invite/abc")}`);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/auth/error?reason=callback_failed");
+      expect(isCleared(res, "oauth_redirect")).toBe(true);
+    });
+  });
+});
+
 // Failure paths: every one redirects the browser to the frontend error page
-// with a `reason` (never JSON) and clears the three transient OAuth cookies,
+// with a `reason` (never JSON) and clears the transient OAuth cookies,
 // as the success paths do.
 describe("GET /github/callback failure redirects", () => {
   const ERROR_PAGE = "http://localhost:3000/auth/error";
-  const OAUTH_COOKIE_NAMES = ["oauth_state", "oauth_intent", "oauth_connect_user"];
+  const OAUTH_COOKIE_NAMES = ["oauth_state", "oauth_intent", "oauth_connect_user", "oauth_redirect"];
 
   function expectOAuthCookiesCleared(res: Response): void {
     const setCookies = res.headers.getSetCookie();

@@ -40,6 +40,7 @@ import {
   resetProjectWorkflow,
   updateWorkflow,
   type EffectiveWorkflow,
+  type StrandingReport,
   type WorkflowDefinition,
   type WorkflowRule,
   type WorkflowState,
@@ -61,6 +62,7 @@ import { WorkflowDiagram, WorkflowDiagramSkeleton } from "./_components/Workflow
 import { StatesTable } from "./_components/StatesTable";
 import { validateStateRules } from "./_components/stateRules";
 import { TransitionsTable } from "./_components/TransitionsTable";
+import { StrandingReportBanner } from "./_components/StrandingReportBanner";
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
@@ -83,6 +85,9 @@ export default function WorkflowEditorPage() {
   const [draft, setDraft] = useState<WorkflowDefinition | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
+  // Tasks the last save, template apply or reset left on a status the workflow
+  // no longer has; shown once, cleared by the next action and by Cancel.
+  const [strandingReport, setStrandingReport] = useState<StrandingReport | null>(null);
   const [resetting, setResetting] = useState(false);
 
   // ConfirmDialog states, each dialog independent.
@@ -360,10 +365,11 @@ export default function WorkflowEditorPage() {
     setApplyingTemplateSlug(slug);
     setError(null);
     try {
-      const next = await applyWorkflowTemplate(projectId, slug);
+      const { report, ...next } = await applyWorkflowTemplate(projectId, slug);
       setWorkflow(next);
       setDraft(null);
       setSavedBanner(false);
+      setStrandingReport(report ?? null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -385,6 +391,7 @@ export default function WorkflowEditorPage() {
     setDraft(null);
     setError(null);
     setSavedBanner(false);
+    setStrandingReport(null);
     setExpandedInstructions(new Set());
   }
 
@@ -398,11 +405,12 @@ export default function WorkflowEditorPage() {
     setError(null);
     setConfirmSaveWarnings(false);
     try {
-      await updateWorkflow(workflow.workflowId, { definition: draft });
+      const { report } = await updateWorkflow(workflow.workflowId, { definition: draft });
       const refreshed = await getEffectiveWorkflow(projectId);
       setWorkflow(refreshed);
       setDraft(null);
       setSavedBanner(true);
+      setStrandingReport(report ?? null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -423,11 +431,12 @@ export default function WorkflowEditorPage() {
     setResetting(true);
     setError(null);
     try {
-      const next = await resetProjectWorkflow(projectId);
+      const { report, ...next } = await resetProjectWorkflow(projectId);
       setWorkflow(next);
       setDraft(null);
       setConfirmReset(false);
       setSavedBanner(false);
+      setStrandingReport(report ?? null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -566,6 +575,8 @@ export default function WorkflowEditorPage() {
           Workflow changes have been persisted.
         </AlertBanner>
       )}
+
+      <StrandingReportBanner report={strandingReport} />
 
       {/* ── Validation banners ──────────────────────────────────── */}
       {canEdit && isDirty && validation.errors.length > 0 && (

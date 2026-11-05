@@ -407,7 +407,8 @@ describe("the dependency gate follows the blocker's workflow", () => {
       const worker = await seedAgent();
       const workProject = await seedProject();
       const workWf = await seedWorkflow(workProject, DONE_IS_WORK_DEFINITION);
-      const blocker = await seedTask({ projectId: workProject, workflowId: workWf, status: "done" });
+      // Authored by the caller: a human-created task in a review-like state is offered to every agent, and the review pool is not what this case probes.
+      const blocker = await seedTask({ projectId: workProject, workflowId: workWf, status: "done", createdByAgentId: worker.tokenId });
       const dependent = await seedTask({ projectId: workProject, workflowId: workWf });
       await db.task.update({ where: { id: dependent }, data: { blockedBy: { connect: { id: blocker } } } });
       expect(await (await post(worker, "/tasks/pickup")).json()).toMatchObject({ kind: "idle" });

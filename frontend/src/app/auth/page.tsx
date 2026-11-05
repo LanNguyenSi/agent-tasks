@@ -152,9 +152,13 @@ function AuthPageInner() {
     return <FullPageLoader label="Loading..." />;
   }
 
+  // The validated deep-link target rides along so the provider round-trip
+  // lands where the password form would (the backend re-validates it).
+  const redirectQuery = redirectTarget ? `?redirect=${encodeURIComponent(redirectTarget)}` : "";
   const ssoHref = ssoMatch
-    ? `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}${ssoMatch.loginUrl}`
+    ? `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}${ssoMatch.loginUrl}${redirectQuery}`
     : undefined;
+  const githubHref = `/api/auth/github${redirectQuery}`;
 
   // When SSO discovery matches, the SSO button becomes the primary CTA so the
   // password submit is demoted to secondary. Only one primary CTA at a time.
@@ -173,7 +177,7 @@ function AuthPageInner() {
         {/* GitHub: primary CTA, always on top. Real loading/disabled semantics
             via aria-disabled + keydown guard + pageshow reset on back-navigation. */}
         <a
-          href="/api/auth/github"
+          href={githubHref}
           className="btn-primary btn--box btn--md auth-github-btn"
           aria-disabled={redirectingToGithub || undefined}
           onClick={(e) => {

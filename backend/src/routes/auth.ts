@@ -27,6 +27,7 @@ import {
 import { fakeVerifyPassword, verifyPassword } from "../services/password.js";
 import { getTokenHealth } from "../services/github-health.js";
 import { logger } from "../lib/logger.js";
+import { safeAuthRedirect } from "../lib/auth-redirect.js";
 import { logAuditEvent } from "../services/audit.js";
 import { prisma } from "../lib/prisma.js";
 
@@ -56,6 +57,9 @@ const registerFromProjectPilotSchema = z.object({
 const OAUTH_STATE_COOKIE = "oauth_state";
 const OAUTH_INTENT_COOKIE = "oauth_intent";
 const OAUTH_CONNECT_USER_COOKIE = "oauth_connect_user";
+// Post-login landing (an /invite/ or /projects/ path) carried across the GitHub
+// round-trip; only the login intent sets and reads it.
+const OAUTH_REDIRECT_COOKIE = "oauth_redirect";
 type CookieWriter = {
   header: (name: string, value: string, options?: { append?: boolean }) => void;
 };
@@ -78,6 +82,7 @@ function appendOAuthCookies(c: CookieWriter, options: {
   state: string;
   intent: "login" | "connect";
   connectUserId?: string;
+  redirectTarget?: string;
 }): void {
   c.header("Set-Cookie", buildCookie(OAUTH_STATE_COOKIE, options.state, 600), { append: true });
   c.header("Set-Cookie", buildCookie(OAUTH_INTENT_COOKIE, options.intent, 600), { append: true });
@@ -88,12 +93,21 @@ function appendOAuthCookies(c: CookieWriter, options: {
   } else {
     c.header("Set-Cookie", clearCookie(OAUTH_CONNECT_USER_COOKIE), { append: true });
   }
+  if (options.redirectTarget) {
+    c.header("Set-Cookie", buildCookie(OAUTH_REDIRECT_COOKIE, options.redirectTarget, 600), {
+      append: true,
+    });
+  } else {
+    // Also drops a target left behind by an abandoned earlier attempt.
+    c.header("Set-Cookie", clearCookie(OAUTH_REDIRECT_COOKIE), { append: true });
+  }
 }
 
 function clearOAuthCookies(c: CookieWriter): void {
   c.header("Set-Cookie", clearCookie(OAUTH_STATE_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(OAUTH_INTENT_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(OAUTH_CONNECT_USER_COOKIE), { append: true });
+  c.header("Set-Cookie", clearCookie(OAUTH_REDIRECT_COOKIE), { append: true });
 }
 
 // Reason codes the GitHub callback hands to the frontend error page
@@ -205,7 +219,10 @@ authRouter.get("/github", (c) => {
   const state = generateState();
   const url = buildAuthorizationUrl(oauthConfig, state);
 
-  appendOAuthCookies(c, { state, intent: "login" });
+  // A rejected value is dropped silently: the login then lands on /home.
+  const redirectTarget = safeAuthRedirect(c.req.query("redirect")) ?? undefined;
+
+  appendOAuthCookies(c, { state, intent: "login", redirectTarget });
   return c.redirect(url);
 });
 
@@ -237,6 +254,7 @@ authRouter.get("/github/callback", async (c) => {
   const storedState = readCookie(cookieHeader, OAUTH_STATE_COOKIE);
   const intent = readCookie(cookieHeader, OAUTH_INTENT_COOKIE);
   const connectUserId = readCookie(cookieHeader, OAUTH_CONNECT_USER_COOKIE);
+  const storedRedirect = readCookie(cookieHeader, OAUTH_REDIRECT_COOKIE);
 
   // The user declined (or GitHub refused) the authorization: GitHub redirects
   // back with `error` and no code.
@@ -279,7 +297,9 @@ authRouter.get("/github/callback", async (c) => {
     c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure), { append: true });
     clearOAuthCookies(c);
 
-    return c.redirect(`${config.FRONTEND_URL}/home`);
+    // The cookie is re-validated: it is client-held, so its value is input.
+    const landing = safeAuthRedirect(storedRedirect) ?? "/home";
+    return c.redirect(`${config.FRONTEND_URL}${landing}`);
   } catch (err) {
     logger.error(
       { component: "oauth", err, errMessage: err instanceof Error ? err.message : String(err) },
