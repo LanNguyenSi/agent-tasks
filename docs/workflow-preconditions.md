@@ -364,7 +364,11 @@ state of the definition it follows (finished work), and a task on a status that
 definition does not have (a legacy status, or a terminal task an earlier change
 left behind). Both keep their status and the `2xx` body lists them as
 `terminalOutsideWorkflow` and `outsideWorkflow` (`{id, status}`, at most 50 each,
-with `terminalOutsideTruncated` and `outsideTruncated`). When a `PUT` has two
+with `terminalOutsideTruncated` and `outsideTruncated`). The workflow editor
+shows them once after a save, a template apply or a reset, as a warning under
+the "Saved" banner: finished tasks and other tasks on separate lines, each
+linked to its task page, with "and more" when a list was cut; the next save,
+apply, reset or Cancel clears it. When a `PUT` has two
 groups with different targets (it demotes the default row and changes its
 definition), the `409` message gives one state list per group.
 
