@@ -42,6 +42,7 @@ import {
 } from "../services/sso.js";
 import { createSessionToken, buildSessionCookie } from "../services/session.js";
 import { httpUrl } from "../lib/url-guard.js";
+import { safeAuthRedirect } from "../lib/auth-redirect.js";
 
 // Public login-flow endpoints: mounted under /api/auth.
 export const ssoLoginRouter = new Hono<{ Variables: AppVariables }>();
@@ -54,6 +55,8 @@ const STATE_COOKIE = "sso_state";
 const NONCE_COOKIE = "sso_nonce";
 const TEAM_COOKIE = "sso_team";
 const PKCE_COOKIE = "sso_pkce";
+// Post-login landing (an /invite/ or /projects/ path) carried across the IdP round-trip.
+const REDIRECT_COOKIE = "sso_redirect";
 const COOKIE_TTL = 600; // 10 min — enough for the round-trip, short enough to limit replay.
 
 function buildCookie(name: string, value: string, maxAge: number, secure: boolean): string {
@@ -133,6 +136,16 @@ ssoLoginRouter.get("/sso/:teamSlug", async (c) => {
     c.header("Set-Cookie", buildCookie(NONCE_COOKIE, nonce, COOKIE_TTL, isSecure), { append: true });
     c.header("Set-Cookie", buildCookie(TEAM_COOKIE, teamSlug, COOKIE_TTL, isSecure), { append: true });
     c.header("Set-Cookie", buildCookie(PKCE_COOKIE, pkce.verifier, COOKIE_TTL, isSecure), { append: true });
+    // A rejected value is dropped silently: the login then lands on /home. With
+    // no valid target any leftover cookie of an abandoned attempt is cleared.
+    const redirectTarget = safeAuthRedirect(c.req.query("redirect"));
+    c.header(
+      "Set-Cookie",
+      redirectTarget
+        ? buildCookie(REDIRECT_COOKIE, redirectTarget, COOKIE_TTL, isSecure)
+        : clearCookie(REDIRECT_COOKIE),
+      { append: true },
+    );
     return c.redirect(url);
   } catch (err) {
     logger.error({ component: "sso", phase: "authorize", errMessage: (err as Error).message }, "SSO authorize error");
@@ -153,12 +166,14 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
   const storedNonce = readCookie(cookieHeader, NONCE_COOKIE);
   const storedTeam = readCookie(cookieHeader, TEAM_COOKIE);
   const storedVerifier = readCookie(cookieHeader, PKCE_COOKIE);
+  const storedRedirect = readCookie(cookieHeader, REDIRECT_COOKIE);
 
   // Always clear the transient cookies, regardless of outcome.
   c.header("Set-Cookie", clearCookie(STATE_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(NONCE_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(TEAM_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(PKCE_COOKIE), { append: true });
+  c.header("Set-Cookie", clearCookie(REDIRECT_COOKIE), { append: true });
 
   if (idpError) {
     // idpError is echoed by the IdP; restrict to a safe charset before
@@ -219,7 +234,9 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
     const isSecure = config.NODE_ENV === "production";
     c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure), { append: true });
 
-    return c.redirect(`${config.FRONTEND_URL}/home`);
+    // The cookie is re-validated: it is client-held, so its value is input.
+    const landing = safeAuthRedirect(storedRedirect) ?? "/home";
+    return c.redirect(`${config.FRONTEND_URL}${landing}`);
   } catch (err) {
     // Never include the raw error (may contain token-exchange response body) —
     // log the message alone and fall through to a generic reason.

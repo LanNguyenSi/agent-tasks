@@ -41,7 +41,7 @@ vi.mock("../../src/lib/api", () => ({
 
 import AuthPage from "../../src/app/auth/page";
 import { safeRedirect } from "../../src/lib/routes";
-import { getCurrentUser, getProjects, getTeams, login, register } from "../../src/lib/api";
+import { discoverSso, getCurrentUser, getProjects, getTeams, login, register } from "../../src/lib/api";
 
 const USER = { id: "u-1", login: "lan" } as User;
 const TEAM = { id: "t1", name: "Team", slug: "team", role: "ADMIN", createdAt: "x" } as Team;
@@ -163,5 +163,73 @@ describe("/auth redirect after an actual login submit", () => {
     await submit();
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/home"));
     expect(routerMocks.replace).not.toHaveBeenCalledWith("//evil.com");
+  });
+});
+
+describe("/auth provider links carry the validated target", () => {
+  async function ssoLink() {
+    vi.mocked(discoverSso).mockResolvedValue({
+      teamSlug: "acme",
+      teamName: "Acme",
+      displayName: "Acme SSO",
+      loginUrl: "/api/auth/sso/acme",
+    });
+    await userEvent.type(await screen.findByLabelText("Email"), "a@acme.com");
+    await userEvent.tab();
+    return screen.findByRole("link", { name: /Continue with Acme SSO/ });
+  }
+
+  it("the GitHub link has no query without a target", async () => {
+    render(<AuthPage />);
+    const link = await screen.findByRole("link", { name: /Continue with GitHub/ });
+    expect(link.getAttribute("href")).toBe("/api/auth/github");
+  });
+
+  it("the GitHub link carries a safe /projects/ target, query-encoded", async () => {
+    search.current = `redirect=${encodeURIComponent("/projects/p1/board?taskId=t1&view=list")}`;
+    render(<AuthPage />);
+    const link = await screen.findByRole("link", { name: /Continue with GitHub/ });
+    expect(link.getAttribute("href")).toBe(
+      `/api/auth/github?redirect=${encodeURIComponent("/projects/p1/board?taskId=t1&view=list")}`,
+    );
+  });
+
+  it("the GitHub link carries a safe /invite/ target", async () => {
+    search.current = "redirect=/invite/abc";
+    render(<AuthPage />);
+    const link = await screen.findByRole("link", { name: /Continue with GitHub/ });
+    expect(link.getAttribute("href")).toBe("/api/auth/github?redirect=%2Finvite%2Fabc");
+  });
+
+  it.each([["//evil.com"], ["https://evil.com/x"], ["/etc/passwd"], ["/projects/p1/../x"]])(
+    "the GitHub link drops an unsafe target (%s)",
+    async (value) => {
+      search.current = `redirect=${encodeURIComponent(value)}`;
+      render(<AuthPage />);
+      const link = await screen.findByRole("link", { name: /Continue with GitHub/ });
+      expect(link.getAttribute("href")).toBe("/api/auth/github");
+    },
+  );
+
+  it("the SSO link has no query without a target", async () => {
+    render(<AuthPage />);
+    const link = await ssoLink();
+    expect(link.getAttribute("href")).toBe("http://localhost:3001/api/auth/sso/acme");
+  });
+
+  it("the SSO link carries a safe target, query-encoded", async () => {
+    search.current = `redirect=${encodeURIComponent("/projects/p1/board?view=list")}`;
+    render(<AuthPage />);
+    const link = await ssoLink();
+    expect(link.getAttribute("href")).toBe(
+      `http://localhost:3001/api/auth/sso/acme?redirect=${encodeURIComponent("/projects/p1/board?view=list")}`,
+    );
+  });
+
+  it.each([["//evil.com"], ["/etc/passwd"]])("the SSO link drops an unsafe target (%s)", async (value) => {
+    search.current = `redirect=${encodeURIComponent(value)}`;
+    render(<AuthPage />);
+    const link = await ssoLink();
+    expect(link.getAttribute("href")).toBe("http://localhost:3001/api/auth/sso/acme");
   });
 });

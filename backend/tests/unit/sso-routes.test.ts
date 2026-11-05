@@ -735,3 +735,126 @@ describe("DELETE /teams/:teamId/sso", () => {
     expect(mocks.invalidateDiscovery).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Redirect target carried across the IdP round-trip (`sso_redirect` cookie)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SSO login carries the redirect target", () => {
+  const setCookieNamed = (res: Response, name: string) =>
+    res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`) && !c.includes("Max-Age=0"));
+  const clearedCookie = (res: Response, name: string) =>
+    res.headers.getSetCookie().find((c) => c.startsWith(`${name}=;`) && c.includes("Max-Age=0"));
+
+  function arrangeStart() {
+    mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
+    mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
+    mocks.randomToken.mockReturnValueOnce("state-abc-123").mockReturnValueOnce("nonce-def-456");
+    mocks.generatePkcePair.mockResolvedValue({ verifier: "v", challenge: "ch" });
+    mocks.buildAuthorizeUrl.mockReturnValue("https://idp.example.com/auth?response_type=code");
+  }
+
+  function arrangeCallback() {
+    mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
+    mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
+    mocks.decryptClientSecret.mockResolvedValue("client-secret-plain");
+    mocks.exchangeCode.mockResolvedValue({ id_token: "id-token-value", access_token: "a" });
+    mocks.verifyIdToken.mockResolvedValue({ sub: "s", email: "user@acme.com", iss: "https://idp.example.com" });
+    mocks.upsertUserFromOidc.mockResolvedValue({ id: "db-user-id-1" });
+  }
+
+  describe("start: GET /sso/:teamSlug?redirect=", () => {
+    it("a valid target is stored in an HttpOnly cookie with the sso cookie TTL", async () => {
+      arrangeStart();
+      const res = await ssoLoginRouter.request(
+        `/sso/acme?redirect=${encodeURIComponent("/projects/p1/board?view=list")}`,
+      );
+      expect(res.status).toBe(302);
+      expect(setCookieNamed(res, "sso_redirect")).toBe(
+        `sso_redirect=${encodeURIComponent("/projects/p1/board?view=list")}; HttpOnly; SameSite=Lax; Max-Age=600; Path=/`,
+      );
+    });
+
+    it("production: the target cookie carries the Secure flag", async () => {
+      arrangeStart();
+      const prevEnv = config.NODE_ENV;
+      config.NODE_ENV = "production";
+      try {
+        const res = await ssoLoginRouter.request("/sso/acme?redirect=%2Finvite%2Fabc");
+        expect(setCookieNamed(res, "sso_redirect")).toContain("Secure");
+      } finally {
+        config.NODE_ENV = prevEnv;
+      }
+    });
+
+    it("no target: no cookie is set and a stale one is cleared", async () => {
+      arrangeStart();
+      const res = await ssoLoginRouter.request("/sso/acme");
+      expect(setCookieNamed(res, "sso_redirect")).toBeUndefined();
+      expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+    });
+
+    it.each([["//evil.com"], ["/etc/passwd"], ["https://evil.com"], ["/projects/p1/../x"]])(
+      "an invalid target (%s) sets no cookie",
+      async (value) => {
+        arrangeStart();
+        const res = await ssoLoginRouter.request(`/sso/acme?redirect=${encodeURIComponent(value)}`);
+        expect(res.status).toBe(302);
+        expect(setCookieNamed(res, "sso_redirect")).toBeUndefined();
+        expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+      },
+    );
+  });
+
+  describe("callback: GET /sso/:teamSlug/callback", () => {
+    const cb = (cookies: string) =>
+      ssoLoginRouter.request("/sso/acme/callback?code=AUTH_CODE&state=STATE123", {
+        headers: { Cookie: cookies },
+      });
+
+    it("valid cookie: 302 to the target, cookie cleared", async () => {
+      arrangeCallback();
+      const res = await cb(`${GOOD_COOKIES}; sso_redirect=${encodeURIComponent("/projects/p1/board?view=list")}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/projects/p1/board?view=list");
+      expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+      expect(res.headers.getSetCookie().some((c) => c.startsWith("session="))).toBe(true);
+    });
+
+    it("no cookie: /home", async () => {
+      arrangeCallback();
+      const res = await cb(GOOD_COOKIES);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+      expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+    });
+
+    it.each([
+      ["protocol-relative", "//evil"],
+      ["outside the allowlist", "/etc"],
+      ["absolute URL", "https://x"],
+      ["dot segment", "/projects/p1/../x"],
+    ])("invalid cookie value (%s): /home, cookie cleared", async (_label, value) => {
+      arrangeCallback();
+      const res = await cb(`${GOOD_COOKIES}; sso_redirect=${encodeURIComponent(value)}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+      expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+    });
+
+    it("an IdP error clears the cookie and lands on the error page, not on the target", async () => {
+      const res = await ssoLoginRouter.request("/sso/acme/callback?error=access_denied", {
+        headers: { Cookie: `${GOOD_COOKIES}; sso_redirect=${encodeURIComponent("/invite/abc")}` },
+      });
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/auth/error?reason=access_denied");
+      expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+    });
+
+    it("a failed token exchange clears the cookie and lands on the error page", async () => {
+      arrangeCallback();
+      mocks.exchangeCode.mockRejectedValue(new Error("boom"));
+      const res = await cb(`${GOOD_COOKIES}; sso_redirect=${encodeURIComponent("/invite/abc")}`);
+      expect(res.headers.get("Location")).toBe("http://localhost:3000/auth/error?reason=sso_failed");
+      expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+    });
+  });
+});
