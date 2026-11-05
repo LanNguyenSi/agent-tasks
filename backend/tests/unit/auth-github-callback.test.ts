@@ -218,7 +218,7 @@ describe("GitHub login carries the redirect target", () => {
 });
 
 // Failure paths: every one redirects the browser to the frontend error page
-// with a `reason` (never JSON) and clears the three transient OAuth cookies,
+// with a `reason` (never JSON) and clears the transient OAuth cookies,
 // as the success paths do.
 describe("GET /github/callback failure redirects", () => {
   const ERROR_PAGE = "http://localhost:3000/auth/error";

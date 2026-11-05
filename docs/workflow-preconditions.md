@@ -367,8 +367,8 @@ left behind). Both keep their status and the `2xx` body lists them as
 with `terminalOutsideTruncated` and `outsideTruncated`). The workflow editor
 shows them once after a save, a template apply or a reset, as a warning under
 the "Saved" banner: finished tasks and other tasks on separate lines, each
-linked to its task page, with "and more" when a list was cut; the next save,
-apply, reset or Cancel clears it. When a `PUT` has two
+linked to its task page, with "and more" when a list was cut; the next successful save,
+apply or reset replaces it and Cancel clears it (a failed save leaves it up). When a `PUT` has two
 groups with different targets (it demotes the default row and changes its
 definition), the `409` message gives one state list per group.
 

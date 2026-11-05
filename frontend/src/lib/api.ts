@@ -1171,7 +1171,7 @@ function pickStrandingReport(body: StrandingReport): StrandingReport {
   };
 }
 
-function withoutReport(data: EffectiveWorkflow & StrandingReport): EffectiveWorkflow & { report: StrandingReport } {
+function withReport(data: EffectiveWorkflow & StrandingReport): EffectiveWorkflow & { report: StrandingReport } {
   return {
     source: data.source,
     workflowId: data.workflowId,
@@ -1203,7 +1203,7 @@ export async function resetProjectWorkflow(
   const data = await request<EffectiveWorkflow & StrandingReport>(`/api/projects/${projectId}/workflow`, {
     method: "DELETE",
   });
-  return withoutReport(data);
+  return withReport(data);
 }
 
 export interface WorkflowTemplateSummary {
@@ -1227,7 +1227,7 @@ export async function applyWorkflowTemplate(
     `/api/projects/${projectId}/workflow/apply-template/${slug}`,
     { method: "POST" },
   );
-  return withoutReport(data);
+  return withReport(data);
 }
 
 export interface Workflow {
