@@ -3,7 +3,8 @@
 # Prints one line per failure and a final `Result: N cases passed` (exit 0) or
 # `Result: N cases passed, M failed` (exit 1).
 # Argument `dockerfile`: run only the Dockerfile cases (no docker needed).
-# Compose cases run `docker compose config` on fixture files.
+# Compose cases run `docker compose config` on fixture files; the fake cases
+# put a stub `docker` or `python3` first on PATH.
 set -eo pipefail
 section="${1:-all}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -369,6 +370,7 @@ fake "top-level list" 1 "no services" '[]'
 fake "malformed output is exit 2" 2 "could not read" 'not json'
 fake "empty output is exit 2" 2 "could not read" ''
 fake "control: tag-only image is reported" 1 "service db:" '{"services":{"db":{"image":"postgres:16"}}}'
+fake "null service is an offender" 1 "service db:" '{"services":{"db":null}}'
 fake "control: pinned image passes" 0 "" "{\"services\":{\"db\":{\"image\":\"postgres:16@$D\"}}}"
 fake "additional_contexts target: form passes" 0 "" '{"services":{"o":{"build":{"context":"@FX@/worker","additional_contexts":{"t":"target:other"}}}}}'
 fake "additional_contexts relative form fails" 1 "additional_contexts \"t\"" '{"services":{"o":{"build":{"context":"@FX@/worker","additional_contexts":{"t":"other"}}}}}'
