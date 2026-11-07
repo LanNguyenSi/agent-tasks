@@ -200,7 +200,7 @@ To apply a destructive change on purpose, on the host:
 
 To abort before step 5 (for example when the dump is empty), reset the deploy
 checkout to the previous commit and rebuild before starting the backend again
-(the rebuild uses the base images pinned by digest in that commit):
+(from the base-image pinning onward, the rebuild uses the base images pinned by digest in that commit):
 the images built in step 2 already carry the new schema, so starting the
 backend on them runs the failing `migrate` again. The destructive commit is
 still on the upstream deploy branch. Before relay deploys again, revert it
