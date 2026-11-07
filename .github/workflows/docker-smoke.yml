@@ -39,6 +39,8 @@ on:
       - "tools/frontend-docker-smoke.sh"
       - "tools/backend-docker-smoke.sh"
       - "tools/compose.smoke-override.yml"
+      - "tools/check-image-digests.sh"
+      - "tools/check-image-digests.test.sh"
   pull_request:
     branches: [master, main, develop]
     paths:
@@ -58,6 +60,8 @@ on:
       - "tools/frontend-docker-smoke.sh"
       - "tools/backend-docker-smoke.sh"
       - "tools/compose.smoke-override.yml"
+      - "tools/check-image-digests.sh"
+      - "tools/check-image-digests.test.sh"
   workflow_dispatch:
 
 permissions:
@@ -87,6 +91,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+
+      - name: Production base images pinned by digest
+        # A production FROM or compose image: line without @sha256 lets a base
+        # image change arrive silently through `build --pull` on the next
+        # deploy instead of as a Renovate pull request.
+        run: |
+          bash tools/check-image-digests.test.sh
+          bash tools/check-image-digests.sh
 
       - name: Docker backend and migrate image smoke test
         run: bash tools/backend-docker-smoke.sh
