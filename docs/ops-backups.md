@@ -199,7 +199,7 @@ To apply a destructive change on purpose, on the host:
    ```
 
 4. Back up the database as in [Backing up, step 1](#1-database-dump). The
-   dump lands in `$BACKUP_DIR`, outside the deploy checkout (an untracked
+   dump lands in `$BACKUP_DIR` (set it as in that section), outside the deploy checkout (an untracked
    file there makes relay's `git_clean` preflight block the next deploy)
    and readable only by you; check it is non-empty (`test -s <dump>`)
    before continuing.
