@@ -1,7 +1,10 @@
 # Explicit project name: it must equal the name compose derived before this
 # line existed (the basename of the deploy checkout, `agent-tasks`), so the
-# existing containers, networks and the agent_tasks_postgres / agent_tasks_uploads
-# volumes keep their names. The dev file uses agent-tasks-dev, so a bare
+# existing containers and networks keep their names. Compose prefixes the
+# two named volumes with the project name, so their effective names on the
+# host are agent-tasks_agent_tasks_postgres and
+# agent-tasks_agent_tasks_uploads (docs/ops-backups.md works with those
+# names). The dev file uses agent-tasks-dev, so a bare
 # `docker compose up` in the same directory can no longer adopt this stack.
 # Always pass `-f docker-compose.prod.yml` for this file.
 name: agent-tasks
