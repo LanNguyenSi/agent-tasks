@@ -428,6 +428,15 @@ describe("GET /github/callback with a malformed cookie escape", () => {
     expect(mocks.exchangeCodeForToken).not.toHaveBeenCalled();
   });
 
+  it("malformed oauth_state with a query state equal to its raw value → state_mismatch", async () => {
+    // `%25E0` decodes to the cookie's raw `%E0`, so a reader that fell back to
+    // the undecoded value would pass the state check here.
+    const res = await callback(`oauth_state=${BAD}; oauth_intent=login`, "?code=C&state=%25E0");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${ERROR_PAGE}?reason=state_mismatch`);
+    expect(mocks.exchangeCodeForToken).not.toHaveBeenCalled();
+  });
+
   // The null a malformed escape yields is rejected by the presence check
   // before any comparison, so it cannot match a provider state: neither an
   // absent nor an empty query `state`.

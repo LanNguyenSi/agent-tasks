@@ -914,6 +914,20 @@ describe("GET /sso/:teamSlug/callback with a malformed cookie escape", () => {
     expect(mocks.exchangeCode).not.toHaveBeenCalled();
   });
 
+  it("malformed sso_state with a query state equal to its raw value → bad_request", async () => {
+    // `%25E0` decodes to the cookie's raw `%E0`, so a reader that fell back to
+    // the undecoded value would pass the state check here.
+    const res = await cb(
+      `sso_state=${BAD}; sso_nonce=N; sso_team=acme; sso_pkce=P`,
+      "?code=AUTH_CODE&state=%25E0",
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=bad_request",
+    );
+    expect(mocks.exchangeCode).not.toHaveBeenCalled();
+  });
+
   // The null a malformed escape yields is rejected by the presence check
   // before the comparison, so it cannot match the IdP state: absent and empty
   // query `state` take the same path.
