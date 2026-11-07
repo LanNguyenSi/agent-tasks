@@ -41,6 +41,8 @@ on:
       - "tools/compose.smoke-override.yml"
       - "tools/check-image-digests.sh"
       - "tools/check-image-digests.test.sh"
+      # Any Dockerfile the guard reads from the resolved compose file.
+      - "**/Dockerfile*"
   pull_request:
     branches: [master, main, develop]
     paths:
@@ -62,6 +64,8 @@ on:
       - "tools/compose.smoke-override.yml"
       - "tools/check-image-digests.sh"
       - "tools/check-image-digests.test.sh"
+      # Any Dockerfile the guard reads from the resolved compose file.
+      - "**/Dockerfile*"
   workflow_dispatch:
 
 permissions:

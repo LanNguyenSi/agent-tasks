@@ -2,7 +2,10 @@
 # Tests for tools/check-image-digests.sh. Run: bash tools/check-image-digests.test.sh
 # Prints one line per failure and a final `Result: N cases passed` (exit 0) or
 # `Result: N cases passed, M failed` (exit 1).
+# Argument `dockerfile`: run only the Dockerfile cases (no docker needed).
+# Compose cases run `docker compose config` on fixture files.
 set -eo pipefail
+section="${1:-all}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 guard="$here/check-image-digests.sh"
 tmp="$(mktemp -d)"
@@ -30,12 +33,6 @@ df() {
   local name="$1" want="$2" sub="$3"; shift 3
   printf "$@" > "$tmp/case.Dockerfile"
   expect "dockerfile: $name" "$want" "$sub" "$tmp/case.Dockerfile"
-}
-# cf <name> <want-exit> <sub> <printf-format> [args]: a compose case
-cf() {
-  local name="$1" want="$2" sub="$3"; shift 3
-  printf "$@" > "$tmp/case.yml"
-  expect "compose: $name" "$want" "$sub" "$tmp/case.yml"
 }
 
 # --- Dockerfile ---
@@ -69,48 +66,218 @@ df "CRLF unpinned" 1 "case.Dockerfile:2:" 'FROM node:22-slim@%s AS base\r\nFROM 
 df "BOM before the first FROM, pinned" 0 "" '\xef\xbb\xbfFROM node:22-slim@%s\n' "$D"
 df "BOM before the first FROM, unpinned" 1 "case.Dockerfile:1:" '\xef\xbb\xbfFROM node:22-slim\n'
 
-# --- Compose ---
-cf "pinned image" 0 "" 'services:\n  db:\n    image: postgres:16-alpine@%s\n' "$D"
-cf "tag-only image fails with file and line" 1 "case.yml:3:" 'services:\n  db:\n    image: postgres:16-alpine\n'
-cf "commented key, double quotes, trailing comment" 0 "" 'services:\n  db:\n    # image: postgres:16-alpine\n    image: "postgres:16-alpine@%s"  # pinned\n    build: .\n' "$D"
-cf "single-quoted pinned" 0 "" "services:\n  db:\n    image: 'postgres:16-alpine@%s'\n" "$D"
-cf "unquoted pinned with trailing comment" 0 "" 'services:\n  db:\n    image: postgres:16-alpine@%s # base\n' "$D"
-cf "single-quoted tag-only fails" 1 "case.yml:3:" "services:\n  db:\n    image: 'postgres:16-alpine'\n"
-cf "double-quoted tag-only fails" 1 "case.yml:3:" 'services:\n  db:\n    image: "postgres:16-alpine"\n'
-cf "CRLF pinned" 0 "" 'services:\r\n  db:\r\n    image: postgres:16-alpine@%s\r\n' "$D"
-cf "CRLF unpinned" 1 "case.yml:3:" 'services:\r\n  db:\r\n    image: postgres:16-alpine\r\n'
-cf "63 hex digits fail" 1 "case.yml:3:" 'services:\n  db:\n    image: postgres:16@sha256:%s\n' "${H%?}"
-cf "space before the colon fails closed" 1 "case.yml:3:" 'services:\n  db:\n    image : postgres:16-alpine\n'
-cf "double-quoted key fails closed" 1 "case.yml:3:" 'services:\n  db:\n    "image": postgres:16-alpine\n'
-cf "single-quoted key fails closed" 1 "case.yml:3:" "services:\n  db:\n    'image': postgres:16-alpine\n"
-cf "flow mapping fails closed" 1 "case.yml:2:" 'services:\n  db: {image: postgres:16-alpine}\n'
-cf "flow mapping with a pinned image still fails closed" 1 "case.yml:2:" 'services:\n  db: {image: postgres:16-alpine@%s}\n' "$D"
-cf "services as flow mapping fails closed" 1 "case.yml:1:" 'services: {db: {image: postgres:16-alpine}}\n'
-cf "anchor with flow mapping fails closed" 1 "case.yml:1:" 'x-d: &d {image: postgres:16-alpine}\nservices:\n  db:\n    <<: *d\n'
-cf "flow mapping behind a comma fails closed" 1 "case.yml:2:" 'services:\n  db: {build: ., image: postgres:16-alpine}\n'
-cf "empty image value fails closed" 1 "case.yml:3: image key in a form this guard cannot read" 'services:\n  db:\n    image:\n      postgres:16-alpine\n'
-cf "flow mapping in a comment is ignored" 0 "" '# x: {image: postgres}\nservices:\n  db:\n    image: postgres:16@%s\n' "$D"
-cf "nested environment image: is a tolerated false failure" 1 "case.yml:5:" 'services:\n  db:\n    image: postgres:16@%s\n    environment:\n      image: foo\n' "$D"
-printf 'FROM node:22-slim@%s\n' "$D" > "$tmp/case.Dockerfile"
-printf 'services:\n  a:\n    build:\n      dockerfile: ./case.Dockerfile\n' > "$tmp/case.yml"
-expect "dockerfile among the checked files" 0 "" "$tmp/case.Dockerfile" "$tmp/case.yml"
-cf "dockerfile not among the checked files" 1 "case.yml:4: dockerfile \"other/Dockerfile\"" 'services:\n  a:\n    build:\n      dockerfile: other/Dockerfile\n'
-cf "empty quoted dockerfile value fails" 1 "case.yml:4:" "services:\n  a:\n    build:\n      dockerfile: ''\n"
-cf "empty dockerfile value fails closed" 1 "case.yml:4: dockerfile key in a form this guard cannot read" 'services:\n  a:\n    build:\n      dockerfile:\n        x\n'
-cf "dockerfile in a flow mapping fails closed" 1 "case.yml:3:" 'services:\n  a:\n    build: {context: ., dockerfile: other/Dockerfile}\n'
-cf "dockerfile_inline is refused" 1 "dockerfile_inline" 'services:\n  a:\n    build:\n      dockerfile_inline: |\n        FROM node\n'
-
-printf 'FROM node:22-slim@%s\n' "$D" > "$tmp/ok.Dockerfile"
-printf 'services:\n  a:\n    build:\n      context: .\n      dockerfile: sub/ok.Dockerfile\n' > "$tmp/c.yml"
-mkdir -p "$tmp/sub" && cp "$tmp/ok.Dockerfile" "$tmp/sub/ok.Dockerfile"
-expect "dockerfile matched as a path suffix of a given file" 0 "" "$tmp/sub/ok.Dockerfile" "$tmp/c.yml"
-(cd "$tmp" && printf 'services:\n  a:\n    build:\n      dockerfile: ok.Dockerfile\n' > rel.yml && rc=0 && out="$(bash "$guard" ok.Dockerfile rel.yml 2>&1)" || rc=$?; [ "${rc:-0}" -eq 0 ]) && pass=$((pass + 1)) || { echo "FAIL dockerfile matched by exact relative path"; fails=$((fails + 1)); }
-expect "dockerfile not matched when the file is not given" 1 "c.yml:5:" "$tmp/ok.Dockerfile" "$tmp/c.yml"
-
+df "non-hex first character in a 64-character field fails" 1 "case.Dockerfile:1:" 'FROM node:22@sha256:g%s\n' "${H%?}"
+df "@ inside the digest field fails" 1 "case.Dockerfile:1:" 'FROM node:22@sha256:%s@%s\n' "${H%??????????????}" "${H%??????????????}"
+df "FROM with a continuation fails" 1 "case.Dockerfile:1:" 'FROM \\\n  node:22-slim\n'
+df "FROM directly followed by a continuation fails" 1 "case.Dockerfile:1:" 'FROM\\\n  node:22-slim\n'
+df "RUN with a continuation is not FROM" 0 "" 'RUN echo \\\n  FROMAGE\n'
 printf 'FROM node:22-slim@%s AS base\n' "$D" > "$tmp/good.Dockerfile"
 printf 'FROM node:22-slim AS prod\n' > "$tmp/bad.Dockerfile"
-expect "several files: an offender in the second is reported" 1 "bad.Dockerfile:1:" "$tmp/good.Dockerfile" "$tmp/bad.Dockerfile"
+expect "several Dockerfiles: an offender in the second is reported" 1 "bad.Dockerfile:1:" "$tmp/good.Dockerfile" "$tmp/bad.Dockerfile"
 expect "missing file is a usage error" 2 "file not found" "$tmp/nope.Dockerfile"
+
+if [ "$section" = dockerfile ]; then
+  echo "Result: $pass cases passed"
+  [ "$fails" -eq 0 ] && exit 0
+  echo "Result: $pass cases passed, $fails failed"
+  exit 1
+fi
+
+# --- Compose, resolved by docker compose config ---
+UNPINNED='FROM node:22-slim\n'
+PINNED="FROM node:22-slim@$D\n"
+n=0
+# fx <name>: fresh fixture dir $fx with pinned Dockerfiles at ./Dockerfile,
+# ./backend/Dockerfile, ./worker/Dockerfile and ./worker/Dockerfile.alt
+fx() {
+  n=$((n + 1))
+  fx="$tmp/fx$n"
+  mkdir -p "$fx/backend" "$fx/worker"
+  for d in Dockerfile backend/Dockerfile worker/Dockerfile worker/Dockerfile.alt; do
+    printf "$PINNED" > "$fx/$d"
+  done
+}
+# cc <name> <want-exit> <sub> <compose-text>: compose case in the current $fx
+cc() {
+  local name="$1" want="$2" sub="$3"
+  printf '%s\n' "$4" > "$fx/compose.yml"
+  expect "compose: $name" "$want" "$sub" "$fx/compose.yml"
+}
+
+fx; cc "pinned image" 0 "" "services:
+  db:
+    image: postgres:16-alpine@$D"
+fx; cc "digest without a tag fails" 1 "service db:" "services:
+  db:
+    image: postgres@$D"
+fx; cc "interpolated registry with a digest fails" 1 "service db:" "services:
+  db:
+    image: \${REG}/postgres:16@$D"
+fx; cc "digest with trailing characters fails" 1 "service db:" "services:
+  db:
+    image: postgres:16@${D}zz"
+fx; cc "tag-only image fails with the service name" 1 "service db: image \"postgres:16-alpine\"" "services:
+  db:
+    image: postgres:16-alpine"
+fx; cc "63 hex digits fail" 1 "service db:" "services:
+  db:
+    image: postgres:16@sha256:${H%?}"
+fx; cc "interpolated image fails" 1 "service db:" 'services:
+  db:
+    image: ${IMG}'
+fx; cc "required-variable interpolation needs no environment" 0 "" "services:
+  db:
+    image: postgres:16@$D
+    environment:
+      A: \${A:?required}"
+fx; cc "quoted key, tag-only, fails" 1 "service db:" 'services:
+  db:
+    "image": postgres:16'
+fx; cc "quoted key, pinned, passes" 0 "" "services:
+  db:
+    \"image\": postgres:16@$D"
+fx; cc "spaced key, tag-only, fails" 1 "service db:" 'services:
+  db:
+    image : postgres:16'
+fx; cc "flow mapping, tag-only, fails" 1 "service db:" 'services:
+  db: {image: postgres:16}'
+fx; cc "flow mapping, pinned, passes" 0 "" "services: {db: {image: \"postgres:16@$D\"}}"
+fx; cc "merged anchor, tag-only, fails" 1 "service db:" 'x-d: &d {image: postgres:16}
+services:
+  db:
+    <<: *d'
+fx; cc "list item under a merged anchor, tag-only, fails" 1 "service db:" 'x-d: &d
+  image: postgres:16
+services:
+  db:
+    <<: [*d]'
+fx; cc "explicit key, tag-only, fails" 1 "service db:" 'services:
+  db:
+    ? image
+    : postgres:16'
+fx; cc "tagged key, tag-only, fails" 1 "service db:" 'services:
+  db:
+    !!str image: postgres:16'
+fx; cc "hash inside a quoted label does not hide the image" 1 "service db:" 'services:
+  db:
+    labels: ["a#b", "c"]
+    image: postgres:16'
+fx; cc "hash inside a quoted label, pinned, passes" 0 "" "services:
+  db:
+    labels: [\"a # image: x\"]
+    image: postgres:16@$D"
+fx; cc "profile service, tag-only, fails" 1 "service tools:" 'services:
+  tools:
+    profiles: [debug]
+    image: busybox:1'
+fx; cc "build: ./worker, pinned Dockerfile, passes" 0 "" 'services:
+  w:
+    build: ./worker'
+fx; printf "$UNPINNED" > "$fx/worker/Dockerfile"; cc "build: ./worker, unpinned Dockerfile, fails with file and line" 1 "worker/Dockerfile:1:" 'services:
+  w:
+    build: ./worker'
+fx; printf "$UNPINNED" > "$fx/worker/Dockerfile"; cc "context alone, unpinned Dockerfile, fails" 1 "worker/Dockerfile:1:" 'services:
+  w:
+    build:
+      context: ./worker'
+fx; printf "$UNPINNED" > "$fx/worker/Dockerfile"; cc "context with dockerfile: Dockerfile, unpinned, fails" 1 "worker/Dockerfile:1:" 'services:
+  w:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile'
+fx; printf "$UNPINNED" > "$fx/Dockerfile"; cc "root Dockerfile is not confused with backend/Dockerfile" 0 "" 'services:
+  b:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile'
+fx; printf "$UNPINNED" > "$fx/Dockerfile"; cc "root Dockerfile unpinned, fails" 1 "Dockerfile:1:" 'services:
+  b:
+    build: .'
+fx; printf "$UNPINNED" > "$fx/worker/Dockerfile.alt"; cc "dockerfile named like another file in another context, fails" 1 "worker/Dockerfile.alt:1:" 'services:
+  m:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.alt'
+fx; printf "$UNPINNED" > "$fx/worker/Dockerfile.alt"; cc "only the Dockerfile that is used is read" 0 "" 'services:
+  m:
+    build:
+      context: ./worker'
+fx; printf "$UNPINNED" > "$fx/extra.Dockerfile"; cc "a new service with its own unpinned Dockerfile fails" 1 "extra.Dockerfile:1:" 'services:
+  a:
+    build: ./worker
+  fresh:
+    build:
+      context: .
+      dockerfile: extra.Dockerfile'
+fx; printf "$UNPINNED" > "$fx/worker/Dockerfile"
+printf 'services:\n  a:\n    build: ./worker\n  b:\n    build: ./worker\n' > "$fx/compose.yml"
+out="$(bash "$guard" "$fx/compose.yml" 2>&1 || true)"
+if [ "$(printf '%s\n' "$out" | grep -c 'worker/Dockerfile:1:')" -eq 1 ]; then pass=$((pass + 1)); else echo "FAIL compose: a Dockerfile shared by two services is reported once: $out"; fails=$((fails + 1)); fi
+fx; printf "$PINNED" > "$fx/extra.Dockerfile"; cc "a new service with its own pinned Dockerfile passes" 0 "" 'services:
+  a:
+    build: ./worker
+  fresh:
+    build:
+      context: .
+      dockerfile: extra.Dockerfile'
+fx; mkdir "$fx-out"; printf "$PINNED" > "$fx-out/Dockerfile"; cc "existing Dockerfile outside the compose directory fails" 1 "is outside" "services:
+  o:
+    build:
+      context: .
+      dockerfile: ../fx$n-out/Dockerfile"
+fx; mkdir "$fx-evil"; printf "$PINNED" > "$fx-evil/Dockerfile"; cc "sibling directory sharing the compose directory prefix is outside" 1 "is outside" "services:
+  o:
+    build: ../fx$n-evil"
+fx; cc "context outside the compose directory fails" 1 "is outside" 'services:
+  o:
+    build: ../elsewhere'
+fx; cc "remote context fails" 1 "is not a local directory" 'services:
+  o:
+    build: https://example.com/repo.git#main'
+fx; cc "missing Dockerfile fails" 1 "does not exist" 'services:
+  o:
+    build:
+      context: ./worker
+      dockerfile: Nope'
+fx; cc "dockerfile_inline fails" 1 "dockerfile_inline" 'services:
+  o:
+    build:
+      context: ./worker
+      dockerfile_inline: |
+        FROM node:22-slim'
+fx; cc "dockerfile_inline with an extra dockerfile key fails" 1 "dockerfile_inline" 'services:
+  o:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+      dockerfile_inline: |
+        FROM alpine'
+fx; cc "additional_contexts docker-image fails" 1 "additional_contexts" 'services:
+  o:
+    build:
+      context: ./worker
+      additional_contexts:
+        base: docker-image://alpine:3'
+fx; cc "additional_contexts local path passes" 0 "" 'services:
+  o:
+    build:
+      context: ./worker
+      additional_contexts:
+        base: ./backend'
+fx; cc "image next to build is the built image name, not checked" 0 "" 'services:
+  o:
+    image: registry.example/app:1
+    build: ./worker'
+fx; cc "service without image and build is an offender" 1 "service o:" 'services:
+  o:
+    restart: always'
+fx; cc "invalid YAML is exit 2, never a pass" 2 "docker compose config failed" 'services: [unclosed'
+fx; printf 'services:\n  db:\n    image: postgres:16@%s\n' "$D" > "$fx/compose.yml"
+rc=0; out="$(env PATH=/nonexistent "$BASH" "$guard" "$fx/compose.yml" 2>&1)" || rc=$?
+if [ "$rc" -eq 2 ] && [[ "$out" == *"docker compose is required"* ]]; then pass=$((pass + 1)); else echo "FAIL compose: no docker is exit 2: $rc $out"; fails=$((fails + 1)); fi
+fx; printf 'services:\n  db:\n    image: postgres:16@%s\n' "$D" > "$fx/compose.yml"
+rc=0; out="$(bash "$guard" "$fx/compose.yml" "$tmp/bad.Dockerfile" 2>&1)" || rc=$?
+if [ "$rc" -eq 1 ] && [[ "$out" == *"bad.Dockerfile:1:"* ]]; then pass=$((pass + 1)); else echo "FAIL compose and Dockerfile arguments together: $rc $out"; fails=$((fails + 1)); fi
 
 # --- repository tree ---
 rc=0
