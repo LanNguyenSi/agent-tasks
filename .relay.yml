@@ -2,17 +2,21 @@ name: agent-tasks
 health: /api/health
 compose_file: docker-compose.prod.yml
 pre_update:
-  # `--pull` refreshes upstream base images each deploy; the layer
-  # cache stays valid for any layer whose inputs (lockfile, source
-  # contents) haven't changed. We deliberately do NOT pass
+  # `--pull` re-resolves each base image on every deploy. The base
+  # images are pinned by digest (name:tag@sha256:...), so it changes
+  # nothing until a commit moves a digest (a Renovate pull request);
+  # the layer cache stays valid for any layer whose inputs (lockfile,
+  # source contents) haven't changed. We deliberately do NOT pass
   # --no-cache: a full rebuild peaks at ~3-4 GB RAM for this stack
   # and on a 7.7 GB host shared with ~25 containers that's enough to
   # push the OOM-killer into a kernel-level lockup (incident
   # 2026-05-03). Dependency drift is detected through the COPY
   # package-lock.json invalidation chain, so cache reuse is safe.
   #
-  # For the rare hard-rebuild case (base-image security advisory)
-  # do it interactively from the VPS, not in the automatic hook.
+  # A base-image security advisory is handled by merging the digest
+  # bump and deploying. A hard rebuild (--no-cache) only refreshes the
+  # apt and npm layers, not the pinned base; do it interactively from
+  # the VPS, not in the automatic hook.
   - docker compose -f docker-compose.prod.yml build --pull
 # post_update intentionally absent: the `migrate` service in
 # docker-compose.prod.yml runs `prisma db push` as a one-shot init

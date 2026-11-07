@@ -1,4 +1,4 @@
-FROM node:22-slim AS base
+FROM node:22-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d AS base
 WORKDIR /app
 
 # Install workspace deps once for all stages
@@ -21,7 +21,7 @@ ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build --workspace=frontend
 
-FROM node:22-slim AS prod
+FROM node:22-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d AS prod
 WORKDIR /app
 ENV NODE_ENV=production
 
