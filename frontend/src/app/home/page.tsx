@@ -20,7 +20,7 @@ import {
   readRecentProjects,
 } from "../../lib/recentProjects";
 import { needsOnboarding } from "../../lib/access";
-import { accessContextForTeams, usePageTeams } from "../../lib/teamList";
+import { accessContextForTeams, usePageTeams, useTeamList } from "../../lib/teamList";
 import { useCurrentTeam } from "../../lib/teamSwitch";
 import { normalizeStatus } from "../../lib/taskDisplay";
 import { boardHref, projectsHref } from "../../lib/routes";
@@ -313,7 +313,17 @@ export default function HomeDashboardPage() {
   // without a session no team resolves and nothing is requested or written
   // into the URL. `teamsHeld`: ?teamId names a team that list lacks and its
   // one refresh is pending.
-  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams(user !== null);
+  const {
+    teams,
+    status: teamsStatus,
+    error: teamsError,
+    held: teamsHeld,
+  } = usePageTeams(user !== null);
+  // Retry of a failed team list: the same lookup the shell owns, so the header
+  // recovers with the page. `teamsRetrying` keeps the loading frame while this
+  // request is in flight, exactly as the hook's own mount retry does.
+  const { refreshTeams } = useTeamList();
+  const [teamsRetrying, setTeamsRetrying] = useState(false);
   // Derived from the URL like the header's team (?teamId, remembered, first):
   // no team state of its own, so back/forward and a switch always agree.
   const selectedTeam = useCurrentTeam(teams, { hold: teamsHeld });
@@ -559,6 +569,33 @@ export default function HomeDashboardPage() {
     }
     return map;
   }, [openTasks, counts]);
+
+  // A team list that could not be loaded is not a reason to keep the loading
+  // frame: the page says so and offers a Retry (the task-fetch error above uses
+  // the same banner and button). While a retry is in flight `teamsStatus` is
+  // still `loading` (the hook's own mount retry) or `teamsRetrying` is set
+  // (this page's Retry), so the loading frame covers both.
+  const teamsLoadFailed = user !== null && teamsStatus === "error" && !teamsRetrying;
+
+  if (teamsLoadFailed) {
+    return (
+      <PageShell header={<PageHeader title="Home" />}>
+        <AlertBanner tone="danger" title="Could not load teams">
+          {teamsError?.message ?? "Failed to load teams."}
+        </AlertBanner>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setTeamsRetrying(true);
+            void refreshTeams().then(() => setTeamsRetrying(false));
+          }}
+        >
+          Retry
+        </Button>
+      </PageShell>
+    );
+  }
 
   if (loading) {
     return <FullPageLoader variant="shell" label="Loading your tasks" />;

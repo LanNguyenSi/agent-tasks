@@ -64,10 +64,20 @@ type CookieWriter = {
   header: (name: string, value: string, options?: { append?: boolean }) => void;
 };
 
+// A cookie value the browser sent back is input: a truncated escape (the
+// `oauth_state=%E0` of a request that hit the cookie-size limit) makes
+// `decodeURIComponent` throw. Such a value is read as absent, so the callback
+// takes the same invalid-state path it takes for a missing cookie (redirect
+// with a reason, transient cookies cleared) instead of answering 500.
 function readCookie(cookieHeader: string | undefined, name: string): string | null {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
-  return match ? decodeURIComponent(match[1] ?? "") : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1] ?? "");
+  } catch {
+    return null;
+  }
 }
 
 function buildCookie(name: string, value: string, maxAgeSeconds: number): string {

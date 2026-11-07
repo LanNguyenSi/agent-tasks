@@ -42,10 +42,18 @@ export default function TeamSettingsPage() {
   // without a session no team resolves and nothing is requested or written
   // into the URL. `teamsHeld`: ?teamId names a team that list lacks and its
   // one refresh is pending.
-  const { teams, status: teamsStatus, held: teamsHeld } = usePageTeams(userReady);
+  const {
+    teams,
+    status: teamsStatus,
+    error: teamsError,
+    held: teamsHeld,
+  } = usePageTeams(userReady);
   // A rename reloads the shell's one list, so the header, the switcher and
   // this page all show the new name without a page reload.
   const { refreshTeams } = useTeamList();
+  // Retry of a failed team list: while that request is in flight the page
+  // stays in its loading frame, exactly as the hook's own mount retry does.
+  const [teamsRetrying, setTeamsRetrying] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("team-name");
 
   // The current team is derived from the URL, the same input the header
@@ -111,10 +119,12 @@ export default function TeamSettingsPage() {
     })();
   }, [router]);
 
-  // Loading until the user is known and the shell's team list has answered.
-  // A failed list lookup keeps the page loading, as the page's own failed
-  // lookup did.
-  const loading = !userReady || teamsStatus !== "ready";
+  // Loading until the user is known and the shell's team list has answered,
+  // and again while a Retry of a failed list is in flight. A list that could
+  // not be loaded with no retry running is the error state below, never a
+  // frame that spins forever.
+  const teamsLoadFailed = userReady && teamsStatus === "error" && !teamsRetrying;
+  const loading = !userReady || (teamsStatus !== "ready" && !teamsLoadFailed);
 
   // Load the current team's tokens. The effect is keyed on the resolved team,
   // so the last resolution always wins: leaving a team (a later switch, back,
@@ -193,6 +203,29 @@ export default function TeamSettingsPage() {
       title="Team settings"
     />
   );
+
+  // A team list that could not be loaded is not a reason to keep the loading
+  // frame: the page says so and offers a Retry, like the failed token list
+  // below does.
+  if (teamsLoadFailed) {
+    return (
+      <PageShell header={header}>
+        <AlertBanner tone="danger" title="Could not load teams">
+          {teamsError?.message ?? "Failed to load teams."}
+        </AlertBanner>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setTeamsRetrying(true);
+            void refreshTeams().then(() => setTeamsRetrying(false));
+          }}
+        >
+          Retry
+        </Button>
+      </PageShell>
+    );
+  }
 
   if (loading) {
     return (
