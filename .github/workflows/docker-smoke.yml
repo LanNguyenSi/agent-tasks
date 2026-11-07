@@ -43,6 +43,9 @@ on:
       - "tools/check-image-digests.test.sh"
       # Any Dockerfile the guard reads from the resolved compose file.
       - "**/Dockerfile*"
+      - "**/*.Dockerfile"
+      - "**/*.dockerfile"
+      - "**/dockerfile"
   pull_request:
     branches: [master, main, develop]
     paths:
@@ -66,6 +69,9 @@ on:
       - "tools/check-image-digests.test.sh"
       # Any Dockerfile the guard reads from the resolved compose file.
       - "**/Dockerfile*"
+      - "**/*.Dockerfile"
+      - "**/*.dockerfile"
+      - "**/dockerfile"
   workflow_dispatch:
 
 permissions:
