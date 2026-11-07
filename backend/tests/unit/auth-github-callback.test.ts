@@ -380,3 +380,111 @@ describe("GET /github/callback failure redirects", () => {
     expectOAuthCookiesCleared(res);
   });
 });
+
+// A transient cookie is browser-held, so its value is input: a truncated
+// percent-escape (`%E0` opens a 3-byte UTF-8 sequence with no continuation
+// byte) makes `decodeURIComponent` throw. readCookie reads such a value as
+// absent, so every callback path answers exactly as it does when that cookie
+// is missing: a 302 to the same target, with the same cookies cleared, never a
+// 500 without a Location. One test per cookie the callback reads.
+describe("GET /github/callback with a malformed cookie escape", () => {
+  const ERROR_PAGE = "http://localhost:3000/auth/error";
+  const OAUTH_COOKIE_NAMES = ["oauth_state", "oauth_intent", "oauth_connect_user", "oauth_redirect"];
+  // `%E0` alone is the shortest malformed escape; the second form keeps a
+  // decodable tail (`%2Finvite%2Fabc` = "/invite/abc") after it, so a Location
+  // of /home proves nothing was taken from the cookie.
+  const BAD = "%E0";
+  const BAD_WITH_TAIL = "%E0%2Finvite%2Fabc";
+
+  function expectOAuthCookiesCleared(res: Response): void {
+    const setCookies = res.headers.getSetCookie();
+    for (const name of OAUTH_COOKIE_NAMES) {
+      expect(setCookies.some((v) => v.startsWith(`${name}=;`) && v.includes("Max-Age=0"))).toBe(
+        true,
+      );
+    }
+    expect(setCookies.some((v) => v.startsWith("session="))).toBe(false);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.exchangeCodeForToken.mockResolvedValue({ access_token: "gh-token" });
+    mocks.fetchGitHubUser.mockResolvedValue({ id: 1, login: "octocat" });
+    mocks.upsertUserFromGitHub.mockResolvedValue({ id: "user-1" });
+    mocks.createSessionToken.mockResolvedValue("session-token");
+    mocks.extractSessionCookie.mockReturnValue("session-token");
+    mocks.verifySessionToken.mockResolvedValue({ userId: "user-1" });
+    mocks.connectGitHubToExistingUser.mockResolvedValue(undefined);
+  });
+
+  const callback = (cookies: string, query = "?code=C&state=STATE123") =>
+    authRouter.request(`/github/callback${query}`, { headers: { Cookie: cookies } });
+
+  it("malformed oauth_state, equal query state → state_mismatch, no token exchange", async () => {
+    const res = await callback(`oauth_state=${BAD}; oauth_intent=login`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${ERROR_PAGE}?reason=state_mismatch`);
+    expectOAuthCookiesCleared(res);
+    expect(mocks.exchangeCodeForToken).not.toHaveBeenCalled();
+  });
+
+  // The null a malformed escape yields is rejected by the presence check
+  // before any comparison, so it cannot match a provider state: neither an
+  // absent nor an empty query `state`.
+  it.each([
+    ["absent query state", "?code=C"],
+    ["empty query state", "?code=C&state="],
+  ])("malformed oauth_state, %s → state_mismatch", async (_label, query) => {
+    const res = await callback(`oauth_state=${BAD}; oauth_intent=login`, query);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${ERROR_PAGE}?reason=state_mismatch`);
+    expectOAuthCookiesCleared(res);
+    expect(mocks.exchangeCodeForToken).not.toHaveBeenCalled();
+  });
+
+  it("malformed oauth_state without a code is still bad_request (guard order unchanged)", async () => {
+    const res = await callback(`oauth_state=${BAD}; oauth_intent=login`, "?state=STATE123");
+    expect(res.headers.get("Location")).toBe(`${ERROR_PAGE}?reason=bad_request`);
+  });
+
+  // Absent intent is the login intent, so a malformed one lands on the login
+  // path: /home with a session, not the connect redirect.
+  it("malformed oauth_intent → the absent-intent login path (/home)", async () => {
+    const res = await callback(
+      `oauth_state=STATE123; oauth_intent=${BAD}; oauth_connect_user=user-1`,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+    expect(mocks.connectGitHubToExistingUser).not.toHaveBeenCalled();
+    expect(res.headers.getSetCookie().some((v) => v.startsWith("session="))).toBe(true);
+  });
+
+  it("malformed oauth_connect_user → session_mismatch, nothing connected", async () => {
+    const res = await callback(
+      `oauth_state=STATE123; oauth_intent=connect; oauth_connect_user=${BAD}`,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${ERROR_PAGE}?reason=session_mismatch`);
+    expectOAuthCookiesCleared(res);
+    expect(mocks.connectGitHubToExistingUser).not.toHaveBeenCalled();
+  });
+
+  // A malformed redirect cookie with an otherwise valid login is the missing
+  // redirect cookie: the default landing (/home), never a target read out of
+  // the malformed value (whose tail would be /invite/abc).
+  it("malformed oauth_redirect with a valid state → /home, cookie cleared", async () => {
+    const res = await callback(`oauth_state=STATE123; oauth_intent=login; oauth_redirect=${BAD_WITH_TAIL}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+    expect(res.headers.getSetCookie().some((v) => v.startsWith("oauth_redirect=;") && v.includes("Max-Age=0"))).toBe(
+      true,
+    );
+  });
+
+  it("a well-formed value still decodes (no behaviour change)", async () => {
+    const res = await callback(
+      `oauth_state=STATE123; oauth_intent=login; oauth_redirect=${encodeURIComponent("/invite/abc")}`,
+    );
+    expect(res.headers.get("Location")).toBe("http://localhost:3000/invite/abc");
+  });
+});

@@ -312,8 +312,11 @@ describe("a failed first lookup is retried by the next team-scoped page", () => 
     nav.reset("/home");
     render(<AppChrome><Routes /></AppChrome>);
     await settleAll();
-    // /home keeps its loading frame, nothing was retried yet.
-    expect(screen.getByRole("main")).toHaveAttribute("aria-busy", "true");
+    // /home says the list could not be loaded and offers a Retry; nothing has
+    // been retried yet.
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load teams");
+    expect(screen.getByText("teams are down")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(getTeams).toHaveBeenCalledTimes(1);
 
     act(() => nav.push("/tasks"));

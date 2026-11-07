@@ -858,3 +858,123 @@ describe("SSO login carries the redirect target", () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A malformed escape in a transient cookie
+//
+// The cookies are browser-held, so their values are input: a truncated
+// percent-escape (`%E0` opens a 3-byte UTF-8 sequence with no continuation
+// byte) makes `decodeURIComponent` throw. readCookie reads such a value as
+// absent, so every callback path answers exactly as it does when that cookie
+// is missing: a 302 with the reason of that path and all five transient
+// cookies cleared, never a 500 without a Location. One test per cookie the
+// callback reads.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /sso/:teamSlug/callback with a malformed cookie escape", () => {
+  const BAD = "%E0";
+  // The tail after the broken escape decodes to "/invite/abc", so a Location
+  // of /home proves nothing was taken from the malformed value.
+  const BAD_WITH_TAIL = "%E0%2Finvite%2Fabc";
+  const TRANSIENT = ["sso_state", "sso_nonce", "sso_team", "sso_pkce", "sso_redirect"];
+
+  const clearedCookie = (res: Response, name: string) =>
+    res.headers.getSetCookie().find((c) => c.startsWith(`${name}=;`) && c.includes("Max-Age=0"));
+
+  function arrangeCallback() {
+    mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
+    mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
+    mocks.decryptClientSecret.mockResolvedValue("client-secret-plain");
+    mocks.exchangeCode.mockResolvedValue({ id_token: "id-token-value", access_token: "a" });
+    mocks.verifyIdToken.mockResolvedValue({ sub: "s", email: "user@acme.com", iss: "https://idp.example.com" });
+    mocks.upsertUserFromOidc.mockResolvedValue({ id: "db-user-id-1" });
+  }
+
+  function expectTransientCookiesCleared(res: Response): void {
+    const setCookies = res.headers.getSetCookie();
+    for (const name of TRANSIENT) {
+      expect(
+        setCookies.some((v) => v.startsWith(`${name}=;`) && v.includes("Max-Age=0")),
+        `${name} should be cleared with Max-Age=0`,
+      ).toBe(true);
+    }
+    expect(setCookies.some((v) => v.startsWith("session="))).toBe(false);
+  }
+
+  const cb = (cookies: string, query = "?code=AUTH_CODE&state=STATE123") =>
+    ssoLoginRouter.request(`/sso/acme/callback${query}`, { headers: { Cookie: cookies } });
+
+  it("malformed sso_state, equal query state → bad_request, no token exchange", async () => {
+    const res = await cb(`sso_state=${BAD}; sso_nonce=N; sso_team=acme; sso_pkce=P`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=bad_request",
+    );
+    expectTransientCookiesCleared(res);
+    expect(mocks.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  // The null a malformed escape yields is rejected by the presence check
+  // before the comparison, so it cannot match the IdP state: absent and empty
+  // query `state` take the same path.
+  it.each([
+    ["absent query state", "?code=AUTH_CODE"],
+    ["empty query state", "?code=AUTH_CODE&state="],
+  ])("malformed sso_state, %s → bad_request", async (_label, query) => {
+    const res = await cb(`sso_state=${BAD}; sso_nonce=N; sso_team=acme; sso_pkce=P`, query);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=bad_request",
+    );
+    expectTransientCookiesCleared(res);
+    expect(mocks.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it("malformed sso_nonce → bad_request, no token exchange", async () => {
+    const res = await cb(`sso_state=STATE123; sso_nonce=${BAD}; sso_team=acme; sso_pkce=P`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=bad_request",
+    );
+    expectTransientCookiesCleared(res);
+    expect(mocks.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it("malformed sso_team → state_mismatch (as when the cookie is absent)", async () => {
+    const res = await cb(`sso_state=STATE123; sso_nonce=N; sso_team=${BAD}; sso_pkce=P`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=state_mismatch",
+    );
+    expectTransientCookiesCleared(res);
+    expect(mocks.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it("malformed sso_pkce → bad_request, no token exchange", async () => {
+    const res = await cb(`sso_state=STATE123; sso_nonce=N; sso_team=acme; sso_pkce=${BAD}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=bad_request",
+    );
+    expectTransientCookiesCleared(res);
+    expect(mocks.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  // A malformed redirect cookie on an otherwise valid login is the missing
+  // redirect cookie: the default landing (/home), never the value the tail of
+  // the malformed one would have decoded to.
+  it("malformed sso_redirect with everything else valid → /home, cookie cleared", async () => {
+    arrangeCallback();
+    const res = await cb(`${GOOD_COOKIES}; sso_redirect=${BAD_WITH_TAIL}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
+    expect(clearedCookie(res, "sso_redirect")).toBeDefined();
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("session="))).toBe(true);
+  });
+
+  it("a well-formed value still decodes (no behaviour change)", async () => {
+    arrangeCallback();
+    const res = await cb(`${GOOD_COOKIES}; sso_redirect=${encodeURIComponent("/invite/abc")}`);
+    expect(res.headers.get("Location")).toBe("http://localhost:3000/invite/abc");
+  });
+});
