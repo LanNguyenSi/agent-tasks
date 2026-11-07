@@ -22,6 +22,20 @@ host, where `docker-compose.prod.yml` and its `.env` live.
 
 ## Backing up
 
+### 0. Choose the backup directory
+
+Back up into a private directory outside the deploy checkout, never into
+the checkout itself: an untracked file there makes relay's `git_clean`
+preflight block the next deploy (see "Applying a destructive schema
+change"). Pick any directory only you can read and set it in the shell
+that runs the commands below (and the restore commands later); the restore
+section reads the artifacts from the same paths:
+
+```bash
+BACKUP_DIR=/root/agent-tasks-backups   # example: an existing private dir outside the checkout
+install -d -m 700 "$BACKUP_DIR"
+```
+
 ### 1. Database dump
 
 `pg_dump` runs inside the `db` container and connects over the local
@@ -30,7 +44,7 @@ the compose file (`agent_tasks` for both):
 
 ```bash
 docker compose -f docker-compose.prod.yml exec -T db \
-  pg_dump -U agent_tasks -d agent_tasks > db-YYYY-MM-DD.sql
+  pg_dump -U agent_tasks -d agent_tasks > "$BACKUP_DIR"/db-YYYY-MM-DD.sql
 ```
 
 `-T` keeps the output stream clean for the redirect.
@@ -54,10 +68,10 @@ echo "$UPLOADS_VOL"
 ```
 
 Then tar the volume out with a throwaway container: the volume mounted
-read-only at `/data`, the deployment directory mounted at `/backup`:
+read-only at `/data`, `$BACKUP_DIR` mounted at `/backup`:
 
 ```bash
-docker run --rm -v "$UPLOADS_VOL":/data:ro -v "$PWD":/backup alpine \
+docker run --rm -v "$UPLOADS_VOL":/data:ro -v "$BACKUP_DIR":/backup alpine \
   tar czf /backup/uploads-YYYY-MM-DD.tgz -C /data .
 ```
 
@@ -67,7 +81,7 @@ A backup that only exists on the production host is not a backup. Copy
 both artifacts and verify the copies arrived:
 
 ```bash
-scp db-YYYY-MM-DD.sql uploads-YYYY-MM-DD.tgz \
+scp "$BACKUP_DIR"/db-YYYY-MM-DD.sql "$BACKUP_DIR"/uploads-YYYY-MM-DD.tgz \
   ops@<backup-host>:/backups/
 ssh ops@<backup-host> 'ls -l /backups'
 ```
@@ -100,7 +114,7 @@ docker compose -f docker-compose.prod.yml exec -T db \
   createdb -U agent_tasks -O agent_tasks agent_tasks
 docker compose -f docker-compose.prod.yml exec -T db \
   psql -U agent_tasks -d agent_tasks -v ON_ERROR_STOP=1 -q \
-  < db-YYYY-MM-DD.sql
+  < "$BACKUP_DIR"/db-YYYY-MM-DD.sql
 ```
 
 If the deployment uses the optional separate runtime role
@@ -112,12 +126,13 @@ the restored database before starting the backend.
 ### 3. Restore the uploads volume
 
 Extract the archive into the same volume (resolve `UPLOADS_VOL` as in the
-backup section). Restore the two artifacts as a pair from the same point
+backup section, and set `BACKUP_DIR` as there, since the artifacts are
+read from it). Restore the two artifacts as a pair from the same point
 in time; if the volume already holds files from a newer state, back it up
 or clear it first so stale orphans do not pile up:
 
 ```bash
-docker run --rm -v "$UPLOADS_VOL":/data -v "$PWD":/backup:ro alpine \
+docker run --rm -v "$UPLOADS_VOL":/data -v "$BACKUP_DIR":/backup:ro alpine \
   sh -c 'tar xzf /backup/uploads-YYYY-MM-DD.tgz -C /data'
 ```
 
@@ -183,10 +198,11 @@ To apply a destructive change on purpose, on the host:
    docker compose -f docker-compose.prod.yml stop backend
    ```
 
-4. Back up the database as in [Backing up, step 1](#1-database-dump), to a
-   file outside the deploy checkout (an untracked file there makes relay's
-   `git_clean` preflight block the next deploy) that only you can read, and
-   check it is non-empty (`test -s <dump>`) before continuing.
+4. Back up the database as in [Backing up, step 1](#1-database-dump). The
+   dump lands in `$BACKUP_DIR`, outside the deploy checkout (an untracked
+   file there makes relay's `git_clean` preflight block the next deploy)
+   and readable only by you; check it is non-empty (`test -s <dump>`)
+   before continuing.
 5. Run the push once, with the flag, from a one-off container of the new
    `migrate` image (the command override replaces the image's `CMD`):
 
