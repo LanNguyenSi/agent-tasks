@@ -58,7 +58,16 @@ export async function verifySessionToken(
 export function extractSessionCookie(cookieHeader: string | null | undefined): string | null {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(/(?:^|;\s*)session=([^;]+)/);
-  return match ? decodeURIComponent(match[1]!) : null;
+  if (!match) return null;
+  // The cookie value is input: a truncated escape (`session=%E0`) makes
+  // `decodeURIComponent` throw. The cookie is HttpOnly, so the user cannot
+  // clear it by hand; read such a value as absent and let the caller answer
+  // as it does for a missing cookie instead of throwing through the routes.
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return null;
+  }
 }
 
 /** Build a Set-Cookie header value for the session */
