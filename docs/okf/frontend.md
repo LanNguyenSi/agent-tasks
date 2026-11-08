@@ -3,7 +3,7 @@ type: module
 title: "frontend: Next.js UI"
 description: "App-router structure, the two independently-authored task list views, the backlog board column, and the hand-maintained confidence-scorer mirror."
 tags: [frontend, nextjs, ui, confidence, backlog]
-timestamp: 2026-11-07T16:32:01Z
+timestamp: 2026-11-08T18:43:20Z
 sources:
   - frontend/src/app
   - frontend/src/app/tasks/page.tsx
