@@ -99,7 +99,7 @@ const eslintConfig = defineConfig([
         },
         {
           // const { title } = document / window.document / globalThis.document
-          selector: `VariableDeclarator[id.type='ObjectPattern'][id.properties.0.key.name='title']:matches([init.name='document'], [init.object.name=/^(window|globalThis)$/][init.property.name='document'])${outsideWaitFor("VariableDeclarator")}`,
+          selector: `VariableDeclarator[id.type='ObjectPattern']:has(Property[key.name='title']):matches([init.name='document'], [init.object.name=/^(window|globalThis)$/][init.property.name='document'])${outsideWaitFor("VariableDeclarator")}`,
           message: DOCUMENT_TITLE_MESSAGE,
         },
         {

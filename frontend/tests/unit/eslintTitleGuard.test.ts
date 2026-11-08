@@ -23,6 +23,7 @@ const FLAGGED: Array<[string, string]> = [
   ["destructured from document", "const { title } = document;\nexpect(title).toBe('x');"],
   ["destructured from window.document", "const { title } = window.document;\nexpect(title).toBe('x');"],
   ["destructured from globalThis.document", "const { title } = globalThis.document;\nexpect(title).toBe('x');"],
+  ["destructured after another property", "const { body, title } = document;\nexpect(title).toBe('x');"],
 ];
 
 const ALLOWED: Array<[string, string]> = [
@@ -39,6 +40,8 @@ describe("tests/** document.title guard", () => {
   });
 
   it.each(ALLOWED)("allows %s", async (_name, code) => {
-    expect(await rules(code)).not.toContain("no-restricted-syntax");
+    const found = await rules(code);
+    expect(found).not.toContain("parse-error");
+    expect(found).not.toContain("no-restricted-syntax");
   });
 });
