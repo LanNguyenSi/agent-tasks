@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * /home stat strip + widget grid — shared D1 order (T-001, agent-tasks
+ * /home scope strip + widget grid: shared D1 order (T-001, agent-tasks
  * f1112ab1-8864-40d0-a689-64532011caa4).
  *
  * Both surfaces render the same `homeScopes` list in home/page.tsx, in
