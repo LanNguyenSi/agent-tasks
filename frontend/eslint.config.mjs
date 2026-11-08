@@ -2,6 +2,13 @@ import { defineConfig } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+// A selector suffix that exempts nodes inside a waitFor / vi.waitFor callback.
+const outsideWaitFor = (node) =>
+  `:not(:matches(CallExpression[callee.name='waitFor'], CallExpression[callee.object.name='vi'][callee.property.name='waitFor']) ${node})`;
+
+const DOCUMENT_TITLE_MESSAGE =
+  "Do not read document.title bare in a test: the title is set by a passive effect and can lag the DOM a test just awaited. Use `await expectDocumentTitle(...)` from tests/unit/helpers/documentTitle.ts, or put the expect inside waitFor.";
+
 const eslintConfig = defineConfig([
   { ignores: [".next/**", "node_modules/**", "dist/**", "coverage/**", "next-env.d.ts"] },
   ...nextVitals,
@@ -86,10 +93,14 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         {
-          selector:
-            "CallExpression[callee.name='expect'][arguments.0.type='MemberExpression'][arguments.0.object.name='document'][arguments.0.property.name='title']:not(:matches(CallExpression[callee.name='waitFor'], CallExpression[callee.object.name='vi'][callee.property.name='waitFor']) CallExpression)",
-          message:
-            "Do not read document.title bare in a test: the title is set by a passive effect and can lag the DOM a test just awaited. Use `await expectDocumentTitle(...)` from tests/unit/helpers/documentTitle.ts, or put the expect inside waitFor.",
+          // document.title, window.document.title, globalThis.document.title
+          selector: `CallExpression[callee.name='expect'][arguments.0.type='MemberExpression'][arguments.0.property.name='title']:matches([arguments.0.object.name='document'], [arguments.0.object.object.name=/^(window|globalThis)$/][arguments.0.object.property.name='document'])${outsideWaitFor("CallExpression")}`,
+          message: DOCUMENT_TITLE_MESSAGE,
+        },
+        {
+          // const { title } = document / window.document / globalThis.document
+          selector: `VariableDeclarator[id.type='ObjectPattern']:has(Property[key.name='title']):matches([init.name='document'], [init.object.name=/^(window|globalThis)$/][init.property.name='document'])${outsideWaitFor("VariableDeclarator")}`,
+          message: DOCUMENT_TITLE_MESSAGE,
         },
         {
           selector:
