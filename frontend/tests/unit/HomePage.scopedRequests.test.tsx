@@ -9,7 +9,7 @@
  * (GET /teams/:teamId/tasks): it honours status, priority, mine, recency and
  * limit, returns rows newest-update first, caps a page at 500 rows like the
  * real default, and computes team-wide `counts` independent of the filters.
- * Mock/render pattern mirrors HomePage.statStrip.backlog.test.tsx.
+ * Mock/render pattern mirrors HomePage.scopeStrip.backlog.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, within, fireEvent } from "@testing-library/react";
@@ -512,7 +512,7 @@ describe("home page: labels", () => {
     expect(screen.queryByText("Recently Done")).toBeNull();
   });
 
-  it("keeps the stat tiles the only link to a scope: widget titles are plain text", async () => {
+  it("keeps the scope links the only links to a scope: widget titles are plain text", async () => {
     serveDataset([makeTask()]);
     await renderHome();
 

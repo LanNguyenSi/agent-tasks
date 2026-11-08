@@ -479,7 +479,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
  *
  * Custom workflows get no terminal carve-out here. A confirmation-required
  * project must keep its review gate on a webhook merge regardless of
- * workflow — the old carve-out (M3) let custom-workflow non-solo projects
+ * workflow: the old carve-out let custom-workflow non-solo projects
  * auto-complete and silently bypass the review gate that default-workflow
  * non-solo projects get.
  *

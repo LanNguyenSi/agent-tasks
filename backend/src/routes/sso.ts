@@ -275,8 +275,8 @@ const upsertSchema = z.object({
  *
  *  - Session cookies alone cannot configure SSO. Stealing a browser session
  *    of a team ADMIN does not give the attacker IdP-config access.
- *  - The token is issued once (via /settings → agent tokens) and handed
- *    out-of-band to whoever owns IdP setup.
+ *  - The token is issued once (Team settings, API Tokens, at /settings/team)
+ *    and handed out-of-band to whoever owns IdP setup.
  *  - Rotation/revocation piggy-backs on existing AgentToken tooling.
  *  - The token's `teamId` MUST match the URL param so a token issued for
  *    team A can never configure team B.
