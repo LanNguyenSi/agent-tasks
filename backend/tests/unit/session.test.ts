@@ -60,6 +60,23 @@ describe("extractSessionCookie", () => {
     expect(extractSessionCookie(undefined)).toBeNull();
     expect(extractSessionCookie("")).toBeNull();
   });
+
+  it("decodes a well-formed value containing %20 and %3D exactly as before", () => {
+    expect(extractSessionCookie("session=a%20b%3Dc")).toBe("a b=c");
+  });
+
+  it("returns null for a malformed percent escape", () => {
+    expect(extractSessionCookie("session=%E0")).toBeNull();
+    expect(extractSessionCookie("session=%")).toBeNull();
+    expect(extractSessionCookie("session=%zz")).toBeNull();
+    expect(extractSessionCookie("session=ok%E0tail")).toBeNull();
+  });
+
+  it("returns null when the malformed session value sits next to other cookies", () => {
+    expect(extractSessionCookie("theme=dark; session=%E0; csrf=abc")).toBeNull();
+    expect(extractSessionCookie("session=%E0; theme=dark")).toBeNull();
+    expect(extractSessionCookie("theme=dark; session=%E0")).toBeNull();
+  });
 });
 
 describe("buildSessionCookie", () => {
