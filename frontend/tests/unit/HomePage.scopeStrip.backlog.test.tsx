@@ -146,7 +146,7 @@ function backlogTileNumber(): string {
   return within(tile).getByText(/^\d+$/).textContent ?? "";
 }
 
-describe("home stat strip — Backlog tile", () => {
+describe("home scope strip: Backlog scope link", () => {
   it("renders counts.backlog from the server, independent of loaded task rows", async () => {
     mockGetTeamTasks.mockResolvedValue({
       tasks: [makeTask({ id: "t1", status: "backlog" })], // only 1 loaded row

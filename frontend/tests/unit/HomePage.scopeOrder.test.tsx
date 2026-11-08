@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * /home stat strip + widget grid — shared D1 order (T-001, agent-tasks
+ * /home scope strip + widget grid: shared D1 order (T-001, agent-tasks
  * f1112ab1-8864-40d0-a689-64532011caa4).
  *
  * Both surfaces render the same `homeScopes` list in home/page.tsx, in
@@ -9,7 +9,7 @@
  * and the widget h2 titles so a future edit that reorders one surface
  * (or swaps two entries in the shared list) turns this red.
  *
- * Mock/render pattern mirrors HomePage.statStrip.backlog.test.tsx: the
+ * Mock/render pattern mirrors HomePage.scopeStrip.backlog.test.tsx: the
  * page mocks `src/lib/api` wholesale and stubs `next/navigation`'s
  * useRouter so the page can mount without a real router.
  */
@@ -144,12 +144,12 @@ afterEach(() => {
   cleanup();
 });
 
-describe("home page — shared scope order (stat strip + widget grid)", () => {
-  it("renders the stat tiles in D1 order", async () => {
+describe("home page: shared scope order (scope strip + widget grid)", () => {
+  it("renders the scope links in D1 order", async () => {
     await renderHomePage();
 
     const strip = document.querySelector(".home-scopes");
-    if (!strip) throw new Error("stat strip not found");
+    if (!strip) throw new Error("scope strip not found");
     const labels = Array.from(strip.querySelectorAll(".home-scope-label")).map(
       (el) => el.textContent,
     );
@@ -157,7 +157,7 @@ describe("home page — shared scope order (stat strip + widget grid)", () => {
     expect(labels).toEqual(EXPECTED_STAT_LABELS);
   });
 
-  it("renders the widget grid in D1 order (same order as the stat strip)", async () => {
+  it("renders the widget grid in D1 order (same order as the scope strip)", async () => {
     await renderHomePage();
 
     const grid = document.querySelector(".home-widgets-grid");
