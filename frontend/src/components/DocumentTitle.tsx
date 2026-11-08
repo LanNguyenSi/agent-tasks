@@ -37,6 +37,15 @@ export function formatDocumentTitle(title: string | null | undefined): string {
 // Next/React-managed or not, is never removed). Removal happens only on
 // unmount, never when the title changes while the owner stays mounted: a
 // re-run updates the owned element in place, so the tab never flickers empty.
+// One-consumer assumption: on a route whose segment metadata renders no
+// <title> (projects/[id] via ProjectHubLayout, tasks/[id]), at most one enabled
+// consumer is mounted at a time, and that one creates and owns the head
+// <title>. A second enabled consumer mounted alongside it would find the
+// element already there, so it would not own it; the first one unmounting
+// would then remove the element while the second is still mounted, and the
+// tab title would be gone early. There is no shared counter: keep to one
+// enabled consumer per such route (ExactPathTitle's `enabled` flag lets
+// nested ones stay off).
 export function useDocumentTitle(title: string | null | undefined, enabled = true): void {
   const ownedRef = useRef<HTMLTitleElement | null>(null);
   useEffect(() => {

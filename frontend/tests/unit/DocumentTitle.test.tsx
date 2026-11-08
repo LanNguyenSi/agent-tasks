@@ -29,6 +29,7 @@ import { metadata as ssoMeta } from "../../src/app/settings/team/sso/layout";
 import { metadata as projectsMeta } from "../../src/app/projects/layout";
 import { metadata as workflowMeta } from "../../src/app/projects/workflow/layout";
 import { metadata as projectHubMeta } from "../../src/app/projects/[id]/layout";
+import { metadata as taskDetailMeta } from "../../src/app/tasks/[id]/layout";
 
 beforeEach(() => {
   document.title = "stale";
@@ -148,7 +149,7 @@ describe("segment layout titles", () => {
   });
 });
 
-describe("server-rendered titles (segment metadata; the root layout's template adds the product name for first-level routes, nested ones carry it in `absolute`, the project hub renders none)", () => {
+describe("server-rendered titles (segment metadata; the root layout's template adds the product name for first-level routes, nested ones carry it in `absolute`, the project hub and the task detail page render none)", () => {
   it.each([
     [homeMeta, "Home"],
     [tasksMeta, "Tasks"],
@@ -158,6 +159,7 @@ describe("server-rendered titles (segment metadata; the root layout's template a
     [projectsMeta, "Projects"],
     [workflowMeta, { absolute: "Workflow - agent-tasks" }],
     [projectHubMeta, null],
+    [taskDetailMeta, null],
   ])("%o names the page %s", (meta, title) => {
     expect(meta.title).toEqual(title);
   });

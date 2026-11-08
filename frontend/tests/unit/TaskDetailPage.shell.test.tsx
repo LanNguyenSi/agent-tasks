@@ -110,4 +110,14 @@ describe("/tasks/[id] document title", () => {
     // loaded task in, which can run after the DOM update findByText saw.
     await expectDocumentTitle("A task - agent-tasks");
   });
+
+  it("with no server-rendered <title> (segment metadata `null`), the page owns the one head <title> while mounted and removes it on unmount", async () => {
+    document.head.querySelectorAll("title").forEach((t) => t.remove());
+    const { unmount } = render(<TaskDetailPage />);
+    await screen.findByText("task body");
+    await expectDocumentTitle("A task - agent-tasks");
+    expect(document.head.querySelectorAll("title")).toHaveLength(1);
+    unmount();
+    expect(document.head.querySelectorAll("title")).toHaveLength(0);
+  });
 });
