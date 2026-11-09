@@ -91,4 +91,72 @@ describe("NewTaskModal -- live badge effective threshold", () => {
       "How complete the task spec is (0-100). Project threshold: 50.",
     );
   });
+
+  // The call-site guard (NewTaskModal, header badge) reads:
+  //   confidenceThreshold === null && taskTypeThresholds === null
+  //     ? null  (badge falls back to the global default 60, tooltip unnamed)
+  //     : resolveEffectiveThreshold(picked taskType, taskTypeThresholds,
+  //         confidenceThreshold)  (override -> project -> global 60, named).
+  // Pinned per input combination; the winning input is named in each name.
+
+  it("override alone (no project threshold, matching taskType pick): the taskType override wins", async () => {
+    renderModal({ taskTypeThresholds: { feature: 80 } });
+    await expandAgentTemplate();
+    await userEvent.click(screen.getByRole("combobox", { name: "Task type" }));
+    await userEvent.click(screen.getByRole("option", { name: "feature" }));
+    expect(headerBadge()).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 80.",
+    );
+  });
+
+  it("empty override map with no project threshold: global default 60 is named (unlike the both-absent case above, which omits the sentence)", () => {
+    // Absent (null/omitted) vs empty ({}): the guard only checks `=== null`,
+    // so an empty map reaches the resolver, which resolves the global
+    // default and the badge NAMES "Project threshold: 60" where the
+    // nothing-threaded case above keeps the tooltip silent.
+    renderModal({ confidenceThreshold: null, taskTypeThresholds: {} });
+    expect(headerBadge()).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 60.",
+    );
+  });
+
+  it("override map present but no taskType picked and no project threshold: global default 60 wins", () => {
+    renderModal({ confidenceThreshold: null, taskTypeThresholds: { feature: 80 } });
+    expect(headerBadge()).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 60.",
+    );
+  });
+
+  it("empty override map with a project threshold: the project threshold still wins over the global default", () => {
+    renderModal({ confidenceThreshold: 40, taskTypeThresholds: {} });
+    expect(headerBadge()).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 40.",
+    );
+  });
+
+  it("all three present (project threshold, matching override, typed pick): the taskType override wins over the project threshold", async () => {
+    renderModal({ confidenceThreshold: 40, taskTypeThresholds: { feature: 80 } });
+    await expandAgentTemplate();
+    await userEvent.click(screen.getByRole("combobox", { name: "Task type" }));
+    await userEvent.click(screen.getByRole("option", { name: "feature" }));
+    expect(headerBadge()).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 80.",
+    );
+  });
+
+  it("override map present but keyed to another taskType: the project threshold wins", async () => {
+    renderModal({ confidenceThreshold: 40, taskTypeThresholds: { security: 80 } });
+    await expandAgentTemplate();
+    await userEvent.click(screen.getByRole("combobox", { name: "Task type" }));
+    await userEvent.click(screen.getByRole("option", { name: "feature" }));
+    expect(headerBadge()).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 40.",
+    );
+  });
 });

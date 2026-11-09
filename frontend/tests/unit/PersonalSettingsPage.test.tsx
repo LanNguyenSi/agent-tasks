@@ -198,6 +198,29 @@ describe("SettingsPage (personal)", () => {
         ),
       );
     });
+
+    // The no-user fallback. The brief asked to pin the link href as
+    // "/settings/team" with no session or user; the product never gets
+    // there: without a user the page stays on its loading skeleton while
+    // it redirects to /auth (setLoading(false) is only reached after a
+    // user), so the Team card and its link never render, and the bare
+    // fallback href is unreachable. What is observable and pinned here:
+    // the redirect, no link, and that the page asks the shell's team
+    // list for NOTHING. `usePageTeams(userReady=false)` resolves no team
+    // and never triggers a refresh, not even for a ?teamId the (never
+    // loaded) list lacks: the only getTeams call is the provider's
+    // mount load.
+    it("with no session renders no team-settings link and asks the team list for nothing", async () => {
+      mockGetCurrentUser.mockResolvedValue(null);
+      searchQuery = "teamId=missing-team";
+      render(<SettingsPage />);
+
+      await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/auth"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.queryByRole("link", { name: "Open team settings" })).not.toBeInTheDocument();
+      expect(getTeams).toHaveBeenCalledTimes(1); // provider mount load only, no refresh
+    });
   });
 
   it("forwards /settings#api-tokens to the team settings API tokens section", async () => {

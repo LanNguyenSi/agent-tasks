@@ -302,6 +302,105 @@ describe("BoardView -- card badge tier vs project threshold", () => {
       "How complete the task spec is (0-100). Project threshold: 80.",
     );
   });
+
+  // The call-site guard (BoardView TaskCard) reads:
+  //   confidenceThreshold === null && taskTypeThresholds === null
+  //     ? null  (badge falls back to the global default 60, tooltip unnamed)
+  //     : resolveEffectiveThreshold(taskType, taskTypeThresholds, confidenceThreshold)
+  //         (taskType override -> project threshold -> global 60, tooltip named).
+  // Pinned per input combination; the winning input is named in each name.
+
+  const typedTask = (taskType: "feature" | "bugfix") => [
+    task({
+      id: "o-70-t",
+      title: "Refresh report export rows",
+      status: "open",
+      description: SCORE70_DESCRIPTION,
+      templateData: { taskType },
+    }),
+  ];
+
+  function renderWith(props: {
+    tasks?: Task[];
+    confidenceThreshold?: number | null;
+    taskTypeThresholds?: Record<string, number> | null;
+  }) {
+    render(
+      <BoardView
+        tasks={props.tasks ?? tasks}
+        activeTaskId={null}
+        templateFields={null}
+        confidenceThreshold={props.confidenceThreshold}
+        taskTypeThresholds={props.taskTypeThresholds}
+        onSelectTask={() => {}}
+      />,
+    );
+    return within(screen.getByLabelText("Open, 1 task")).getByText(/^Spec 70, /);
+  }
+
+  it("override alone (project threshold null, matching taskType override): the taskType override wins", () => {
+    const badge = renderWith({
+      tasks: typedTask("feature"),
+      confidenceThreshold: null,
+      taskTypeThresholds: { feature: 80 },
+    });
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 80.",
+    );
+  });
+
+  it("empty override map with a null project threshold: global default 60 is named (unlike the both-absent case above, which omits the sentence)", () => {
+    // Absent (null) vs empty ({}): the guard only checks `=== null`, so an
+    // empty map lets the request reach the resolver, which then resolves the
+    // global default and the badge NAMES "Project threshold: 60" where the
+    // all-null case above keeps the tooltip silent.
+    const badge = renderWith({ confidenceThreshold: null, taskTypeThresholds: {} });
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 60.",
+    );
+  });
+
+  it("override map present but no taskType on the card and no project threshold: global default 60 wins", () => {
+    const badge = renderWith({ confidenceThreshold: null, taskTypeThresholds: { feature: 80 } });
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 60.",
+    );
+  });
+
+  it("empty override map with a project threshold: the project threshold still wins over the global default", () => {
+    const badge = renderWith({ confidenceThreshold: 40, taskTypeThresholds: {} });
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 40.",
+    );
+  });
+
+  it("all three present (project threshold, matching override, typed card): the taskType override wins over the project threshold", () => {
+    const badge = renderWith({
+      tasks: typedTask("feature"),
+      confidenceThreshold: 40,
+      taskTypeThresholds: { feature: 80 },
+    });
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 80.",
+    );
+  });
+
+  it("override map present but keyed to another taskType: the project threshold wins", () => {
+    const badge = renderWith({
+      tasks: typedTask("feature"),
+      confidenceThreshold: 40,
+      taskTypeThresholds: { security: 80 },
+    });
+    expect(badge).toHaveAttribute(
+      "title",
+      "How complete the task spec is (0-100). Project threshold: 40.",
+    );
+  });
 });
 
 // ── Custom workflow columns ───────────────────────────────────────
