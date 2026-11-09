@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-11-08T10:08:16Z
+timestamp: 2026-11-09T14:46:35Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -35,7 +35,7 @@ sources:
   - docs/grounding-receipt-contract.md
 ---
 
-Framework is **Hono** (`hono@^4.13.14`), not Express, `backend/src/app.ts` builds a `Hono` app and mounts sub-routers with `app.route(prefix, router)`; `backend/src/server.ts` serves it via `@hono/node-server`. Config is a Zod schema in `backend/src/config/index.ts` (`DATABASE_URL`, `SESSION_SECRET` min 32 chars, `CORS_ORIGINS`, `TRUSTED_PROXY_HOPS`, etc.), fail-fast on missing/invalid env.
+Framework is **Hono** (`hono@^4.13.16`), not Express, `backend/src/app.ts` builds a `Hono` app and mounts sub-routers with `app.route(prefix, router)`; `backend/src/server.ts` serves it via `@hono/node-server`. Config is a Zod schema in `backend/src/config/index.ts` (`DATABASE_URL`, `SESSION_SECRET` min 32 chars, `CORS_ORIGINS`, `TRUSTED_PROXY_HOPS`, etc.), fail-fast on missing/invalid env.
 
 **Route mounting** (`app.ts`): `/api/health`, `/api/webhooks` (GitHub, signature-verified, no auth; the grounding GitHub webhook router when grounding is configured, otherwise the plain webhook router), `/` docsRouter (OpenAPI spec), `/api/auth` + `/api` (SSO), `/api/auth`, `/api` (teams), `/api/agent-tokens`, `/api` (projects, project invites), `/api/invites`, `/api/admin` (shares), `/api` (grounding attempts, grounding task completion, grounding direct tasks, grounding creation, then **tasks**, workflows, boards, audit, signals), `/api/github` (the grounding GitHub router first when grounding is configured, then the GitHub router), `/api/mcp`.
 
