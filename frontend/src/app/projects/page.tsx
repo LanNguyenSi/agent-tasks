@@ -7,7 +7,6 @@ import {
   getCurrentUser,
   getProjects,
   getTasks,
-  getWorkflows,
   createProject,
   deleteProject,
   syncTeamFromGitHub,
@@ -15,6 +14,7 @@ import {
   type Project,
   type Workflow,
 } from "../../lib/api";
+import { loadMissingProjectWorkflows } from "../home/projectWorkflows";
 import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
 import {
   readStoredView,
@@ -305,6 +305,12 @@ export default function ProjectsPage() {
   const [deletingProject, setDeletingProject] = useState(false);
 
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
+  // The workflow rows behind the counts and the projects whose list answered
+  // 403, kept in refs so they survive the poll and the projects effect
+  // re-run: each project is read once per team (see the comment on
+  // fetchTaskCounts). The team effect drops both when the team changes.
+  const workflowCacheRef = useRef<Map<string, Workflow[]>>(new Map());
+  const workflowForbiddenRef = useRef<Set<string>>(new Set());
   const [projectQuery, setProjectQuery] = useState("");
   const [githubOnly, setGithubOnly] = useState(false);
   const [projectPage, setProjectPage] = useState(1);
@@ -418,6 +424,10 @@ export default function ProjectsPage() {
     closeNewProjectModal();
     setDeleteTarget(null);
     setFeedback(null);
+    // The task-count poll's workflow cache and 403 set belong to the team
+    // that was left, so they are dropped here (same rule as Home and /tasks).
+    workflowCacheRef.current = new Map();
+    workflowForbiddenRef.current = new Set();
     activeTeamRef.current = selectedTeamId;
     void loadProjects(selectedTeamId);
     const active = activeTeamRef;
@@ -538,27 +548,28 @@ export default function ProjectsPage() {
     if (projects.length === 0) return;
     let cancelled = false;
 
-    // One getTasks and one getWorkflows per project, in flight together: the
-    // active count follows each project's own workflow, the same rule as
-    // Home's "Your projects" strip. A workflow list that cannot be read
-    // (403 included) leaves the project out of the map, which reads as the
-    // built-in workflow (open, in_progress).
+    // One getTasks per project every 15 s, but a workflow list is read only
+    // once per project (per team): loadMissingProjectWorkflows asks for the
+    // projects the cache does not hold yet, remembers a 403 in the forbidden
+    // set instead of retrying it every cycle, and retries any other failure
+    // on the next poll (see home/projectWorkflows.ts). The active count
+    // follows each project's own workflow, the same rule as Home's "Your
+    // projects" strip. A workflow list that cannot be read leaves the project
+    // out of the cache, which reads as the built-in workflow
+    // (open, in_progress).
     async function fetchTaskCounts() {
-      const results = await Promise.allSettled(
-        projects.map(async (p) => {
-          const [tasks, workflows] = await Promise.all([
-            getTasks(p.id),
-            getWorkflows(p.id).catch(() => null),
-          ]);
-          return [p.id, tasks, workflows] as const;
-        }),
-      );
+      const ids = projects.map((p) => p.id);
+      const [, results] = await Promise.all([
+        loadMissingProjectWorkflows(ids, workflowCacheRef.current, workflowForbiddenRef.current),
+        Promise.allSettled(
+          projects.map(async (p) => {
+            const tasks = await getTasks(p.id);
+            return [p.id, tasks] as const;
+          }),
+        ),
+      ]);
       if (cancelled) return;
-      const byProject = new Map<string, readonly Workflow[]>();
-      for (const r of results) {
-        if (r.status === "fulfilled" && r.value[2]) byProject.set(r.value[0], r.value[2]);
-      }
-      const activeStatesOf = activeStatesResolver(byProject);
+      const activeStatesOf = activeStatesResolver(workflowCacheRef.current);
       const counts: Record<string, number> = {};
       for (const r of results) {
         if (r.status === "fulfilled") {

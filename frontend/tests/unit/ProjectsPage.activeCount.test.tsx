@@ -9,7 +9,8 @@
  * ProjectsPage.currentTeam.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, act } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, act, fireEvent } from "@testing-library/react";
+import { waitForCall } from "./helpers/waitForCall";
 import type { Project, Task, Team, User, Workflow } from "../../src/lib/api";
 
 vi.mock("next/navigation", async () => {
@@ -199,5 +200,158 @@ describe("/projects: active task count", () => {
     render(<ProjectsPage />);
 
     expect(await screen.findByText("1 active task")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The poll reuses the workflow rows it already read (loadMissingProjectWorkflows
+ * in home/projectWorkflows.ts, the same cache Home and /tasks use): each
+ * project's workflow list is asked once per team, a 403 is remembered instead
+ * of retried every cycle, any other failure is retried on the next poll, a
+ * project added to the list is fetched, and a team switch drops the cache.
+ * getTasks still runs per project on every 15 s beat.
+ */
+describe("/projects: workflow cache across polls", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const PROJECT2 = {
+    ...PROJECT,
+    id: "proj-2",
+    name: "Second Project",
+    slug: "second",
+  } as unknown as Project;
+
+  const TEAM2: Team = { ...TEAM, id: "t2", name: "Team Two", slug: "team-two" };
+
+  function forbiddenError(): Error & { status: number } {
+    return Object.assign(new Error("forbidden"), { status: 403 });
+  }
+
+  it("asks each project's workflow once while getTasks keeps polling every 15 s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(getProjects).mockResolvedValue([PROJECT, PROJECT2]);
+    vi.mocked(getTasks).mockResolvedValue([]);
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getTasks).toHaveBeenCalledTimes(2));
+    expect(getWorkflows).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    await waitFor(() => expect(getTasks).toHaveBeenCalledTimes(4));
+    expect(getWorkflows).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask a project that answered 403 again on the next poll", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(getProjects).mockResolvedValue([PROJECT, PROJECT2]);
+    vi.mocked(getTasks).mockResolvedValue([]);
+    vi.mocked(getWorkflows).mockImplementation((id: string) =>
+      id === PROJECT2.id ? Promise.reject(forbiddenError()) : Promise.resolve([]),
+    );
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getTasks).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    await waitFor(() => expect(getTasks).toHaveBeenCalledTimes(4));
+    const calls = await waitForCall(vi.mocked(getWorkflows));
+    expect(calls.filter((c) => c[0] === PROJECT2.id)).toHaveLength(1);
+    expect(calls.filter((c) => c[0] === PROJECT.id)).toHaveLength(1);
+  });
+
+  it("retries a workflow that failed for another reason on the next poll", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(getProjects).mockResolvedValue([PROJECT, PROJECT2]);
+    vi.mocked(getTasks).mockResolvedValue([]);
+    vi.mocked(getWorkflows).mockImplementation((id: string) =>
+      id === PROJECT2.id
+        ? Promise.reject(Object.assign(new Error("server exploded"), { status: 500 }))
+        : Promise.resolve([]),
+    );
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getTasks).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    await waitFor(() => expect(getTasks).toHaveBeenCalledTimes(4));
+    const calls = await waitForCall(vi.mocked(getWorkflows), { times: 3 });
+    expect(calls.filter((c) => c[0] === PROJECT2.id)).toHaveLength(2);
+    expect(calls.filter((c) => c[0] === PROJECT.id)).toHaveLength(1);
+  });
+
+  it("fetches the workflow of a project added to the list", async () => {
+    const { createProject } = await import("../../src/lib/api");
+    vi.mocked(getTasks).mockResolvedValue([]);
+    vi.mocked(createProject).mockResolvedValue(PROJECT2 as Awaited<ReturnType<typeof createProject>>);
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT.id));
+
+    fireEvent.click(screen.getAllByRole("button", { name: /New Project/ })[0]!);
+    fireEvent.change(screen.getByPlaceholderText("My Project"), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT2.id));
+  });
+
+  it("asks again for a project the cache held when the team comes back", async () => {
+    vi.mocked(getTeams).mockResolvedValue([TEAM, TEAM2]);
+    vi.mocked(getProjects).mockImplementation((teamId?: string) =>
+      Promise.resolve(teamId === "t2" ? [PROJECT2] : [PROJECT]),
+    );
+    vi.mocked(getTasks).mockResolvedValue([]);
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT.id));
+    act(() => nav.push("/projects?teamId=t2"));
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT2.id));
+
+    act(() => nav.push("/projects?teamId=t1"));
+
+    // The cache of the team that was left is gone: proj-1 is read a second
+    // time, proj-2 is not asked again while away.
+    const calls = await waitForCall(vi.mocked(getWorkflows), { times: 3 });
+    expect(calls.filter((c) => c[0] === PROJECT.id)).toHaveLength(2);
+    expect(calls.filter((c) => c[0] === PROJECT2.id)).toHaveLength(1);
+  });
+
+  it("asks again for a project that answered 403 once the team comes back", async () => {
+    vi.mocked(getTeams).mockResolvedValue([TEAM, TEAM2]);
+    vi.mocked(getProjects).mockImplementation((teamId?: string) =>
+      Promise.resolve(teamId === "t2" ? [PROJECT2] : [PROJECT]),
+    );
+    vi.mocked(getTasks).mockResolvedValue([]);
+    vi.mocked(getWorkflows).mockImplementation((id: string) =>
+      id === PROJECT.id ? Promise.reject(forbiddenError()) : Promise.resolve([]),
+    );
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT.id));
+    act(() => nav.push("/projects?teamId=t2"));
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT2.id));
+
+    act(() => nav.push("/projects?teamId=t1"));
+
+    // The 403 set of the team that was left is gone too: proj-1 is asked a
+    // second time although it answered 403 before.
+    const calls = await waitForCall(vi.mocked(getWorkflows), { times: 3 });
+    expect(calls.filter((c) => c[0] === PROJECT.id)).toHaveLength(2);
   });
 });

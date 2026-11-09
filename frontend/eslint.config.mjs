@@ -6,6 +6,17 @@ import nextTs from "eslint-config-next/typescript";
 const outsideWaitFor = (node) =>
   `:not(:matches(CallExpression[callee.name='waitFor'], CallExpression[callee.object.name='vi'][callee.property.name='waitFor']) ${node})`;
 
+// The `.title` end of a member expression, written `.title` or `['title']`,
+// for the given selector path to that member expression.
+const titleMemberEnd = (p) =>
+  `:matches([${p}.property.name='title'],[${p}.computed=true][${p}.property.value='title'])`;
+
+// The object end of a title member expression: bare `document`, or `document`
+// read through a global root (window, globalThis, self), for the given
+// selector path to the member expression's object.
+const documentObjectEnd = (p) =>
+  `:matches([${p}.name='document'],[${p}.object.name=/^(window|globalThis|self)$/][${p}.property.name='document'])`;
+
 const DOCUMENT_TITLE_MESSAGE =
   "Do not read document.title bare in a test: the title is set by a passive effect and can lag the DOM a test just awaited. Use `await expectDocumentTitle(...)` from tests/unit/helpers/documentTitle.ts, or put the expect inside waitFor.";
 
@@ -93,13 +104,27 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         {
-          // document.title, window.document.title, globalThis.document.title
-          selector: `CallExpression[callee.name='expect'][arguments.0.type='MemberExpression'][arguments.0.property.name='title']:matches([arguments.0.object.name='document'], [arguments.0.object.object.name=/^(window|globalThis)$/][arguments.0.object.property.name='document'])${outsideWaitFor("CallExpression")}`,
+          // expect(document.title), expect(document['title']) and the same
+          // read through window / globalThis / self
+          selector: `CallExpression[callee.name='expect'][arguments.0.type='MemberExpression']${titleMemberEnd("arguments.0")}${documentObjectEnd("arguments.0.object")}${outsideWaitFor("CallExpression")}`,
           message: DOCUMENT_TITLE_MESSAGE,
         },
         {
           // const { title } = document / window.document / globalThis.document
-          selector: `VariableDeclarator[id.type='ObjectPattern']:has(Property[key.name='title']):matches([init.name='document'], [init.object.name=/^(window|globalThis)$/][init.property.name='document'])${outsideWaitFor("VariableDeclarator")}`,
+          // / self.document
+          selector: `VariableDeclarator[id.type='ObjectPattern']:has(Property[key.name='title']):matches([init.name='document'],[init.object.name=/^(window|globalThis|self)$/][init.property.name='document'])${outsideWaitFor("VariableDeclarator")}`,
+          message: DOCUMENT_TITLE_MESSAGE,
+        },
+        {
+          // const t = document.title (or the bracket form, or through a
+          // global root): the alias carries the same lagging read, so the
+          // read itself is refused, not the later expect(t).
+          selector: `VariableDeclarator[init.type='MemberExpression']${titleMemberEnd("init")}${documentObjectEnd("init.object")}${outsideWaitFor("VariableDeclarator")}`,
+          message: DOCUMENT_TITLE_MESSAGE,
+        },
+        {
+          // const { document: { title } } = window / globalThis / self
+          selector: `VariableDeclarator[id.type='ObjectPattern']:has(Property[key.name='document'] Property[key.name='title']):matches([init.name=/^(window|globalThis|self)$/])${outsideWaitFor("VariableDeclarator")}`,
           message: DOCUMENT_TITLE_MESSAGE,
         },
         {
