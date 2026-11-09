@@ -1,30 +1,30 @@
 /**
- * Malformed session cookie against the REAL `createApp()` — the wiring
+ * Malformed session cookie against the REAL `createApp()`: the wiring
  * proof auth-session-cookie.test.ts cannot give: that suite builds its
  * own small Hono app around `authMiddleware`, so it never shows that
  * the real app mounts the middleware on the routes below or what those
  * routes actually answer. Pattern copied from json-body-limit-app.test.ts:
  * well-formed-but-fake DATABASE_URL/SESSION_SECRET are set before
  * importing `app.js` (config validates only their SHAPE at import time;
- * `loadConfig()` calls `process.exit(1)` when they are missing — fatal,
+ * `loadConfig()` calls `process.exit(1)` when they are missing: fatal,
  * not catchable) and the previous values are restored afterwards so
  * nothing leaks into sibling test files.
  *
  * The cookie under test is `session=%E0`: a truncated percent escape
  * makes `decodeURIComponent` throw, and `extractSessionCookie`
  * (services/session.ts) reads such a value as ABSENT, so every request
- * below behaves exactly as the same request without the cookie — the
+ * below behaves exactly as the same request without the cookie: the
  * middleware's zero-DB "no credentials supplied" 401, never a 500.
  *
  * Case 4 is the one case with an Authorization header: a Bearer token
  * makes `authMiddleware` look the token up in `prisma.agentToken.findUnique`,
  * which would hit the real (unconnectable) Prisma client, so this file
- * mocks `../../src/lib/prisma.js` — same shape as auth-session-cookie.test.ts —
+ * mocks `../../src/lib/prisma.js` (same shape as auth-session-cookie.test.ts)
  * with `findUnique` returning null. The middleware then falls through to
  * the session-JWT Bearer branch (pure HMAC verification, no DB): a token
  * signed with SESSION_SECRET authenticates the request WITHOUT any cookie,
  * and the `/api/auth/me` handler reads the session cookie itself, so it
- * sees the malformed cookie as absent and answers `{ user: null }` — the
+ * sees the malformed cookie as absent and answers `{ user: null }`: the
  * same body the same Bearer request without the cookie gets. No case
  * here executes a real query: the mock answers the only DB lookup reached.
  */
@@ -34,7 +34,7 @@ import type { AppVariables } from "../../src/types/hono.js";
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
-    agentToken: { findUnique: vi.fn(), update: vi.fn() },
+    agentToken: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() },
   },
 }));
 
@@ -122,7 +122,7 @@ describe("malformed session cookie against the real createApp()", () => {
     // Bearer session JWT -> agentToken.findUnique (mocked to null) ->
     // verifySessionToken succeeds -> actor set -> handler runs. The handler
     // authenticates from the COOKIE only, so with the malformed cookie read
-    // as absent (and with no cookie at all) it answers { user: null } —
+    // as absent (and with no cookie at all) it answers { user: null }:
     // not the middleware 401, and not a 500 from the truncated escape.
     expect(withoutCookie.status).toBe(200);
     expect(await withoutCookie.json()).toEqual({ user: null });
