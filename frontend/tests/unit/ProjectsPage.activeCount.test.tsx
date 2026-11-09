@@ -330,4 +330,28 @@ describe("/projects: workflow cache across polls", () => {
     expect(calls.filter((c) => c[0] === PROJECT.id)).toHaveLength(2);
     expect(calls.filter((c) => c[0] === PROJECT2.id)).toHaveLength(1);
   });
+
+  it("asks again for a project that answered 403 once the team comes back", async () => {
+    vi.mocked(getTeams).mockResolvedValue([TEAM, TEAM2]);
+    vi.mocked(getProjects).mockImplementation((teamId?: string) =>
+      Promise.resolve(teamId === "t2" ? [PROJECT2] : [PROJECT]),
+    );
+    vi.mocked(getTasks).mockResolvedValue([]);
+    vi.mocked(getWorkflows).mockImplementation((id: string) =>
+      id === PROJECT.id ? Promise.reject(forbiddenError()) : Promise.resolve([]),
+    );
+
+    render(<ProjectsPage />);
+
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT.id));
+    act(() => nav.push("/projects?teamId=t2"));
+    await waitFor(() => expect(getWorkflows).toHaveBeenCalledWith(PROJECT2.id));
+
+    act(() => nav.push("/projects?teamId=t1"));
+
+    // The 403 set of the team that was left is gone too: proj-1 is asked a
+    // second time although it answered 403 before.
+    const calls = await waitForCall(vi.mocked(getWorkflows), { times: 3 });
+    expect(calls.filter((c) => c[0] === PROJECT.id)).toHaveLength(2);
+  });
 });

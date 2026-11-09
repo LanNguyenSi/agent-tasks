@@ -48,6 +48,7 @@ const ALLOWED: Array<[string, string]> = [
   ["via the helper", "await expectDocumentTitle('x');"],
   ["unrelated title", "expect(task.title).toBe('x');\nconst { title } = task;\nconst t = task.title;"],
   ["unrelated nested destructure", "const { meta: { title } } = task;"],
+  ["window title, not the document's", "const { title } = window;"],
 ];
 
 describe("tests/** document.title guard", () => {
