@@ -643,7 +643,7 @@ same claim check, edge choice, refusals and response as on an unprovisioned
 task and without a receipt, so `spec`, `plan`, `implement` and `test` are
 reached there too (the `task_finish` into `review` follows the Grounding
 completion rules, with a receipt in EXTERNAL_V1). Three answers differ: a failed gate is `409 precondition_failed` whose message names the
-edge and its configured gates (no `failed[]` list; the stdio MCP server
+edge it evaluated and the rules that failed (no `failed[]` list; the stdio MCP server
 teaches the `task_submit_pr` recipe for it), a `requiredRole` the caller
 lacks is a bare `403`, and `skippedGates` is a list of rule names.
 

@@ -3,8 +3,14 @@ import { z } from "zod";
 import { GroundingAccessError, mismatch, unavailable, type GroundingTask } from "./grounding-context.js";
 import { GroundingReceiptVerificationError } from "./grounding-receipt.js";
 
+/** The edge a refused completion gate was evaluated on and the rules that blocked it, in the edge's configured order. */
+export interface GroundingGateRefusal {
+  from: string;
+  to: string;
+  failed: string[];
+}
 export class GroundingDecisionError extends GroundingAccessError {
-  constructor(readonly code: "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed") { super(code, 409); }
+  constructor(readonly code: "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed", readonly gate?: GroundingGateRefusal) { super(code, 409); }
 }
 export async function groundingTransaction<T>(client: PrismaClient, run: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
   for (let retry = 0; retry < 3; retry++) {

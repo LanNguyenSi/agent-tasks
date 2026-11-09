@@ -49,7 +49,7 @@ boardRouter.get("/projects/:projectId/boards", async (c) => {
 
 boardRouter.post(
   "/projects/:projectId/boards",
-  zValidate("json", createBoardSchema.omit({ projectId: true })),
+  zValidate("json", createBoardSchema.omit({ projectId: true }), { message: true }),
   async (c) => {
     const actor = c.get("actor");
     const projectId = c.req.param("projectId");
@@ -113,7 +113,7 @@ boardRouter.get("/boards/:id", async (c) => {
 
 boardRouter.put(
   "/boards/:id",
-  zValidate("json", updateBoardSchema),
+  zValidate("json", updateBoardSchema, { message: true }),
   async (c) => {
     const actor = c.get("actor");
 

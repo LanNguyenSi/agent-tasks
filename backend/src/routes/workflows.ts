@@ -600,7 +600,7 @@ workflowRouter.get("/projects/:projectId/workflows", async (c) => {
 
 workflowRouter.post(
   "/projects/:projectId/workflows",
-  zValidate("json", createWorkflowSchema.omit({ projectId: true })),
+  zValidate("json", createWorkflowSchema.omit({ projectId: true }), { message: true }),
   async (c) => {
     const actor = c.get("actor");
     const projectId = c.req.param("projectId");
@@ -833,7 +833,7 @@ const validateTransitionSchema = z.object({
 
 workflowRouter.post(
   "/workflows/:id/validate-transition",
-  zValidate("json", validateTransitionSchema),
+  zValidate("json", validateTransitionSchema, { message: true }),
   async (c) => {
   const actor = c.get("actor");
   const body = c.req.valid("json");
