@@ -136,6 +136,23 @@ describe("/api/workflows/:id and /api/boards/:id sit behind authMiddleware", () 
     expect((await shared.db!.workflow.findUniqueOrThrow({ where: { id: workflowId } })).name).toBe("Before");
   });
 
+  // One case per route that returned a bare `{ success, error }` before: the web
+  // client shows "Request failed" for a validation 400 without a top-level message.
+  it.each([
+    ["POST /api/projects/:projectId/workflows", "POST", () => `/api/projects/${projectId}/workflows`, { name: "" }],
+    ["POST /api/workflows/:id/validate-transition", "POST", () => `/api/workflows/${workflowId}/validate-transition`, { from: 1 }],
+    ["POST /api/projects/:projectId/boards", "POST", () => `/api/projects/${projectId}/boards`, { name: "" }],
+    ["PUT /api/boards/:id", "PUT", () => `/api/boards/${boardId}`, { name: "" }],
+  ] as const)("%s: a schema-rejected body answers 400 with a non-empty top-level message naming the first issue", async (_label, method, path, body) => {
+    const response = await app.request(path(), json(adminToken, body, method));
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { success: boolean; message: string; error: { name: string; issues: { message: string }[] } };
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.name).toBe("ZodError");
+    expect(parsed.message.length).toBeGreaterThan(0);
+    expect(parsed.message).toBe(parsed.error.issues[0]!.message);
+  });
+
   it("runs authentication before body validation: an unauthenticated PUT with an invalid body answers 401, not 400", async () => {
     const response = await app.request(`/api/workflows/${workflowId}`, json(undefined, { name: "" }, "PUT"));
     expect(response.status).toBe(401);

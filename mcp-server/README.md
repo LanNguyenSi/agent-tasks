@@ -140,7 +140,7 @@ dedupes: a same-key retry replays the stored response instead of advancing
 again. On the built-in four-state workflow there is nothing to advance. A
 Grounding-provisioned task advances the same way through the Grounding
 mutation protocol; there a failed gate is `409 precondition_failed` whose
-message names the edge's gates, and the teaching error recommends
+message names the edge and the rules that failed, and the teaching error recommends
 `task_submit_pr` for a branch or PR gate. Pass `branchName` to `task_start`
 when a later stage's gate needs a branch.
 

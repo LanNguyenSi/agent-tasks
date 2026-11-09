@@ -21,6 +21,7 @@ import {
   type WorkflowDefinitionShape,
 } from "./default-workflow.js";
 import { GroundingAccessError } from "./grounding-context.js";
+import type { GroundingGateRefusal } from "./grounding-transaction.js";
 
 /**
  * Idempotency-Key header accepted by both /advance handlers (REST and the
@@ -41,11 +42,20 @@ export const advanceTaskSchema = z.object({
 
 /**
  * The message of the Grounding direct route's 409 precondition_failed for an
- * advance. That refusal does not say which rule failed (the REST handler's
- * 422 lists them in `failed`), so the message names the edge and the gates
- * configured on it.
+ * advance. That refusal carries no `failed[]` list (the REST handler's 422
+ * does), so the message names the edge the transition evaluated and the rules
+ * that blocked it, as the completion gate reported them.
  */
-export function advanceGateRefusalMessage(def: WorkflowDefinitionShape, from: string, to: string): string {
+export function advanceGateRefusalMessage(refusal: GroundingGateRefusal): string {
+  const failed = refusal.failed.join(", ");
+  return `Transition blocked: a workflow gate on ${refusal.from} -> ${refusal.to} is not met${failed ? ` (failed: ${failed})` : ""}`;
+}
+
+/**
+ * The same refusal when it carries no gate detail: names the edge the route
+ * chose and the gates configured on it.
+ */
+export function advanceConfiguredGatesMessage(def: WorkflowDefinitionShape, from: string, to: string): string {
   const gates = gatesForTransition(def, from, to);
   return `Transition blocked: a workflow gate on ${from} -> ${to} is not met${gates.length > 0 ? ` (this edge requires ${gates.join(", ")})` : ""}`;
 }

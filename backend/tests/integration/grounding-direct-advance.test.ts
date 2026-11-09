@@ -10,7 +10,8 @@
  *     advance_ambiguous, advance_target_invalid, advance_no_forward_edge,
  *     bad_state) equal the REST handler's answer for an unprovisioned twin;
  *   - the edge's workflow gates and requiredRole hold (409 precondition_failed
- *     naming the edge, a bare 403), with no operation written;
+ *     naming the edge and the rules that failed, a bare 403), with no
+ *     operation written;
  *   - a missing task, a missing scope and a caller without (write) access get
  *     the REST handler's bodies, whether or not the task is provisioned;
  *   - the claim check and the edge choice run again under the task lock;
@@ -259,6 +260,39 @@ describe("the same answer as the REST handler", () => {
   });
 });
 
+// The route reads the task unlocked; a proxy serves that one read stale, as
+// if another writer changed the row between the read and the lock.
+function staleRead(stale: Record<string, unknown>) {
+  let served = false;
+  const passthrough = (target: object) => (key: string | symbol) => {
+    const value = Reflect.get(target, key);
+    return typeof value === "function" ? value.bind(target) : value;
+  };
+  const task = new Proxy(store.db.task, {
+    get: (target, key) => key === "findUnique"
+      ? async (args: Parameters<typeof target.findUnique>[0]) => {
+        const row = await target.findUnique(args);
+        if (served || !row) return row;
+        served = true;
+        return { ...row, ...stale };
+      }
+      : passthrough(target)(key),
+  });
+  const db = new Proxy(store.db, { get: (target, key) => (key === "task" ? task : passthrough(target)(key)) }) as PrismaClient;
+  const app = new Hono<{ Variables: AppVariables }>();
+  app.use("*", async (c, next) => {
+    c.set("actor", agentActor);
+    c.set("groundingRemoteTargetGuard", null);
+    await next();
+  });
+  const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
+  app.route("/api", createGroundingDirectTaskRouter({ db, service: f.service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }));
+  return async (body: unknown = {}) => {
+    const res = await app.request(`/api/tasks/${f.taskId}/advance`, { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": `k-${randomUUID()}` }, body: JSON.stringify(body) });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+}
+
 describe("workflow gates and roles on the edge", () => {
   it("plan -> implement without a branch: 409 precondition_failed naming the edge, no operation, nothing written (the REST twin answers 422)", async () => {
     await setTask(f.taskId, { status: "plan", branchName: null });
@@ -267,10 +301,72 @@ describe("workflow gates and roles on the edge", () => {
     const grounded = await advance(f.taskId);
     const legacy = await advance(plain);
     expect(grounded.status).toBe(409);
-    expect(grounded.body).toEqual({ error: "precondition_failed", message: "Transition blocked: a workflow gate on plan -> implement is not met (this edge requires branchPresent)" });
+    expect(grounded.body).toEqual({ error: "precondition_failed", message: "Transition blocked: a workflow gate on plan -> implement is not met (failed: branchPresent)" });
     expect(legacy.status).toBe(422);
     expect(legacy.body.failed.map((r: any) => r.rule)).toEqual(["branchPresent"]);
     expect(await operations(f.taskId)).toEqual([]);
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  /** spec -> plan carries `requires`; plan -> review -> done finish the workflow. */
+  const gated = (requires: string[]) => ({
+    initialState: "open",
+    states: [state("open"), state("spec"), state("plan"), state("review"), state("done", true)],
+    transitions: [{ from: "open", to: "spec" }, { from: "spec", to: "plan", requires }, { from: "plan", to: "review" }, { from: "review", to: "done" }],
+  });
+
+  it("one of two configured gates fails: the message names only that one", async () => {
+    await useWorkflow(gated(["branchPresent", "prPresent"]));
+    await setTask(f.taskId, { status: "spec", branchName: null });
+    const before = await f.snapshot();
+    const res = await advance(f.taskId);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "precondition_failed", message: "Transition blocked: a workflow gate on spec -> plan is not met (failed: branchPresent)" });
+    expect(await operations(f.taskId)).toEqual([]);
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  it("a rule skipped for a foreign deliverableRepo is not named", async () => {
+    await useWorkflow(gated(["prPresent", "ciGreen"]));
+    await setTask(f.taskId, { status: "spec", prUrl: null, prNumber: null, deliverableRepo: "other/repo" });
+    const res = await advance(f.taskId);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "precondition_failed", message: "Transition blocked: a workflow gate on spec -> plan is not met (failed: prPresent)" });
+    expect(res.body.message).not.toContain("ciGreen");
+  });
+
+  it("both fail: both are named in the order the edge configures them, wherever the rule is decided", async () => {
+    await useWorkflow(gated(["prPresent", "branchPresent"]));
+    await setTask(f.taskId, { status: "spec", prUrl: null, prNumber: null, branchName: null });
+    const sync = await advance(f.taskId);
+    expect(sync.body.message).toBe("Transition blocked: a workflow gate on spec -> plan is not met (failed: prPresent, branchPresent)");
+    // ciGreen fails first (no delegation token), yet a later failing rule is still named, in config order.
+    await useWorkflow(gated(["ciGreen", "branchPresent"]));
+    const mixed = await advance(f.taskId);
+    expect(mixed.body.message).toBe("Transition blocked: a workflow gate on spec -> plan is not met (failed: ciGreen, branchPresent)");
+    await useWorkflow(gated(["branchPresent", "ciGreen"]));
+    const reversed = await advance(f.taskId);
+    expect(reversed.body.message).toBe("Transition blocked: a workflow gate on spec -> plan is not met (failed: branchPresent, ciGreen)");
+    // ciGreen alone failing does not drag a passing rule in.
+    await setTask(f.taskId, { branchName: "branch", prUrl: "https://github.com/acme/repo/pull/42", prNumber: 42 });
+    await useWorkflow(gated(["branchPresent", "ciGreen"]));
+    const only = await advance(f.taskId);
+    expect(only.body.message).toBe("Transition blocked: a workflow gate on spec -> plan is not met (failed: ciGreen)");
+  });
+
+  it("the message names the source the transition evaluated, not the pre-lock one", async () => {
+    // Two forward edges into `ship`, each with its own gate. The unlocked read
+    // sees `a`, the locked row is at `b`: the refusal is b -> ship's.
+    await useWorkflow({
+      initialState: "open",
+      states: [state("open"), state("a"), state("b"), state("ship"), state("review"), state("done", true)],
+      transitions: [{ from: "open", to: "a" }, { from: "open", to: "b" }, { from: "a", to: "ship", requires: ["branchPresent"] }, { from: "b", to: "ship", requires: ["prPresent"] }, { from: "ship", to: "review" }, { from: "review", to: "done" }],
+    });
+    await setTask(f.taskId, { status: "b", branchName: "branch", prUrl: null, prNumber: null });
+    const before = await f.snapshot();
+    const res = await staleRead({ status: "a" })();
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "precondition_failed", message: "Transition blocked: a workflow gate on b -> ship is not met (failed: prPresent)" });
     expect(await f.snapshot()).toEqual(before);
   });
 
@@ -338,39 +434,6 @@ describe("refusals before the enrollment is read keep the REST bodies", () => {
 });
 
 describe("under the task lock", () => {
-  // The route reads the task unlocked; a proxy serves that one read stale, as
-  // if another writer changed the row between the read and the lock.
-  function staleRead(stale: Record<string, unknown>) {
-    let served = false;
-    const passthrough = (target: object) => (key: string | symbol) => {
-      const value = Reflect.get(target, key);
-      return typeof value === "function" ? value.bind(target) : value;
-    };
-    const task = new Proxy(store.db.task, {
-      get: (target, key) => key === "findUnique"
-        ? async (args: Parameters<typeof target.findUnique>[0]) => {
-          const row = await target.findUnique(args);
-          if (served || !row) return row;
-          served = true;
-          return { ...row, ...stale };
-        }
-        : passthrough(target)(key),
-    });
-    const db = new Proxy(store.db, { get: (target, key) => (key === "task" ? task : passthrough(target)(key)) }) as PrismaClient;
-    const app = new Hono<{ Variables: AppVariables }>();
-    app.use("*", async (c, next) => {
-      c.set("actor", agentActor);
-      c.set("groundingRemoteTargetGuard", null);
-      await next();
-    });
-    const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
-    app.route("/api", createGroundingDirectTaskRouter({ db, service: f.service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }));
-    return async (body: unknown = {}) => {
-      const res = await app.request(`/api/tasks/${f.taskId}/advance`, { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": `k-${randomUUID()}` }, body: JSON.stringify(body) });
-      return { status: res.status, body: (await res.json()) as any };
-    };
-  }
-
   it("a task that moved on before the lock is not moved by the edge chosen from the stale read", async () => {
     // Unlocked it reads spec (advance to plan); locked it is at implement,
     // where implement -> plan is a backward edge an advance never takes.

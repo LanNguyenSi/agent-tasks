@@ -16,7 +16,7 @@ import { GroundingDemoteRefused, resolveDirectGroundingTarget } from "../service
 import { demoteSourceStatusMessage } from "../services/task-demote.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
 import { clearDisposition } from "../services/confidence-telemetry.js";
-import { advanceGateRefusalMessage, advanceIdempotencyKeySchema, advanceTaskSchema, decideAdvance, GroundingAdvanceRefused } from "../services/task-advance.js";
+import { advanceConfiguredGatesMessage, advanceGateRefusalMessage, advanceIdempotencyKeySchema, advanceTaskSchema, decideAdvance, GroundingAdvanceRefused } from "../services/task-advance.js";
 import { GroundingDecisionError } from "../services/grounding-transaction.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { forbidden, notFound } from "../middleware/error.js";
@@ -145,8 +145,8 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
   // An advance target is never review-like or terminal, so it is always a
   // disposition and never needs a receipt.
   router.post("/tasks/:id/advance", async (c, next) => {
-    // Set once the edge is chosen: the Grounding gate refusal names no rule,
-    // so the 409 precondition_failed below carries this message instead.
+    // Set once the edge is chosen: the fallback for a 409 precondition_failed
+    // that carries no gate detail; one that does is worded from that detail.
     let gateRefusal: string | undefined;
     try {
       const actor = c.get("actor");
@@ -180,13 +180,13 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
       const { def } = await groundingWorkflow(deps.db, task);
       const decision = decideAdvance(def, task, actor, requested ?? undefined);
       if (!decision.ok) return c.json(decision.body, decision.status);
-      gateRefusal = advanceGateRefusalMessage(def, task.status, decision.to);
+      gateRefusal = advanceConfiguredGatesMessage(def, task.status, decision.to);
       const direct: GroundingDirectDescriptor = { version: 1, endpoint: "transition", target: decision.to };
       const input: OperationInput = { action: "transition", route: { kind: "direct", transport: directAdvanceTransport(requested, decision.to), direct } };
       const result = await deps.service.dispose(taskId, actor, key ?? randomUUID(), input);
       return c.json(z.object({ route: z.record(z.string(), z.unknown()) }).parse(result).route);
     } catch (error) {
-      if (gateRefusal !== undefined && error instanceof GroundingDecisionError && error.code === "precondition_failed") return c.json({ error: "precondition_failed", message: gateRefusal }, 409);
+      if (gateRefusal !== undefined && error instanceof GroundingDecisionError && error.code === "precondition_failed") return c.json({ error: "precondition_failed", message: error.gate ? advanceGateRefusalMessage(error.gate) : gateRefusal }, 409);
       return routeError(error, c);
     }
   });

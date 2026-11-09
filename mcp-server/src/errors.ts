@@ -969,9 +969,9 @@ function groundingAdvanceUnsupportedError(message: string): TeachingError {
 
 // precondition_failed (409) from task_advance: a Grounding-provisioned task's
 // advance runs through the Grounding direct route, whose gate refusal is a 409
-// that names the edge and its configured gates in `message` but carries no
+// that names the edge and the rules that failed in `message` but carries no
 // `failed[]` (the REST route's 422 does, see preconditionFailedError). The
-// failing rule is therefore unknown here, so the recipe covers the gates the
+// failing rules are only in free text here, so the recipe covers the gates the
 // coding-agent template puts on its edges: the branch and PR gates, which
 // task_submit_pr satisfies, and the GitHub gates, which only time clears.
 function groundedAdvancePreconditionError(body: BackendErrorBody): TeachingError {

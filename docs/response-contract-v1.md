@@ -481,7 +481,7 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   `branchPresent` failed names the draft-PR path (`task_submit_pr`) and the
   abandon and restart with `task_start { branchName }` path. A `409
   precondition_failed` from `task_advance` (a Grounding-provisioned task,
-  whose gate refusal names the edge's gates in its message but carries no
+  whose gate refusal names the failed rules in its message but carries no
   `failed[]`) names `task_submit_pr` for a branch or PR gate, then a retry
   of `task_advance`.
 

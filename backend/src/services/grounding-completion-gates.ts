@@ -35,6 +35,7 @@ async function evaluateCompletionGates(db: Prisma.TransactionClient, task: Groun
     githubToken = delegate?.githubAccessToken ?? null;
   }
   let ciHeadSha: string | null = null;
+  let ciFailed = false;
   if (rules.includes("ciGreen")) {
     try {
       const repo = task.project.githubRepo;
@@ -47,9 +48,12 @@ async function evaluateCompletionGates(db: Prisma.TransactionClient, task: Groun
       const head = await headProvider({ actor, teamId: task.project.teamId, repo, prNumber: task.prNumber!, db });
       if (ci.state !== "success" || !/^[0-9a-f]{40}$/.test(head) || ci.sha !== head) throw new GroundingDecisionError("precondition_failed");
       ciHeadSha = head;
-    } catch { throw new GroundingDecisionError("precondition_failed"); }
+    } catch { ciFailed = true; }
   }
   const result = await evaluateTransitionRules(rules.filter(rule => rule !== "ciGreen"), { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber, projectGithubRepo: task.project.githubRepo, githubToken });
-  if (result.failed.length || result.unknown.length) throw new GroundingDecisionError("precondition_failed");
+  // Every rule that blocked the move, in the edge's configured order, so the
+  // refusal can name them (ciGreen is decided above, the rest by the evaluator).
+  const blocked = new Set<string>([...result.failed, ...result.unknown, ...(ciFailed ? ["ciGreen"] : [])]);
+  if (blocked.size > 0) throw new GroundingDecisionError("precondition_failed", { from: target.from, to: target.to, failed: [...new Set(rules.filter(r => blocked.has(r)))] });
   return { skippedRules: skipped, ciHeadSha };
 }
