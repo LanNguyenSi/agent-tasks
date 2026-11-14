@@ -212,7 +212,9 @@ Every attempt outcome is audit-logged:
   `statusCode?` (last HTTP status if we got one) and `errMessage?` (otherwise
   the reason it never succeeded, a private address, "did not resolve", a refused
   redirect, a timeout, an oversized response; any other transport error is
-  reduced to its error code, so no address or port is ever audited).
+  reduced to its error code, so a connection or TLS error never quotes an
+  address or port; a private-address refusal still names the host and the
+  private address it resolved to).
 
 Both rows carry `signalId` so you can correlate against the originating
 Signal. Read them from `GET /api/projects/:id/audit?actionPrefix=signal.webhook_`

@@ -101,8 +101,9 @@ export function signWebhookBody(body: string, secret: string): string {
 // This is a deliberate choice over "judge by status": we never buffer an
 // unbounded receiver response. Every guard-authored failure reason (private
 // address, did not resolve, redirect, timeout, too large) names itself in the
-// audit errorMessage; any other transport error is reduced to its error code so
-// the audit never carries a resolved address or port.
+// audit errorMessage; any other transport error is reduced to its error code, so
+// a connection or TLS error never quotes an address or port. A private-address
+// refusal still names the host and the private address it resolved to.
 //
 // The address classification and the shared target checks live in
 // lib/egress-guard.ts (shared with the OIDC client); this module keeps the
