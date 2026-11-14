@@ -1,6 +1,8 @@
 // 10px/600 uppercase priority text in --priority-* color.
 // Per design: NEVER a chip, always bare micro text.
-// Carries aria-label="Priority: X" so the encoding is not color-only.
+// Carries aria-label="Priority: X" with role="img" so the encoding is not
+// color-only; the role is required because ARIA forbids aria-label on a
+// generic <span> (axe aria-prohibited-attr) and screen readers ignore it there.
 //
 // Usage: <PriorityLabel priority="high" />
 
@@ -36,6 +38,7 @@ export function PriorityLabel({ priority, className }: PriorityLabelProps) {
         .filter(Boolean)
         .join(" ")}
       aria-label={`Priority: ${label}`}
+      role="img"
     >
       {label}
     </span>

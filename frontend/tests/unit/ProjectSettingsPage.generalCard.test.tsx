@@ -114,6 +114,13 @@ describe("ProjectSettingsPage General card", () => {
     expect(link).toHaveAttribute("href", "https://github.com/acme/widgets");
   });
 
+  it("underlines the docs link in the muted Notifications description (axe link-in-text-block)", async () => {
+    await renderPage(makeProject());
+    expect(
+      screen.getByRole("link", { name: "docs/notification-webhooks.md" }),
+    ).toHaveClass("settings-inline-link");
+  });
+
   it("hides the repository row when githubRepo is null, keeping slug and created", async () => {
     await renderPage(makeProject({ githubRepo: null }));
     expect(screen.queryByText("GitHub repository")).not.toBeInTheDocument();

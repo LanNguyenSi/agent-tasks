@@ -127,7 +127,7 @@ export default function UIGalleryPage() {
   }
 
   return (
-    <div className="dev-gallery">
+    <main className="dev-gallery">
       {/* Fixed theme toggle */}
       <button className="dev-theme-toggle" onClick={toggleTheme} type="button">
         <Icon name="edit" size={12} />
@@ -303,6 +303,7 @@ export default function UIGalleryPage() {
             options={SELECT_OPTIONS}
             value={selectVal}
             onChange={setSelectVal}
+            ariaLabel="Gallery project filter"
             style={{ width: 200 }}
           />
           <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", alignSelf: "center" }}>
@@ -532,6 +533,6 @@ export default function UIGalleryPage() {
           </Button>
         </div>
       </section>
-    </div>
+    </main>
   );
 }

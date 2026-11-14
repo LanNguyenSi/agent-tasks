@@ -324,6 +324,7 @@ export default function ProjectSettingsPage() {
                   href="https://github.com/LanNguyenSi/agent-tasks/blob/master/docs/notification-webhooks.md"
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="settings-inline-link"
                 >
                   docs/notification-webhooks.md
                 </a>{" "}
