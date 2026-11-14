@@ -15,7 +15,12 @@
  * Receiver contract is described in docs/notification-webhooks.md.
  */
 import { createHmac } from "node:crypto";
-import { assertPublicUrl, isPrivateAddress } from "../lib/egress-guard.js";
+import {
+  assertPublicUrl,
+  guardedFetch,
+  isPrivateAddress,
+  type EgressPolicy,
+} from "../lib/egress-guard.js";
 import { logger } from "../lib/logger.js";
 import { logAuditEvent } from "./audit.js";
 import type { SignalContext, SignalType } from "./signal.js";
@@ -23,6 +28,14 @@ import type { SignalContext, SignalType } from "./signal.js";
 const TIMEOUT_MS = 5_000;
 const RETRY_DELAY_MS = 2_000;
 const USER_AGENT = "agent-tasks-webhook/1";
+
+// Response-body cap for a delivery attempt. The sender acts only on the HTTP
+// status, so a large receiver body is pointless; this bounds the memory the
+// sender will ever buffer for one attempt. A receiver that answers with more
+// than this is treated as a FAILED attempt (guardedFetch rejects with reason
+// "too_large") and retried, see the SSRF/egress note below and
+// docs/notification-webhooks.md.
+const RESPONSE_MAX_BYTES = 64 * 1024;
 
 export interface WebhookSignalPayload {
   signalId: string;
@@ -69,24 +82,40 @@ export function signWebhookBody(body: string, secret: string): string {
 //
 // The webhook URL is project-admin-configured, so a careless or malicious admin
 // could point delivery at an internal service or the cloud metadata endpoint
-// (169.254.169.254). Before sending we reject any URL whose host is, or
-// resolves to, a private / loopback / link-local / metadata address, and we
-// refuse to follow redirects (a public URL must not 3xx into an internal one).
+// (169.254.169.254). Delivery therefore goes through `guardedFetch`: the URL
+// must be http(s), and every address the connection actually uses is checked
+// through the socket `lookup` at connect time. That closes the DNS-rebinding
+// window the old resolve-then-`fetch` path left open, where a record that was
+// public at the check and private at the connect still got the request. A mixed
+// DNS answer (any private address in it) refuses the whole name, and a host is
+// refused outright when it is, or resolves to, a private / loopback / link-local
+// / metadata address. Redirects are never followed (guardedFetch rejects any 3xx
+// with reason "redirect"), so a public URL cannot 3xx into an internal one.
 //
-// Residual: this resolves-then-connects, so a DNS-rebinding attacker who flips
-// the record between the check and the connect is not fully blocked — a narrow
-// attack against an already-privileged admin input; closing it needs a
-// pinned-IP dispatcher (follow-up).
-
-// The address classification, the hostname check and the resolve-then-check
-// live in lib/egress-guard.ts (shared with the OIDC client); this module keeps
-// the webhook policy and its operator allowlist.
+// Response handling: a whole attempt is bounded to TIMEOUT_MS (reason "timeout")
+// and the response body to RESPONSE_MAX_BYTES. The sender only needs the status
+// code, so an oversized receiver body is refused (reason "too_large") and counts
+// as a FAILED attempt, a receiver must keep its ack within RESPONSE_MAX_BYTES.
+// This is a deliberate choice over "judge by status": we never buffer an
+// unbounded receiver response. Every failure reason (private address, did not
+// resolve, redirect, timeout, too large) names itself in the audit errorMessage.
+//
+// The address classification and the shared target checks live in
+// lib/egress-guard.ts (shared with the OIDC client); this module keeps the
+// webhook policy and its operator allowlist.
 export { isPrivateAddress };
 
 /**
  * Reject a webhook URL whose scheme is not http(s), or whose host is / resolves
  * to a non-public address. Throws a descriptive error; the caller turns the
  * throw into a failed (un-sent) delivery attempt.
+ *
+ * This is the resolve-then-check path. It stays exported (its address
+ * classification and error text are shared, and it is unit-tested directly), and
+ * `attemptDelivery` calls it first so an obviously-internal or bad-scheme target
+ * is refused with the same message the connect-time guard would give. The
+ * security property (no DNS-rebinding window) comes from `guardedFetch`, not
+ * from this check.
  */
 export async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
   // Operator opt-in: a self-hosted deployment may legitimately target an
@@ -109,35 +138,55 @@ async function attemptDelivery(
   headers: Record<string, string>,
   body: string,
 ): Promise<AttemptResult> {
+  // Read the operator allowlist per attempt so it can change between deliveries
+  // (and between test cases). Empty by default → the guard is fully on.
+  const allowedPrivateHosts = (process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  const policy: EgressPolicy = {
+    label: "webhook",
+    schemes: ["http:", "https:"],
+    allowedPrivateHosts,
+  };
+
+  // Fail fast on the resolve-then-check path so an obviously-internal or bad-
+  // scheme target is refused before we open a socket, with the same message text
+  // the connect-time guard produces. The rebinding-safe check happens inside
+  // guardedFetch below.
   try {
     await assertPublicWebhookUrl(url);
   } catch (err) {
     // SSRF egress guard rejected the target — never send.
     return { ok: false, errorMessage: (err as Error).message };
   }
+
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      // Never follow redirects: a public URL must not bounce the request into
-      // an internal host. undici rejects the fetch promise on a 3xx, which we
-      // treat as a failed attempt.
-      redirect: "error",
-    });
-    // Drain the body so the connection can be reused/closed cleanly.
-    // We don't act on the response content beyond the status code.
-    try {
-      await res.text();
-    } catch {
-      // ignore drain errors
-    }
+    // guardedFetch re-resolves the host through a checking `lookup` and connects
+    // only to an address it has just verified, so a record that flipped to a
+    // private address after the check above cannot reach an internal host. It
+    // buffers the body (up to RESPONSE_MAX_BYTES), refuses a redirect / timeout /
+    // oversized body by rejecting (all land in the catch below), and never
+    // follows a Location. We act only on the status code.
+    const res = await guardedFetch(
+      url,
+      {
+        method: "POST",
+        headers,
+        body,
+        timeoutMs: TIMEOUT_MS,
+        maxBytes: RESPONSE_MAX_BYTES,
+      },
+      policy,
+    );
     if (res.status >= 200 && res.status < 300) {
       return { ok: true, statusCode: res.status };
     }
     return { ok: false, statusCode: res.status };
   } catch (err) {
+    // EgressBlockedError (refused address) or EgressRequestError (redirect /
+    // timeout / too large) or a transport error. `.message` names the reason and
+    // leaks no more than the resolve-then-check path did.
     return { ok: false, errorMessage: (err as Error).message };
   }
 }
