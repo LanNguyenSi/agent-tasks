@@ -140,9 +140,9 @@ sequenceDiagram
   Note over S: maybeDeliverSignalWebhook stops here<br/>when the project has no notificationWebhookUrl
   S->>P: deliverSignalWebhook
   loop at most 2 attempts, 2 s apart, stop on 2xx
-    P->>P: assertPublicWebhookUrl<br/>(private hosts blocked unless allowlisted)
+    P->>P: guardedFetch: check every connect<br/>address (private hosts blocked unless allowlisted)
     opt host allowed
-      P->>R: POST payload, 5 s timeout,<br/>redirects refused
+      P->>R: POST payload, 5 s budget,<br/>redirects refused, body capped
       R-->>P: status code
     end
   end
@@ -172,24 +172,35 @@ sequenceDiagram
 
 ## Egress / SSRF guard
 
-The webhook URL is project-admin-configured, so delivery enforces an egress
-allowlist before sending:
+The webhook URL is project-admin-configured, so every delivery goes through a
+guarded transport (`guardedFetch` in `backend/src/lib/egress-guard.ts`, the same
+one the OIDC client uses) that checks the target up front and again at connect:
 
 - The scheme must be `http`/`https`.
-- The host must not be, or resolve to, a private / loopback / link-local /
-  metadata address (e.g. `10/8`, `127/8`, `169.254/16` including the cloud
-  metadata endpoint, `192.168/16`, `fc00::/7`, `::1`). A blocked target is
-  audited as `signal.webhook_failed` and never sent.
-- **Redirects are not followed** (`redirect: error`), so a public URL cannot
-  bounce the request into an internal host. Expose a stable, non-redirecting
-  endpoint.
+- The host must not be `localhost` / a `.localhost` name, and must not be, or
+  resolve to, a private / loopback / link-local / metadata address (e.g. `10/8`,
+  `127/8`, `169.254/16` including the cloud metadata endpoint, `192.168/16`,
+  `fc00::/7`, `::1`). A blocked target is audited as `signal.webhook_failed` and
+  never sent.
+- **Every address the connection actually uses is checked at connect time**
+  through the socket `lookup`, so a DNS-rebinding answer that is public when
+  checked and private when connected cannot slip a request to an internal host:
+  the guarded transport refuses the name (one private address in a mixed DNS
+  answer refuses the whole name) and connects only to an address it verified.
+  This closes the window the old resolve-then-`fetch` path left open.
+- **Redirects are never followed**: a 3xx is a failed attempt (the transport
+  rejects with reason `redirect`), so a public URL cannot bounce the request into
+  an internal host. Expose a stable, non-redirecting endpoint.
+- **The response body is capped at 64 KiB.** The sender acts only on the HTTP
+  status, so an oversized receiver body is refused (reason `too_large`) and
+  counts as a **failed** attempt (then retried once). Keep your ack small.
 
 Self-hosted deployments that legitimately target an internal host can opt
 specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS` (comma-separated exact
-hostnames/IPs; empty by default; `docker-compose.prod.yml` forwards it from
-the deployment's `.env`). Note: the check resolves-then-connects, so a
-DNS-rebinding attacker who flips the record between the check and the connect is
-not fully blocked.
+hostnames/IPs, matched case-insensitively; empty by default;
+`docker-compose.prod.yml` forwards it from the deployment's `.env`). An
+allowlisted host skips the address checks; the URL host is lowercased before
+matching, and an allowlisted `localhost` (in any case) is exempted.
 
 ## Observability
 
@@ -198,8 +209,12 @@ Every attempt outcome is audit-logged:
 - `signal.webhook_delivered` — success (2xx), with `attempts` (1 or 2)
   and `durationMs`.
 - `signal.webhook_failed` — final give-up after the retry, with
-  `statusCode?` (last HTTP status if we got one) and `errMessage?`
-  (network/timeout text otherwise).
+  `statusCode?` (last HTTP status if we got one) and `errMessage?` (otherwise
+  the reason it never succeeded, a private address, "did not resolve", a refused
+  redirect, a timeout, an oversized response; any other transport error is
+  reduced to its error code, so a connection or TLS error never quotes an
+  address or port; a private-address refusal still names the host and the
+  private address it resolved to).
 
 Both rows carry `signalId` so you can correlate against the originating
 Signal. Read them from `GET /api/projects/:id/audit?actionPrefix=signal.webhook_`

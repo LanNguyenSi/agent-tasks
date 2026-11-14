@@ -5,9 +5,10 @@
  * admin (not the operator) controls: notification webhooks and OIDC discovery,
  * JWKS and token-endpoint calls. Two entry points:
  *
- *   - `assertPublicUrl`: resolve-then-check, for callers that hand the URL to
- *     their own HTTP client afterwards (the webhook sender). Residual: a
- *     DNS-rebinding answer that flips between the check and the connect.
+ *   - `assertPublicUrl`: resolve-then-check, for callers that want to check a URL
+ *     before a request. Residual on its own: a DNS-rebinding answer that flips
+ *     between the check and the connect, which is why the webhook sender and the
+ *     OIDC client both make their request with `guardedFetch` below.
  *   - `guardedFetch`: connects through a `lookup` that checks every address it
  *     resolves, and uses only those addresses, so the connection goes to what
  *     was checked and a rebinding answer cannot slip in between. Redirects are
