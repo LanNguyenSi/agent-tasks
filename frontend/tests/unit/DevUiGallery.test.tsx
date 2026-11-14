@@ -14,6 +14,7 @@ describe("/dev/ui gallery accessibility", () => {
       </ToastProvider>,
     );
     expect(screen.getByRole("combobox", { name: "Gallery project filter" })).toBeInTheDocument();
-    expect(document.querySelector("main.dev-gallery")).not.toBeNull();
+    // By role, not tag: a <main> that loses its landmark role must fail here.
+    expect(screen.getByRole("main")).toHaveClass("dev-gallery");
   });
 });

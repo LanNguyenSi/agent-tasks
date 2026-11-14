@@ -79,8 +79,8 @@ html[data-theme="light"] {
   --danger-strong: #c4524d;
   /* Text painted directly on a solid --danger fill (.btn-danger): white on
      dark --danger #e07a76 is 2.91:1 (fails WCAG 1.4.3 AA), so dark mode uses
-     the darkest surface step, var(--bg): 6.84:1 on --danger and 8.07:1 on the
-     lighter hover mix. A unit test pins the ratios. */
+     the darkest surface step, var(--bg): 6.84:1 on --danger and about 8.1:1 on
+     the lighter hover mix. A unit test pins the base-fill ratio. */
   --danger-contrast: var(--bg);
 
   /* Muted warning fill for banners; color-mixed from theme vars so it
