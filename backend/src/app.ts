@@ -124,6 +124,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   app.use("/api/auth/logout", authMiddleware);
   app.use("/api/auth/delegation", authMiddleware);
   app.use("/api/auth/github/connect", authMiddleware);
+  app.use("/api/auth/github/health", authMiddleware);
   // /api/teams/:teamId/sso has its OWN token+scope gate (ssoAdminGuard) and
   // must not go through the session-based authMiddleware — otherwise a valid
   // session alone would establish an actor on the request, weakening the

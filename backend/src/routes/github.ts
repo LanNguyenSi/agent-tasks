@@ -810,7 +810,7 @@ githubRouter.post(
     // 1. Find the task
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
-      include: { project: { select: { id: true, teamId: true } } },
+      include: { project: { select: { id: true, teamId: true, githubRepo: true } } },
     });
 
     if (!task) {
@@ -820,6 +820,27 @@ githubRouter.post(
     // Project-access gate: same defense as in PR-create / merge.
     if (!(await hasProjectAccess(actor, task.project.id))) {
       return c.json({ error: "forbidden", message: "Access denied to this project" }, 403);
+    }
+
+    // Cross-repo guard (ADR-0010 §5b/§5c), same as PR-create: the comment is
+    // posted with a team member's delegated token to a body-supplied
+    // owner/repo, so it must be the task's effective deliverable repo
+    // (`deliverableRepo` when set, else `project.githubRepo`). Without this
+    // an agent on project A could post comments into any repo a team member's
+    // token can reach. Runs BEFORE the delegation lookup and the GitHub call.
+    const crossRepo = checkOwnerRepoMatchesProject(body.owner, body.repo, task, task.project);
+    if (!crossRepo.ok) {
+      return c.json(
+        {
+          error: "cross_repo_pr_rejected",
+          message: prRepoMatchesProjectRejectionMessage(
+            crossRepo.prOwner,
+            crossRepo.prRepo,
+            crossRepo.projectRepo,
+          ),
+        },
+        400,
+      );
     }
 
     // 2. Find a user with comment consent. Prefer the token owner so the
