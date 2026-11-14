@@ -250,6 +250,23 @@ describe("exact target", () => {
     expect(own.status).toBe(201);
     expect(github.writes()).toEqual([siteWrite("comment", requester.repo, pr)]);
   });
+  // A foreign repository the boundary has no objection to (no peer, no
+  // enforced scope) is still not a place this task may comment: the cross-repo
+  // gate refuses it before GitHub. The tests above pin the boundary's own
+  // answers, which keep precedence on the repositories they protect.
+  it("a comment on a foreign repository nothing protects is refused by the cross-repo gate before GitHub", async () => {
+    const requester = await requesterTask(store.db, "comment", canonicalRepo(), null);
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const foreign = canonicalRepo(); const [owner, name] = foreign.split("/");
+    const response = await configured().fetch(new Request(`http://localhost/api/github/pull-requests/${uniquePr()}/comments`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ taskId: requester.taskId, owner, repo: name, body: "A comment", idempotencyKey: "foreign-comment-key" }),
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "cross_repo_pr_rejected" });
+    expect(github.calls).toEqual([]);
+    expect(await store.db.toolInvocation.count({ where: { projectId: requester.projectId } })).toBe(0);
+  });
 });
 
 describe("fence of the requesting task's own repositories", () => {

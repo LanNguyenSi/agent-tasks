@@ -810,7 +810,7 @@ githubRouter.post(
     // 1. Find the task
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
-      include: { project: { select: { id: true, teamId: true } } },
+      include: { project: { select: { id: true, teamId: true, githubRepo: true } } },
     });
 
     if (!task) {
@@ -820,6 +820,38 @@ githubRouter.post(
     // Project-access gate: same defense as in PR-create / merge.
     if (!(await hasProjectAccess(actor, task.project.id))) {
       return c.json({ error: "forbidden", message: "Access denied to this project" }, 403);
+    }
+
+    // Cross-repo guard (ADR-0010 §5b/§5c), same as PR-create: the comment is
+    // posted with a team member's delegated token to a body-supplied
+    // owner/repo, so it must be the task's effective deliverable repo
+    // (`deliverableRepo` when set, else `project.githubRepo`). Without this
+    // an agent on project A could post comments into any repo a team member's
+    // token can reach. Runs BEFORE the delegation lookup and the GitHub call,
+    // and nothing is stored for the idempotency key on this path (only 2xx
+    // answers are).
+    const groundingGuard = groundingRemoteGuardFor(c);
+    const crossRepo = checkOwnerRepoMatchesProject(body.owner, body.repo, task, task.project);
+    if (!crossRepo.ok) {
+      // Where Grounding is configured its refusal for the repository and PR
+      // the comment names keeps precedence: a comment aimed at a protected or
+      // enforced foreign repository is answered by the effect boundary, as it
+      // was before this gate, and any other foreign repository is refused here.
+      if (groundingGuard) {
+        const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, prNumber, kind: "comment", taskId: task.id });
+        if (refused) return c.json({ error: refused.error, message: refused.message }, refused.status);
+      }
+      return c.json(
+        {
+          error: "cross_repo_pr_rejected",
+          message: prRepoMatchesProjectRejectionMessage(
+            crossRepo.prOwner,
+            crossRepo.prRepo,
+            crossRepo.projectRepo,
+          ),
+        },
+        400,
+      );
     }
 
     // 2. Find a user with comment consent. Prefer the token owner so the
@@ -840,7 +872,6 @@ githubRouter.post(
     // twice. GitHub itself does NOT de-dupe comments — two successful
     // creates produce two visible comments on the PR — so without this the
     // retry-after-timeout path genuinely duplicates user-facing content.
-    const groundingGuard = groundingRemoteGuardFor(c);
     const outcome = await withIdempotency<unknown>(
       {
         projectId: task.project.id,
