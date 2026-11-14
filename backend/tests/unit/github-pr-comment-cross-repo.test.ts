@@ -160,6 +160,14 @@ describe("POST /pull-requests/:prNumber/comments cross-repo guard", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     // The gate runs BEFORE the delegation lookup: the token is never fetched.
     expect(findDelegationUserMock).not.toHaveBeenCalled();
+    // The mock returns githubRepo whatever is selected, so pin the select:
+    // without it real Prisma leaves project.githubRepo undefined and the gate
+    // goes inactive again.
+    expect(prismaMocks.taskFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: { project: { select: expect.objectContaining({ githubRepo: true }) } },
+      }),
+    );
     fetchMock.mockRestore();
   });
 
