@@ -293,7 +293,8 @@ describe("discover: refused issuer", () => {
     expect(err.message).not.toMatch(/10\.20\.30\.40/);
     expect(loggerWarnMock).toHaveBeenCalledTimes(1);
     const [fields] = loggerWarnMock.mock.calls[0]! as [Record<string, unknown>];
-    expect(fields).toMatchObject({ component: "oidc", endpoint: "issuer" });
+    // Exact field set: nothing beyond the label, endpoint and detail reaches the log.
+    expect(fields).toEqual({ component: "oidc", endpoint: "issuer", detail: expect.any(String) });
     expect(String(fields.detail)).toMatch(/logged-refusal\.example\.com -> 10\.20\.30\.40/);
   });
 
@@ -347,6 +348,7 @@ describe("discover: refused advertised endpoints", () => {
     const err = await refusal(discover(issuer));
 
     expect(err.endpoint).toBe("jwks");
+    expect(loggerWarnMock.mock.calls[0]![0]).toMatchObject({ endpoint: "jwks" });
     expect(err.message).not.toMatch(/169\.254/);
     expect(err.message).toMatch(/not a public https address/);
     // The discovery request went out; the JWKS request never did.
@@ -400,6 +402,7 @@ describe("exchangeCode: refused token endpoint", () => {
   ])("refuses a token_endpoint at the %s and never sends the client secret", async (_l, endpoint) => {
     const err = await refusal(exchangeCode({ ...baseParams, discovery: discovery(endpoint) }));
     expect(err.endpoint).toBe("token");
+    expect(loggerWarnMock.mock.calls[0]![0]).toMatchObject({ endpoint: "token" });
     expect(httpsRequestMock).not.toHaveBeenCalled();
   });
 

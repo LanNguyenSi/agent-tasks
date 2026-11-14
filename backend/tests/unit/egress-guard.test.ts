@@ -130,6 +130,11 @@ describe("isPrivateAddress", () => {
     ["between the two ORCHID blocks and the next prefix", "2001:30::1"],
     ["2001:3::/32", "2001:3::1"],
     ["just above 5f00::/16", "5f01::1"],
+    ["just below 2001:2::/48", "2001:1::1"],
+    ["just below 2001:10::/28", "2001:f::1"],
+    ["just below 3fff::/20", "3ffe:ffff::1"],
+    ["3ffe::/20, the /20 below 3fff::/20 (a one-bit mask error would catch it)", "3ffe::1"],
+    ["just below 5f00::/16", "5eff:ffff::1"],
   ];
   it.each(publicAddresses)("allows %s", (_label, ip) => {
     expect(isPrivateAddress(ip), ip).toBe(false);

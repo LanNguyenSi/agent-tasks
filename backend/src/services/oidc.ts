@@ -89,8 +89,8 @@ const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 const EGRESS_POLICY: EgressPolicy = {
   label: "OIDC",
   schemes: ["https:"],
-  // What the previous fetch-based client sent; a WAF in front of an IdP may
-  // refuse a request that carries neither.
+  // The previous fetch-based client sent an Accept and a User-Agent header (with
+  // other values); a WAF in front of an IdP may refuse a request that carries neither.
   defaultHeaders: { Accept: "application/json", "User-Agent": "agent-tasks" },
   publicMessage: "issuer URL must be a public https address",
 };
