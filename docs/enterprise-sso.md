@@ -148,7 +148,8 @@ Copy the client ID and client secret. You'll paste them into the
    - **Display name** — shown on the login page (e.g. "Acme Okta").
    - **Issuer URL** — the OIDC issuer, without `/.well-known/...`. agent-tasks
      fetches the discovery document and rejects the save if it doesn't
-     respond.
+     respond. The issuer must be an `https` URL on a public address: see
+     [Outbound requests](#outbound-requests-and-the-public-address-rule).
    - **Client ID** / **Client secret** — from the IdP.
    - **Email domains** — comma- or space-separated list of registrable
      domains. Used for login-page discovery and account-linking trust.
@@ -161,6 +162,37 @@ Copy the client ID and client secret. You'll paste them into the
 5. **Test the login.** Log out, go to `/auth`, enter your work email, and
    blur the email field. A "Continue with &lt;IdP&gt;" button should appear.
 
+## Outbound requests and the public address rule
+
+The backend makes three kinds of server-side requests to the IdP: the
+discovery document (`<issuer>/.well-known/openid-configuration`), the JWKS
+(`jwks_uri`) and the token exchange (`token_endpoint`). The last two URLs come
+from the discovery document, so the IdP controls them. All three are held to
+the same rule:
+
+- The URL must use `https`.
+- The host must not be, or resolve to, a private, loopback, link-local
+  (including the cloud metadata address), carrier-grade NAT, documentation,
+  multicast or reserved address, and must not be `localhost` or a `.localhost`
+  name. Every address a name resolves to is checked when the connection is
+  made, so one private address in an otherwise public answer refuses the whole
+  name. IP literals in any spelling (decimal, hex, octal, IPv4-mapped IPv6) are
+  checked as the address they denote.
+- Redirects are not followed; a redirecting endpoint is an error.
+- A request is cut off after 10 seconds, and a response larger than 1 MiB is
+  refused.
+
+A refused issuer answers `400 invalid_issuer` with `OIDC discovery failed:
+issuer URL must be a public https address`; the response never names the
+address a host resolved to. An IdP whose discovery document advertises a
+`jwks_uri` or `token_endpoint` that breaks the rule fails with `the identity
+provider advertises an endpoint that is not a public https address`. An IdP
+that is only reachable on a private network (for example a self-hosted
+Keycloak on an internal address) cannot be used with SSO: there is no
+allowlist for private IdPs. These requests also do not use a proxy from the
+environment (`HTTP_PROXY`, `HTTPS_PROXY`, `NODE_USE_ENV_PROXY`); the backend
+must reach the IdP directly.
+
 ## API reference
 
 All SSO admin endpoints require `Authorization: Bearer <api-token>` with
@@ -170,7 +202,7 @@ the `sso:admin` scope, **not** a session cookie.
 | ------ | ---- | ----------- |
 | `GET`  | `/api/sso/whoami` | Returns the team the token belongs to and the current connection (or `null`). Used by the `/settings/team/sso` page to resolve the team without an out-of-band team ID. |
 | `GET`  | `/api/teams/:teamId/sso` | Current SSO connection for the team. `clientSecretEnc` is never returned. |
-| `PUT`  | `/api/teams/:teamId/sso` | Create or update. Fails with `400` if OIDC discovery fails or the domain is a blocked public-mail provider, and with `409` if a claimed domain is already owned by another team. |
+| `PUT`  | `/api/teams/:teamId/sso` | Create or update. Fails with `400` if OIDC discovery fails (including an issuer that is not an `https` URL on a public address) or the domain is a blocked public-mail provider, and with `409` if a claimed domain is already owned by another team. |
 | `DELETE` | `/api/teams/:teamId/sso` | Remove the connection. Existing sessions for SSO-provisioned users are not invalidated. |
 
 Login-flow endpoints are public:
@@ -187,6 +219,8 @@ Login-flow endpoints are public:
 | ------- | ------------ |
 | PUT returns `503 SSO_ENCRYPTION_KEY must be set` | The env var is missing on the backend. Set a 32-byte key and restart. |
 | PUT returns `400 OIDC discovery failed: ...` | The issuer URL doesn't serve `/.well-known/openid-configuration`, or the discovery document's `issuer` field doesn't match the URL you entered. Double-check trailing slashes. |
+| PUT returns `400 OIDC discovery failed: issuer URL must be a public https address` | The issuer is not an `https` URL, or its host is (or resolves to) a private, loopback, link-local or `localhost` address. Use the IdP's public `https` issuer URL. |
+| PUT or login fails with `the identity provider advertises an endpoint that is not a public https address` | The discovery document names a `jwks_uri` or `token_endpoint` that is `http` or on a non-public address. Fix it on the IdP side. |
 | PUT returns `409 Domain(s) already claimed by another team` | Another team has already configured an SSO connection that lists the same domain. Domains are unique across the installation. |
 | PUT returns `400 Domain ... is a public mail provider` | `gmail.com`, `outlook.com`, etc. cannot be claimed. Use your company's own domain. |
 | Login redirect lands on `/auth/error?reason=sso_unavailable` | OIDC discovery failed at login time (network, IdP outage). Check backend logs for the sanitized error message. |

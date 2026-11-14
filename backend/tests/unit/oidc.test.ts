@@ -3,11 +3,24 @@
  *
  * Covers: verifyIdToken (ES256 + all validation paths), discover (cache,
  * invalidation, error cases), buildAuthorizeUrl, generatePkcePair,
- * exchangeCode, and randomToken. No DB, no real network — fetch is stubbed
- * via save/restore idiom.
+ * exchangeCode, and randomToken. No DB, no real network. The guarded
+ * transport (`guardedFetch`, covered by egress-guard.test.ts and
+ * oidc-egress.test.ts) is routed to a stubbed `globalThis.fetch` below.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { webcrypto } from "node:crypto";
+
+// These tests exercise the OIDC protocol logic, not the transport: route the
+// guarded transport to the stubbed global fetch (the guard itself is covered in
+// egress-guard.test.ts and oidc-egress.test.ts).
+vi.mock("../../src/lib/egress-guard.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../src/lib/egress-guard.js")>();
+  return {
+    ...original,
+    guardedFetch: (url: string, init?: unknown) =>
+      (globalThis.fetch as unknown as (u: string, i?: unknown) => Promise<unknown>)(url, init),
+  };
+});
 
 import {
   discover,
