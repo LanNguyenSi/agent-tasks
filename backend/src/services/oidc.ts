@@ -13,6 +13,15 @@
  */
 
 import { webcrypto } from "node:crypto";
+import { logger } from "../lib/logger.js";
+import {
+  EgressBlockedError,
+  EgressRequestError,
+  guardedFetch,
+  type EgressPolicy,
+  type GuardedFetchInit,
+  type GuardedResponse,
+} from "../lib/egress-guard.js";
 
 export interface OidcDiscovery {
   issuer: string;
@@ -69,6 +78,72 @@ interface DiscoveryCacheEntry {
 const DISCOVERY_TTL_MS = 10 * 60 * 1000;
 const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 
+// ── Outbound requests ────────────────────────────────────────────────────────
+//
+// The issuer URL is entered by a team admin and the discovery document it
+// serves names further URLs (`jwks_uri`, `token_endpoint`), so every request
+// below can be steered by the IdP side. All of them go through `oidcFetch`:
+// the target must be https and a public address (checked on every address the
+// name resolves to, at connect time), and a redirect is refused, not followed.
+
+const EGRESS_POLICY: EgressPolicy = {
+  label: "OIDC",
+  schemes: ["https:"],
+  // The previous fetch-based client sent an Accept and a User-Agent header (with
+  // other values); a WAF in front of an IdP may refuse a request that carries neither.
+  defaultHeaders: { Accept: "application/json", "User-Agent": "agent-tasks" },
+  publicMessage: "issuer URL must be a public https address",
+};
+
+/**
+ * Thrown when an OIDC request target is refused by the egress guard. `message`
+ * is generic and safe to show to an admin; `detail` (host and resolved
+ * address) is for server logs only.
+ */
+export class OidcTargetRefusedError extends Error {
+  readonly detail: string;
+  constructor(
+    readonly endpoint: "issuer" | "jwks" | "token",
+    detail: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      endpoint === "issuer"
+        ? EGRESS_POLICY.publicMessage
+        : "the identity provider advertises an endpoint that is not a public https address",
+      options,
+    );
+    this.name = "OidcTargetRefusedError";
+    this.detail = detail;
+  }
+}
+
+async function oidcFetch(
+  endpoint: "issuer" | "jwks" | "token",
+  url: string,
+  init: GuardedFetchInit = {},
+): Promise<GuardedResponse> {
+  try {
+    return await guardedFetch(url, init, EGRESS_POLICY);
+  } catch (err) {
+    if (err instanceof EgressBlockedError) {
+      // The admin sees the generic text; the host and resolved address are for
+      // the server log only.
+      logger.warn({ component: "oidc", endpoint, detail: err.detail }, "OIDC request target refused");
+      throw new OidcTargetRefusedError(endpoint, err.detail, { cause: err });
+    }
+    if (err instanceof EgressRequestError) {
+      throw err;
+    }
+    // Other transport failures: keep only the error code (ENOTFOUND, ECONNREFUSED,
+    // a certificate error code), never the raw message or an address.
+    const code = (err as NodeJS.ErrnoException).code;
+    throw new Error(`OIDC request failed${typeof code === "string" ? ` (${code})` : ""}`, {
+      cause: err,
+    });
+  }
+}
+
 function normalizeIssuer(issuer: string): string {
   return issuer.replace(/\/+$/, "");
 }
@@ -82,7 +157,7 @@ export async function discover(issuer: string): Promise<{ discovery: OidcDiscove
   }
 
   const wellKnown = `${key}/.well-known/openid-configuration`;
-  const discoveryRes = await fetch(wellKnown);
+  const discoveryRes = await oidcFetch("issuer", wellKnown);
   if (!discoveryRes.ok) {
     throw new Error(`OIDC discovery failed (${discoveryRes.status}) for ${wellKnown}`);
   }
@@ -93,7 +168,7 @@ export async function discover(issuer: string): Promise<{ discovery: OidcDiscove
     throw new Error(`OIDC issuer mismatch: expected ${key}, got ${discovery.issuer}`);
   }
 
-  const jwksRes = await fetch(discovery.jwks_uri);
+  const jwksRes = await oidcFetch("jwks", discovery.jwks_uri);
   if (!jwksRes.ok) {
     throw new Error(`JWKS fetch failed (${jwksRes.status})`);
   }
@@ -165,7 +240,7 @@ export async function exchangeCode(params: ExchangeCodeParams): Promise<OidcToke
     code_verifier: params.codeVerifier,
   });
 
-  const res = await fetch(params.discovery.token_endpoint, {
+  const res = await oidcFetch("token", params.discovery.token_endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
