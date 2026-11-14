@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-11-09T14:46:35Z
+timestamp: 2026-11-14T08:47:08Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -126,7 +126,7 @@ effect boundary (`grounding-scope.ts:103`): with configuration enabled,
 `performPrMerge` checks the exact repository and PR number right before the
 GitHub merge call (`services/github-merge.ts:143`), and the legacy PR creator
 and commenter check the repository (and PR) they post to
-(`routes/github.ts:279`, `routes/github.ts:854`). The check refuses with
+(`routes/github.ts:279`, `routes/github.ts:885`). The check refuses with
 `409 grounding_enrollment_required` a repository string that is not exactly
 canonical, an enforced repository, a protected/`EXTERNAL_V1`/bound/held task's
 PR (including such a task whose own repository string is not canonical and
@@ -145,7 +145,7 @@ by the check. With configuration enabled a GitHub redirect on any of the
 three legacy writes (a renamed or transferred repository) is answered with
 `409 github_redirect_refused` instead of being followed
 (`services/github-merge.ts:195`, `routes/github.ts:309`,
-`routes/github.ts:877`). The configured GitHub create and merge routes check
+`routes/github.ts:908`). The configured GitHub create and merge routes check
 the caller's project access with the legacy rule right after the task lookup,
 before any Grounding read or lock (`routes/grounding-github.ts:82`,
 `routes/grounding-github.ts:130`), so a caller without access gets the legacy
