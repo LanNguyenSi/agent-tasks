@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
+import type { GroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
@@ -59,12 +60,13 @@ vi.mock("../../src/config/index.js", () => ({
 
 import { githubRouter } from "../../src/routes/github.js";
 
-function makeApp(actor: Actor) {
+function makeApp(actor: Actor, guard: GroundingRemoteTargetGuard | null = null) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (c, next) => {
     c.set("actor", actor);
-    // An unconfigured application: its legacy handlers run no Grounding guard.
-    c.set("groundingRemoteTargetGuard", null);
+    // Default: an unconfigured application, whose legacy handlers run no
+    // Grounding guard.
+    c.set("groundingRemoteTargetGuard", guard);
     await next();
   });
   app.route("/", githubRouter);
@@ -98,8 +100,8 @@ function wireTask(input: {
   });
 }
 
-async function postComment(owner: string, repo: string) {
-  return makeApp(AGENT).request("/pull-requests/7/comments", {
+async function postComment(owner: string, repo: string, guard: GroundingRemoteTargetGuard | null = null) {
+  return makeApp(AGENT, guard).request("/pull-requests/7/comments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ taskId: TASK_ID, owner, repo, body: "LGTM" }),
@@ -251,6 +253,56 @@ describe("POST /pull-requests/:prNumber/comments cross-repo guard", () => {
 
     expect(res.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+});
+
+describe("POST /pull-requests/:prNumber/comments cross-repo guard with the Grounding effect boundary configured", () => {
+  const refusal = { error: "grounding_enrollment_required", status: 409, message: "refused by the boundary" } as const;
+
+  it("a foreign repository the boundary refuses is answered by the boundary, before delegation and GitHub", async () => {
+    wireTask({ githubRepo: HOME_REPO, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const guard = vi.fn().mockResolvedValue(refusal);
+
+    const res = await postComment("other-org", "other-repo", guard);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "grounding_enrollment_required", message: "refused by the boundary" });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(guard).toHaveBeenCalledWith({ repo: FOREIGN_REPO, prNumber: 7, kind: "comment", taskId: TASK_ID });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("a foreign repository the boundary does not refuse is still refused by the cross-repo gate, before delegation and GitHub", async () => {
+    wireTask({ githubRepo: HOME_REPO, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const guard = vi.fn().mockResolvedValue(null);
+
+    const res = await postComment("other-org", "other-repo", guard);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "cross_repo_pr_rejected" });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("the task's own repository passes the gate and reaches the boundary once, inside the side-effect block", async () => {
+    wireTask({ githubRepo: HOME_REPO, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: 14, html_url: "https://github.com/x", body: "LGTM" }), { status: 201 }),
+    );
+    const guard = vi.fn().mockResolvedValue(null);
+
+    const res = await postComment("lannguyensi", "repo", guard);
+
+    expect(res.status).toBe(201);
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     fetchMock.mockRestore();
   });
 });
