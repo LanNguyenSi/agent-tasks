@@ -82,6 +82,7 @@ export function NotificationWebhookSection({
           href="https://github.com/LanNguyenSi/agent-tasks/blob/master/docs/notification-webhooks.md"
           target="_blank"
           rel="noopener noreferrer"
+          className="settings-inline-link"
         >
           Notification webhooks docs
         </a>

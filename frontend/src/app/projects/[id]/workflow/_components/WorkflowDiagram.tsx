@@ -140,9 +140,11 @@ export function WorkflowDiagram({ def, onArrowClick, loading }: WorkflowDiagramP
         })}
       </div>
 
-      {/* Secondary row: non-adjacent / backward / skip transitions */}
+      {/* Secondary row: non-adjacent / backward / skip transitions.
+          role="group" is required: aria-label is forbidden on a generic div
+          (axe aria-prohibited-attr), a named group exposes the label. */}
       {otherTransitions.length > 0 && (
-        <div className="wf-skip-row" aria-label="Additional transitions">
+        <div className="wf-skip-row" role="group" aria-label="Additional transitions">
           {otherTransitions.map(({ index, from, to, gateCount }) => (
             <button
               key={index}

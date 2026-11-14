@@ -104,6 +104,13 @@ describe("NotificationWebhookSection — input types", () => {
     render(<NotificationWebhookSection {...makeProps()} />);
     expect(screen.getByLabelText("Webhook URL")).toHaveAttribute("type", "url");
   });
+
+  it("underlines the docs link in the muted hint (settings-inline-link; axe link-in-text-block)", () => {
+    render(<NotificationWebhookSection {...makeProps()} />);
+    expect(screen.getByRole("link", { name: "Notification webhooks docs" })).toHaveClass(
+      "settings-inline-link",
+    );
+  });
 });
 
 describe("NotificationWebhookSection — change callbacks", () => {

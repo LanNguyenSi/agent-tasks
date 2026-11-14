@@ -77,6 +77,11 @@ html[data-theme="light"] {
   --warning: #c08b3a;
   --danger: #e07a76;
   --danger-strong: #c4524d;
+  /* Text painted directly on a solid --danger fill (.btn-danger): white on
+     dark --danger #e07a76 is 2.91:1 (fails WCAG 1.4.3 AA), so dark mode uses
+     the darkest surface step, var(--bg): 6.84:1 on --danger and 8.07:1 on the
+     lighter hover mix. A unit test pins the ratios. */
+  --danger-contrast: var(--bg);
 
   /* Muted warning fill for banners; color-mixed from theme vars so it
      adapts per theme without a separate light-theme override. */
@@ -264,7 +269,7 @@ button:active:not(:disabled) {
 
 .btn-danger {
   background: var(--danger);
-  color: white;
+  color: var(--danger-contrast);
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
@@ -3239,6 +3244,8 @@ html[data-theme="light"] {
   /* --danger #e07a76 → darkened to pass 4.5:1 on tinted alert surface */
   --danger: #9e2220;
   --danger-strong: #7a1a18;
+  /* White stays the on-danger text in light: 7.77:1 on --danger #9e2220. */
+  --danger-contrast: #ffffff;
   --success: #1a6633;
   --warning: #7a550c;
 
@@ -8572,7 +8579,12 @@ a.proj-chip:hover {
 }
 
 .mem-invite-badge[data-status="consumed"] {
-  background: color-mix(in srgb, var(--muted) 15%, transparent);
+  /* The dimmest status: --muted text, kept secondary next to the coloured
+     pending/expired badges. The fill was 15% muted, which pushed --muted
+     #848b98 down to 4.31:1 on the resulting #25282f over the raised card
+     (fails AA at 11px); at 8% the same text measures 4.76:1 on the resulting
+     #1d2026 (5.47:1 in light). A unit test pins the ratios. */
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
   color: var(--muted);
 }
 
