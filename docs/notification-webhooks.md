@@ -211,7 +211,8 @@ Every attempt outcome is audit-logged:
 - `signal.webhook_failed` — final give-up after the retry, with
   `statusCode?` (last HTTP status if we got one) and `errMessage?` (otherwise
   the reason it never succeeded, a private address, "did not resolve", a refused
-  redirect, a timeout, an oversized response, or a transport error).
+  redirect, a timeout, an oversized response; any other transport error is
+  reduced to its error code, so no address or port is ever audited).
 
 Both rows carry `signalId` so you can correlate against the originating
 Signal. Read them from `GET /api/projects/:id/audit?actionPrefix=signal.webhook_`

@@ -20,7 +20,6 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { createRequire } from "node:module";
 import { createHmac } from "node:crypto";
 
 const { mockLogAuditEvent, dnsLookupMock } = vi.hoisted(() => ({
@@ -54,13 +53,6 @@ import {
 
 const PUBLIC = "93.184.216.34";
 const RESPONSE_MAX_BYTES = 64 * 1024;
-
-// The rebinding case needs to redirect the callback DNS lookup (which the OLD
-// plain-fetch path resolved through) at the test server, so it can prove the old
-// code connected while guardedFetch now refuses. createRequire gives the live
-// node:dns module the undici client and net lookups actually use.
-const nodeRequire = createRequire(import.meta.url);
-const dnsModule = nodeRequire("node:dns") as typeof import("node:dns");
 
 const baseInput: DeliverSignalWebhookInput = {
   signalId: "sig-abc",
@@ -149,6 +141,32 @@ function audited(action: string): Record<string, unknown>[] {
     .map((a) => a.payload);
 }
 
+/**
+ * Run a delivery on the faked clock (the timer names below install fake timers
+ * per test): the 2 s retry sleep and the 5 s per-attempt budget run in virtual
+ * time, so a retry costs no wall-clock time. Virtual time advances in 50 ms
+ * steps and each step first yields one real event-loop tick, so real socket I/O
+ * with the in-process test server still progresses between the steps.
+ */
+async function deliver(input: DeliverSignalWebhookInput): Promise<void> {
+  let settled = false;
+  const settle = () => {
+    settled = true;
+  };
+  const delivery = deliverSignalWebhook(input).then(settle, settle);
+  for (let advanced = 0; advanced < 60_000 && !settled; advanced += 50) {
+    await new Promise((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(50);
+  }
+  await delivery;
+}
+
+function useFakedTimeoutTimers(): void {
+  // Only the two timer functions the sender uses; Date.now and setImmediate
+  // stay real, so durationMs and the socket I/O above behave normally.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+}
+
 describe("signWebhookBody", () => {
   it("produces a sha256= HMAC matching node:crypto", () => {
     const body = '{"signalId":"sig-abc"}';
@@ -233,7 +251,12 @@ describe("deliverSignalWebhook: happy path (real guardedFetch path)", () => {
 
 describe("deliverSignalWebhook — retry behavior", () => {
   beforeEach(() => {
+    useFakedTimeoutTimers();
     process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS = "127.0.0.1";
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("retries once on 5xx and audits success when the retry succeeds", async () => {
@@ -249,7 +272,7 @@ describe("deliverSignalWebhook — retry behavior", () => {
       }
     };
 
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
 
     expect(hits).toHaveLength(2);
     expect(audited("signal.webhook_delivered")).toEqual([
@@ -263,20 +286,52 @@ describe("deliverSignalWebhook — retry behavior", () => {
       res.end("busy");
     };
 
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
 
     expect(hits).toHaveLength(2);
+    // The whole audit event, not only its payload.
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "signal.webhook_failed",
+        projectId: "proj-1",
+        taskId: "task-1",
+      }),
+    );
     expect(audited("signal.webhook_failed")).toEqual([
       expect.objectContaining({ attempts: 2, statusCode: 503 }),
     ]);
     expect(audited("signal.webhook_delivered")).toHaveLength(0);
   });
 
+  it("audits the LAST attempt's error as the final errMessage", async () => {
+    // First attempt answers 503 (a status failure, no errMessage), the second
+    // never delivers a response (the socket is destroyed), so only the second
+    // attempt produces an error text and it is the one that gets audited.
+    let calls = 0;
+    handler = (_req, res) => {
+      calls++;
+      if (calls === 1) {
+        res.writeHead(503);
+        res.end("busy");
+      } else {
+        res.socket?.destroy();
+      }
+    };
+
+    await deliver(buildInput());
+
+    expect(hits).toHaveLength(2);
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed).toMatchObject({ attempts: 2 });
+    expect(failed?.statusCode).toBeUndefined();
+    expect(String(failed?.errMessage)).toMatch(/ECONNRESET|socket hang up/);
+  });
+
   it("retries on a transport error then audits failed if both fail, and never throws", async () => {
     // 127.0.0.1 is allowlisted, so the guard lets the address through; nothing
     // listens on port 1, so every attempt fails fast with a transport error
     // (ECONNREFUSED) instead of a status code.
-    await expect(deliverSignalWebhook(buildInput({ webhookUrl: "http://127.0.0.1:1/inbox" }))).resolves.toBeUndefined();
+    await expect(deliver(buildInput({ webhookUrl: "http://127.0.0.1:1/inbox" }))).resolves.toBeUndefined();
 
     const [failed] = audited("signal.webhook_failed");
     expect(failed).toMatchObject({ attempts: 2 });
@@ -285,17 +340,55 @@ describe("deliverSignalWebhook — retry behavior", () => {
     expect(String(failed?.errMessage).length).toBeGreaterThan(0);
   });
 
+  it("reduces a raw transport error to its code: no IP address, no port", async () => {
+    // A Node transport error quotes what it failed to connect to ("connect
+    // ECONNREFUSED 127.0.0.1:1"; a TLS error quotes certificate altnames), so
+    // only the error code may reach the audit, never the address or the port.
+    await deliver(buildInput({ webhookUrl: "http://127.0.0.1:1/inbox" }));
+
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed).toMatchObject({ attempts: 2 });
+    const errMessage = String(failed?.errMessage);
+    expect(errMessage).toContain("ECONNREFUSED");
+    expect(errMessage).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
+    expect(errMessage).not.toMatch(/:\d+/);
+  });
+
+  it("treats a 4xx answer as a failed attempt, retried once", async () => {
+    handler = (_req, res) => {
+      res.writeHead(422);
+      res.end("no");
+    };
+
+    await deliver(buildInput());
+
+    expect(hits).toHaveLength(2);
+    expect(audited("signal.webhook_failed")).toEqual([
+      expect.objectContaining({ attempts: 2, statusCode: 422 }),
+    ]);
+    expect(audited("signal.webhook_delivered")).toHaveLength(0);
+  });
+
   it("counts a timeout as a failed attempt after the per-attempt budget", async () => {
     handler = () => {
       /* never respond, guardedFetch aborts at TIMEOUT_MS (5 s) */
     };
 
-    await deliverSignalWebhook(buildInput());
+    const delivery = deliverSignalWebhook(buildInput());
+    // Two attempts at TIMEOUT_MS plus the RETRY_DELAY_MS between them: the
+    // give-up audit lands at exactly 2 * TIMEOUT_MS + RETRY_DELAY_MS of virtual
+    // time, so these two assertions pin both constants (5 s + 2 s + 5 s = 12 s).
+    await vi.advanceTimersByTimeAsync(2 * 5_000 + 2_000 - 1);
+    expect(audited("signal.webhook_failed")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    // Advance no time, just drain what the last timer set in motion.
+    await vi.advanceTimersByTimeAsync(0);
 
     const [failed] = audited("signal.webhook_failed");
     expect(failed).toMatchObject({ attempts: 2 });
     expect(failed?.errMessage).toMatch(/timed out/);
-  }, 20_000);
+    await expect(delivery).resolves.toBeUndefined();
+  });
 
   it("never throws when the audit write itself rejects", async () => {
     mockLogAuditEvent.mockImplementationOnce(() => {
@@ -304,16 +397,26 @@ describe("deliverSignalWebhook — retry behavior", () => {
     // logAuditEvent is voided in the implementation, so a throw there is the
     // implementation's own guard; the caller of deliverSignalWebhook still does
     // not see it.
-    await expect(deliverSignalWebhook(buildInput())).resolves.toBeUndefined();
+    await expect(deliver(buildInput())).resolves.toBeUndefined();
   });
 });
 
 describe("deliverSignalWebhook: egress guard on the real path", () => {
+  beforeEach(() => {
+    useFakedTimeoutTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("refuses the loopback test host with no allowlist and the server sees no request", async () => {
     // WEBHOOK_ALLOWED_PRIVATE_HOSTS is unset (afterEach clears it) → 127.0.0.1 is
     // a private address → refused before any socket is opened.
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
 
+    // Sanity only: a refusal happens before a socket opens, so no hit is
+    // possible here either way; the errMessage below is what is asserted.
     expect(hits).toHaveLength(0);
     expect(audited("signal.webhook_failed")).toEqual([
       expect.objectContaining({ errMessage: expect.stringMatching(/private address/) }),
@@ -322,18 +425,22 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
   });
 
   it("refuses a metadata URL and audits failure with no request", async () => {
-    await deliverSignalWebhook(buildInput({ webhookUrl: "http://169.254.169.254/latest/meta-data/" }));
+    await deliver(buildInput({ webhookUrl: "http://169.254.169.254/latest/meta-data/" }));
 
+    // Sanity only (see the loopback case): the refusal precedes any socket.
     expect(hits).toHaveLength(0);
     expect(audited("signal.webhook_failed")).toEqual([
-      expect.objectContaining({ url: "http://169.254.169.254/latest/meta-data/" }),
+      expect.objectContaining({
+        url: "http://169.254.169.254/latest/meta-data/",
+        errMessage: expect.stringMatching(/private address/),
+      }),
     ]);
     expect(audited("signal.webhook_delivered")).toHaveLength(0);
   });
 
   it("delivers to an allowlisted private host and refuses the same host when unlisted", async () => {
     process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS = "127.0.0.1";
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
     expect(hits).toHaveLength(1);
     expect(audited("signal.webhook_delivered")).toHaveLength(1);
 
@@ -341,7 +448,7 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
     delete process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS;
     hits = [];
     mockLogAuditEvent.mockClear();
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
     expect(hits).toHaveLength(0);
     expect(audited("signal.webhook_failed")).toHaveLength(1);
   });
@@ -353,7 +460,7 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
       res.end();
     };
 
-    await deliverSignalWebhook(buildInput({ webhookUrl: `http://127.0.0.1:${port}/redirect` }));
+    await deliver(buildInput({ webhookUrl: `http://127.0.0.1:${port}/redirect` }));
 
     expect(hits).toHaveLength(2);
     expect(hits.every((h) => h.url === "/redirect")).toBe(true);
@@ -372,7 +479,7 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
       res.end("x".repeat(RESPONSE_MAX_BYTES + 1000));
     };
 
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
 
     expect(hits).toHaveLength(2);
     const [failed] = audited("signal.webhook_failed");
@@ -388,7 +495,7 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
       res.end("x".repeat(40 * 1024));
     };
 
-    await deliverSignalWebhook(buildInput());
+    await deliver(buildInput());
 
     expect(hits).toHaveLength(1);
     expect(audited("signal.webhook_delivered")).toEqual([expect.objectContaining({ attempts: 1, statusCode: 200 })]);
@@ -407,35 +514,22 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
         isConnect ? [{ address: "10.0.0.7", family: 4 }] : [{ address: PUBLIC, family: 4 }],
       );
     });
-    // Redirect the callback lookup (which the OLD plain-fetch path used) at the
-    // test server, so on the base the plain fetch really connects and the server
-    // records a hit, which is what the assertions below must not see.
-    const origLookup = dnsModule.lookup;
-    (dnsModule as { lookup: unknown }).lookup = (
-      _host: string,
-      options: unknown,
-      callback: unknown,
-    ) => {
-      const cb = (typeof options === "function" ? options : callback) as (
-        e: Error | null,
-        address: string,
-        family: number,
-      ) => void;
-      process.nextTick(() => cb(null, "127.0.0.1", 4));
-    };
 
-    try {
-      await deliverSignalWebhook(buildInput({ webhookUrl: `http://rebind.evil:${port}/inbox` }));
+    // What discriminates old from new is the errMessage: the old code passed the
+    // check (a public answer) and then let its own HTTP client resolve again, so
+    // it never saw the private connect-time answer and reported a connection
+    // error or a delivered POST; guardedFetch refuses at connect time, so the
+    // audit names the private address it refused. (hits stays 0 as a sanity
+    // check only: undici resolves names through its own connector, so the old
+    // code did not reach this in-process server either.)
+    await deliver(buildInput({ webhookUrl: `http://rebind.evil:${port}/inbox` }));
 
-      expect(hits).toHaveLength(0);
-      const [failed] = audited("signal.webhook_failed");
-      expect(failed).toMatchObject({ attempts: 2 });
-      expect(failed?.errMessage).toMatch(/resolves to a private address: rebind\.evil -> 10\.0\.0\.7/);
-      expect(audited("signal.webhook_delivered")).toHaveLength(0);
-    } finally {
-      dnsModule.lookup = origLookup;
-    }
-  }, 20_000);
+    expect(hits).toHaveLength(0);
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed).toMatchObject({ attempts: 2 });
+    expect(failed?.errMessage).toMatch(/resolves to a private address: rebind\.evil -> 10\.0\.0\.7/);
+    expect(audited("signal.webhook_delivered")).toHaveLength(0);
+  });
 });
 
 describe("isPrivateAddress (SSRF egress guard, M8)", () => {

@@ -17,6 +17,8 @@
 import { createHmac } from "node:crypto";
 import {
   assertPublicUrl,
+  EgressBlockedError,
+  EgressRequestError,
   guardedFetch,
   isPrivateAddress,
   type EgressPolicy,
@@ -97,8 +99,10 @@ export function signWebhookBody(body: string, secret: string): string {
 // code, so an oversized receiver body is refused (reason "too_large") and counts
 // as a FAILED attempt, a receiver must keep its ack within RESPONSE_MAX_BYTES.
 // This is a deliberate choice over "judge by status": we never buffer an
-// unbounded receiver response. Every failure reason (private address, did not
-// resolve, redirect, timeout, too large) names itself in the audit errorMessage.
+// unbounded receiver response. Every guard-authored failure reason (private
+// address, did not resolve, redirect, timeout, too large) names itself in the
+// audit errorMessage; any other transport error is reduced to its error code so
+// the audit never carries a resolved address or port.
 //
 // The address classification and the shared target checks live in
 // lib/egress-guard.ts (shared with the OIDC client); this module keeps the
@@ -184,10 +188,20 @@ async function attemptDelivery(
     }
     return { ok: false, statusCode: res.status };
   } catch (err) {
-    // EgressBlockedError (refused address) or EgressRequestError (redirect /
-    // timeout / too large) or a transport error. `.message` names the reason and
-    // leaks no more than the resolve-then-check path did.
-    return { ok: false, errorMessage: (err as Error).message };
+    // EgressBlockedError (refused address) and EgressRequestError (redirect /
+    // timeout / too large) carry messages authored in lib/egress-guard.ts, so
+    // they name the reason and are safe to audit verbatim. Any other error is a
+    // raw transport failure (ECONNREFUSED, ETIMEDOUT, a TLS error), whose message
+    // quotes the resolved address, port and certificate names; reduce it to a
+    // fixed text plus the error code only, the way the OIDC client does.
+    if (err instanceof EgressBlockedError || err instanceof EgressRequestError) {
+      return { ok: false, errorMessage: err.message };
+    }
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      ok: false,
+      errorMessage: `webhook request failed${typeof code === "string" ? ` (${code})` : ""}`,
+    };
   }
 }
 
