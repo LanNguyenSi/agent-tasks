@@ -8,12 +8,22 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { dnsLookupMock, httpsRequestMock } = vi.hoisted(() => ({
+const { dnsLookupMock, httpsRequestMock, httpRequestMock, loggerWarnMock } = vi.hoisted(() => ({
   dnsLookupMock: vi.fn(),
   httpsRequestMock: vi.fn(),
+  // Safety net: the guard is https-only for OIDC, so nothing may reach node:http.
+  // A scheme regression would otherwise open a real socket.
+  httpRequestMock: vi.fn(() => {
+    throw new Error("node:http must not be used by the OIDC client");
+  }),
+  loggerWarnMock: vi.fn(),
 }));
 vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
 vi.mock("node:https", () => ({ request: httpsRequestMock }));
+vi.mock("node:http", () => ({ request: httpRequestMock }));
+vi.mock("../../src/lib/logger.js", () => ({
+  logger: { warn: loggerWarnMock, error: vi.fn(), info: vi.fn() },
+}));
 
 import {
   OidcTargetRefusedError,
@@ -111,10 +121,12 @@ beforeEach(() => {
   dnsLookupMock.mockReset();
   dnsLookupMock.mockResolvedValue([{ address: PUBLIC_IP, family: 4 }]);
   httpsRequestMock.mockReset();
+  loggerWarnMock.mockReset();
   httpsRequestMock.mockImplementation(fakeHttpsRequest);
 });
 
 afterEach(() => {
+  expect(httpRequestMock).not.toHaveBeenCalled();
   expect(globalThis.fetch).not.toHaveBeenCalled();
   globalThis.fetch = realFetch;
 });
@@ -178,6 +190,61 @@ describe("discover: allowed target", () => {
   });
 });
 
+describe("discover: request shape", () => {
+  const sentOptions = (call: number): { agent: unknown; headers: Record<string, string>; method: string; lookup: unknown } =>
+    httpsRequestMock.mock.calls[call]![0] as never;
+
+  it("never uses a shared agent (a fresh, lookup-checked connection per request) and installs the checking lookup", async () => {
+    const issuer = "https://shape-agent.example.com";
+    routeFor(issuer, discoveryDoc(issuer));
+    await discover(issuer);
+    for (const call of [0, 1]) {
+      expect(sentOptions(call).agent).toBe(false);
+      expect(typeof sentOptions(call).lookup).toBe("function");
+    }
+  });
+
+  it("sends Accept and User-Agent on the discovery and JWKS GETs", async () => {
+    const issuer = "https://shape-headers.example.com";
+    routeFor(issuer, discoveryDoc(issuer));
+    await discover(issuer);
+    for (const call of [0, 1]) {
+      expect(sentOptions(call).method).toBe("GET");
+      expect(sentOptions(call).headers).toEqual({
+        Accept: "application/json",
+        "User-Agent": "agent-tasks",
+      });
+    }
+  });
+
+  it("the token POST keeps its own headers, adds the User-Agent and sends Accept once", async () => {
+    routes.set("shape-token.example.com/token", {
+      status: 200,
+      body: JSON.stringify({ id_token: "idtok", token_type: "Bearer", access_token: "a" }),
+    });
+    await exchangeCode({
+      discovery: {
+        issuer: "https://shape-token.example.com",
+        authorization_endpoint: "https://shape-token.example.com/auth",
+        token_endpoint: "https://shape-token.example.com/token",
+        jwks_uri: "https://shape-token.example.com/jwks",
+      },
+      clientId: "c",
+      clientSecret: "s",
+      code: "x",
+      redirectUri: "https://app.example.com/cb",
+      codeVerifier: "v",
+    });
+    expect(sentOptions(0).method).toBe("POST");
+    expect(sentOptions(0).headers).toMatchObject({
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "agent-tasks",
+    });
+    expect(Object.keys(sentOptions(0).headers).filter((k) => k.toLowerCase() === "accept")).toHaveLength(1);
+  });
+});
+
 describe("discover: refused issuer", () => {
   const refusedIssuers: Array<[string, string]> = [
     ["IPv4 loopback", "https://127.0.0.1"],
@@ -214,6 +281,27 @@ describe("discover: refused issuer", () => {
     expect(err.message).not.toMatch(/10\.20\.30\.40|rebind-private/);
     expect(err.detail).toMatch(/rebind-private\.example\.com -> 10\.20\.30\.40/);
     expect(connectedTo).toEqual([]);
+  });
+
+  it("logs the refusal detail server-side once, while the thrown error stays generic", async () => {
+    dnsLookupMock.mockResolvedValue([{ address: "10.20.30.40", family: 4 }]);
+    const issuer = "https://logged-refusal.example.com";
+    routeFor(issuer, discoveryDoc(issuer));
+
+    const err = await refusal(discover(issuer));
+
+    expect(err.message).not.toMatch(/10\.20\.30\.40/);
+    expect(loggerWarnMock).toHaveBeenCalledTimes(1);
+    const [fields] = loggerWarnMock.mock.calls[0]! as [Record<string, unknown>];
+    expect(fields).toMatchObject({ component: "oidc", endpoint: "issuer" });
+    expect(String(fields.detail)).toMatch(/logged-refusal\.example\.com -> 10\.20\.30\.40/);
+  });
+
+  it("does not log anything for a request that was allowed", async () => {
+    const issuer = "https://no-log.example.com";
+    routeFor(issuer, discoveryDoc(issuer));
+    await discover(issuer);
+    expect(loggerWarnMock).not.toHaveBeenCalled();
   });
 
   it("refuses an issuer name whose DNS answer mixes a public and a private address", async () => {

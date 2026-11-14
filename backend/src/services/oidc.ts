@@ -13,6 +13,7 @@
  */
 
 import { webcrypto } from "node:crypto";
+import { logger } from "../lib/logger.js";
 import {
   EgressBlockedError,
   EgressRequestError,
@@ -88,6 +89,9 @@ const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 const EGRESS_POLICY: EgressPolicy = {
   label: "OIDC",
   schemes: ["https:"],
+  // What the previous fetch-based client sent; a WAF in front of an IdP may
+  // refuse a request that carries neither.
+  defaultHeaders: { Accept: "application/json", "User-Agent": "agent-tasks" },
   publicMessage: "issuer URL must be a public https address",
 };
 
@@ -123,6 +127,9 @@ async function oidcFetch(
     return await guardedFetch(url, init, EGRESS_POLICY);
   } catch (err) {
     if (err instanceof EgressBlockedError) {
+      // The admin sees the generic text; the host and resolved address are for
+      // the server log only.
+      logger.warn({ component: "oidc", endpoint, detail: err.detail }, "OIDC request target refused");
       throw new OidcTargetRefusedError(endpoint, err.detail, { cause: err });
     }
     if (err instanceof EgressRequestError) {

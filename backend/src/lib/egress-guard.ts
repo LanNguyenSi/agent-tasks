@@ -57,6 +57,11 @@ export interface EgressPolicy {
    */
   allowedPrivateHosts?: readonly string[];
   /**
+   * Headers `guardedFetch` sends unless the caller sets the same header (names
+   * compare case-insensitively).
+   */
+  defaultHeaders?: Readonly<Record<string, string>>;
+  /**
    * Generic text used as the error `message` for every refusal. When absent the
    * message equals the internal detail.
    */
@@ -139,11 +144,23 @@ function isPrivateIPv6(ip: string): boolean {
   if (h0 === 0x64 && h1 === 0xff9b && h2 === 0 && h3 === 0 && h4 === 0 && h5 === 0) {
     return isPrivateIPv4(hextetsToIPv4(h6, h7)); // 64:ff9b::/96 NAT64
   }
-  if (h0 === 0x64 && h1 === 0xff9b && h2 === 1) return true; // 64:ff9b:1::/48 local-use NAT64
+  if (h0 === 0x64 && h1 === 0xff9b && h2 === 1) {
+    // 64:ff9b:1::/48 local-use NAT64 (RFC 8215). A /96 prefix carries the IPv4 in
+    // the last 32 bits, like 64:ff9b::/96, so an IPv6-only DNS64 deployment that
+    // uses it keeps working for public targets. Any other layout (a shorter
+    // prefix puts the IPv4 elsewhere) cannot be decoded here and is refused.
+    if (h3 === 0 && h4 === 0 && h5 === 0) return isPrivateIPv4(hextetsToIPv4(h6, h7));
+    return true;
+  }
   if (zeroTo(6)) return true; // ::/96 unspecified, loopback ::1, deprecated IPv4-compatible
   if (h0 === 0x2002) return isPrivateIPv4(hextetsToIPv4(h1, h2)); // 2002::/16 6to4 embeds the IPv4
   if (h0 === 0x2001 && h1 === 0) return true; // 2001::/32 Teredo (obfuscated IPv4)
   if (h0 === 0x2001 && h1 === 0x0db8) return true; // 2001:db8::/32 documentation
+  if (h0 === 0x2001 && h1 === 2 && h2 === 0) return true; // 2001:2::/48 benchmarking
+  if (h0 === 0x2001 && (h1 & 0xfff0) === 0x10) return true; // 2001:10::/28 ORCHID (deprecated)
+  if (h0 === 0x2001 && (h1 & 0xfff0) === 0x20) return true; // 2001:20::/28 ORCHIDv2
+  if (h0 === 0x3fff && (h1 & 0xf000) === 0) return true; // 3fff::/20 documentation
+  if (h0 === 0x5f00) return true; // 5f00::/16 SRv6 SIDs
   if (h0 === 0x0100 && h1 === 0 && h2 === 0 && h3 === 0) return true; // 100::/64 discard-only
   if ((h0 & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
   if ((h0 & 0xff00) === 0xfe00) return true; // fe00::/8 link-local fe80::/10, site-local fec0::/10
@@ -254,8 +271,8 @@ export interface GuardedResponse {
   json(): Promise<unknown>;
 }
 
-const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_MAX_BYTES = 1024 * 1024;
+export const DEFAULT_TIMEOUT_MS = 10_000;
+export const DEFAULT_MAX_BYTES = 1024 * 1024;
 
 /**
  * A `lookup` for the socket layer: resolves every address, refuses the whole
@@ -315,6 +332,10 @@ export function guardedFetch(
     const { parsed, host, allowlisted } = target;
     const body = init.body;
     const headers: Record<string, string> = { ...(init.headers ?? {}) };
+    const sent = new Set(Object.keys(headers).map((k) => k.toLowerCase()));
+    for (const [name, value] of Object.entries(policy.defaultHeaders ?? {})) {
+      if (!sent.has(name.toLowerCase())) headers[name] = value;
+    }
     if (body !== undefined) {
       headers["Content-Length"] = String(Buffer.byteLength(body));
     }

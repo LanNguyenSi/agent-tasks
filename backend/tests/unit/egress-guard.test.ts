@@ -16,6 +16,8 @@ vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
 import {
   EgressBlockedError,
   EgressRequestError,
+  DEFAULT_MAX_BYTES,
+  DEFAULT_TIMEOUT_MS,
   assertPublicUrl,
   guardedFetch,
   isBlockedHostname,
@@ -24,6 +26,8 @@ import {
 } from "../../src/lib/egress-guard.js";
 
 const PUBLIC_IP = "93.184.216.34";
+const sleep = (ms: number): Promise<string> =>
+  new Promise((resolve) => setTimeout(() => resolve("timed out"), ms));
 
 const WEB: EgressPolicy = { label: "webhook", schemes: ["http:", "https:"] };
 const STRICT: EgressPolicy = {
@@ -76,14 +80,29 @@ describe("isPrivateAddress", () => {
     ["IPv4-translated (SIIT) loopback", "::ffff:0:7f00:1"],
     ["NAT64 loopback", "64:ff9b::7f00:1"],
     ["NAT64 metadata, dotted", "64:ff9b::169.254.169.254"],
-    ["local-use NAT64 64:ff9b:1::/48", "64:ff9b:1::1"],
+    ["local-use NAT64 /96 embedding 0.0.0.1", "64:ff9b:1::1"],
+    ["local-use NAT64 /96 embedding loopback", "64:ff9b:1::7f00:1"],
+    ["local-use NAT64 /96 embedding metadata, dotted", "64:ff9b:1::169.254.169.254"],
+    ["local-use NAT64 with a non-/96 layout (cannot be decoded, refused)", "64:ff9b:1:0:1::808:808"],
+    ["local-use NAT64 with a non-/96 layout in the high groups", "64:ff9b:1:1::808:808"],
+    ["local-use NAT64 with a non-/96 layout in the group before the IPv4", "64:ff9b:1:0:0:1:808:808"],
+    ["local-use NAT64 with a non-/96 layout in the fourth group", "64:ff9b:1:1:0:0:808:808"],
     ["IPv4-compatible metadata (deprecated)", "::a9fe:a9fe"],
     ["IPv4-compatible public address (::/96 is reserved)", "::808:808"],
     ["6to4 embedding loopback", "2002:7f00:1::1"],
     ["6to4 embedding metadata", "2002:a9fe:a9fe::"],
+    ["6to4 embedding 192.168.1.1 with public-looking groups after it", "2002:c0a8:101:808:808::"],
     ["Teredo 2001::/32", "2001:0:4136:e378:8000:63bf:3fff:fdd2"],
     ["IPv6 documentation 2001:db8::/32", "2001:db8::1"],
     ["IPv6 discard-only 100::/64", "100::1"],
+    ["IPv6 benchmarking 2001:2::/48", "2001:2::1"],
+    ["IPv6 ORCHID 2001:10::/28", "2001:10::1"],
+    ["IPv6 ORCHID 2001:1f::/28 upper end", "2001:1f:ffff::1"],
+    ["IPv6 ORCHIDv2 2001:20::/28", "2001:20::1"],
+    ["IPv6 ORCHIDv2 2001:2f::/28 upper end", "2001:2f:ffff::1"],
+    ["IPv6 documentation 3fff::/20", "3fff::1"],
+    ["IPv6 documentation 3fff::/20 upper end", "3fff:0fff:ffff::1"],
+    ["IPv6 SRv6 5f00::/16", "5f00::1"],
   ];
   it.each(privateAddresses)("flags %s", (_label, ip) => {
     expect(isPrivateAddress(ip), ip).toBe(true);
@@ -103,6 +122,14 @@ describe("isPrivateAddress", () => {
     ["public IPv6 with a zone id (the zone is ignored)", "2606:4700:4700::1111%eth0"],
     ["6to4 embedding a public address", "2002:5db8:d822::1"],
     ["NAT64 embedding a public address", "64:ff9b::5db8:d822"],
+    ["local-use NAT64 /96 embedding a public address", "64:ff9b:1::5db8:d822"],
+    ["local-use NAT64 /96 embedding a public address, dotted", "64:ff9b:1::93.184.216.34"],
+    ["6to4 with a private-looking address only after the embedded one", "2002:808:808:c0a8:101::"],
+    ["just above 3fff::/20", "3fff:1000::1"],
+    ["just above 2001:2::/48", "2001:2:1::1"],
+    ["between the two ORCHID blocks and the next prefix", "2001:30::1"],
+    ["2001:3::/32", "2001:3::1"],
+    ["just above 5f00::/16", "5f01::1"],
   ];
   it.each(publicAddresses)("allows %s", (_label, ip) => {
     expect(isPrivateAddress(ip), ip).toBe(false);
@@ -233,6 +260,45 @@ describe("assertPublicUrl", () => {
     );
   });
 
+  it("the allowlist is an exact match: a host that only starts or ends with an entry is still checked", async () => {
+    const policy: EgressPolicy = { ...WEB, allowedPrivateHosts: ["internal.corp"] };
+    dnsLookupMock.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    await expect(assertPublicUrl("http://evilinternal.corp/", policy)).rejects.toBeInstanceOf(
+      EgressBlockedError,
+    );
+    await expect(assertPublicUrl("http://internal.corp.evil.example/", policy)).rejects.toBeInstanceOf(
+      EgressBlockedError,
+    );
+    await expect(assertPublicUrl("http://a.internal.corp/", policy)).rejects.toBeInstanceOf(
+      EgressBlockedError,
+    );
+  });
+
+  it("refuses an answer with the private address after a public one, and before it", async () => {
+    dnsLookupMock.mockResolvedValueOnce([
+      { address: "10.0.0.7", family: 4 },
+      { address: PUBLIC_IP, family: 4 },
+    ]);
+    await expect(assertPublicUrl("https://private-first.evil/", WEB)).rejects.toBeInstanceOf(
+      EgressBlockedError,
+    );
+    dnsLookupMock.mockResolvedValueOnce([
+      { address: PUBLIC_IP, family: 4 },
+      { address: "10.0.0.7", family: 4 },
+    ]);
+    await expect(assertPublicUrl("https://private-last.evil/", WEB)).rejects.toBeInstanceOf(
+      EgressBlockedError,
+    );
+    dnsLookupMock.mockResolvedValueOnce([
+      { address: PUBLIC_IP, family: 4 },
+      { address: "10.0.0.7", family: 4 },
+      { address: "1.1.1.1", family: 4 },
+    ]);
+    await expect(assertPublicUrl("https://private-middle.evil/", WEB)).rejects.toBeInstanceOf(
+      EgressBlockedError,
+    );
+  });
+
   it("a policy publicMessage hides the detail from `message` and keeps it in `detail`", async () => {
     dnsLookupMock.mockResolvedValueOnce([{ address: "10.9.8.7", family: 4 }]);
     const err = await assertPublicUrl("https://sneaky.evil/", STRICT).catch((e: unknown) => e);
@@ -251,9 +317,12 @@ describe("guardedFetch", () => {
   let port = 0;
   let hits: Array<{ method?: string; url?: string; headers: IncomingMessage["headers"]; body: string }> = [];
   let handler: (req: IncomingMessage, res: ServerResponse) => void;
+  /** Resolves when the server side sees the connection of the latest request close. */
+  let socketClosed: Promise<void>;
 
   beforeAll(async () => {
     server = createServer((req, res) => {
+      socketClosed = new Promise<void>((resolve) => req.socket.once("close", () => resolve()));
       const chunks: Buffer[] = [];
       req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => {
@@ -393,6 +462,91 @@ describe("guardedFetch", () => {
     );
     expect(err).toBeInstanceOf(EgressRequestError);
     expect((err as EgressRequestError).reason).toBe("timeout");
+  });
+
+  it("closes the connection after a timeout instead of leaving it open", async () => {
+    handler = () => {
+      /* never respond */
+    };
+    await guardedFetch(`http://127.0.0.1:${port}/`, { timeoutMs: 100 }, LOCAL).catch(() => undefined);
+    await expect(Promise.race([socketClosed.then(() => "closed"), sleep(1000)])).resolves.toBe("closed");
+  });
+
+  it("closes the connection after an oversized response instead of draining it", async () => {
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.write("x".repeat(5000)); // never ended
+    };
+    await guardedFetch(`http://127.0.0.1:${port}/`, { maxBytes: 1000 }, LOCAL).catch(() => undefined);
+    await expect(Promise.race([socketClosed.then(() => "closed"), sleep(1000)])).resolves.toBe("closed");
+  });
+
+  it("closes the connection after a refused redirect", async () => {
+    handler = (_req, res) => {
+      res.writeHead(302, { Location: "http://169.254.169.254/" });
+      res.write("moved"); // never ended
+    };
+    await guardedFetch(`http://127.0.0.1:${port}/`, {}, LOCAL).catch(() => undefined);
+    await expect(Promise.race([socketClosed.then(() => "closed"), sleep(1000)])).resolves.toBe("closed");
+  });
+
+  it("refuses a body of exactly maxBytes + 1 and accepts maxBytes", async () => {
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("x".repeat(1001));
+    };
+    await expect(
+      guardedFetch(`http://127.0.0.1:${port}/`, { maxBytes: 1000 }, LOCAL),
+    ).rejects.toBeInstanceOf(EgressRequestError);
+  });
+
+  it("defaults: 1 MiB is accepted, 1 MiB + 1 is refused", async () => {
+    expect(DEFAULT_MAX_BYTES).toBe(1024 * 1024);
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("x".repeat(DEFAULT_MAX_BYTES));
+    };
+    const ok = await guardedFetch(`http://127.0.0.1:${port}/`, {}, LOCAL);
+    await expect(ok.text()).resolves.toHaveLength(DEFAULT_MAX_BYTES);
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("x".repeat(DEFAULT_MAX_BYTES + 1));
+    };
+    await expect(guardedFetch(`http://127.0.0.1:${port}/`, {}, LOCAL)).rejects.toBeInstanceOf(
+      EgressRequestError,
+    );
+  });
+
+  it("default timeout is 10 s: still pending just before it, rejected at it", async () => {
+    expect(DEFAULT_TIMEOUT_MS).toBe(10_000);
+    handler = () => {
+      /* never respond */
+    };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let outcome: "pending" | "timeout" | "other" = "pending";
+    const p = guardedFetch(`http://127.0.0.1:${port}/`, {}, LOCAL).then(
+      () => (outcome = "other"),
+      (e: unknown) => (outcome = e instanceof EgressRequestError && e.reason === "timeout" ? "timeout" : "other"),
+    );
+    await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUT_MS - 1);
+    expect(outcome).toBe("pending");
+    await vi.advanceTimersByTimeAsync(1);
+    await p;
+    expect(outcome).toBe("timeout");
+  });
+
+  it("applies the policy's default headers, the caller's header wins case-insensitively", async () => {
+    const policy: EgressPolicy = {
+      ...LOCAL,
+      defaultHeaders: { Accept: "application/json", "User-Agent": "agent-tasks" },
+    };
+    await guardedFetch(`http://127.0.0.1:${port}/`, {}, policy);
+    expect(hits[0]!.headers["accept"]).toBe("application/json");
+    expect(hits[0]!.headers["user-agent"]).toBe("agent-tasks");
+
+    await guardedFetch(`http://127.0.0.1:${port}/`, { headers: { accept: "text/plain", "USER-AGENT": "custom/1" } }, policy);
+    expect(hits[1]!.headers["accept"]).toBe("text/plain");
+    expect(hits[1]!.headers["user-agent"]).toBe("custom/1");
   });
 
   it("refuses a non-allowlisted loopback literal and the server sees no request", async () => {

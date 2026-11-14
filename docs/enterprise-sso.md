@@ -188,7 +188,10 @@ address a host resolved to. An IdP whose discovery document advertises a
 `jwks_uri` or `token_endpoint` that breaks the rule fails with `the identity
 provider advertises an endpoint that is not a public https address`. An IdP
 that is only reachable on a private network (for example a self-hosted
-Keycloak on an internal address) cannot be used with SSO.
+Keycloak on an internal address) cannot be used with SSO: there is no
+allowlist for private IdPs. These requests also do not use a proxy from the
+environment (`HTTP_PROXY`, `HTTPS_PROXY`, `NODE_USE_ENV_PROXY`); the backend
+must reach the IdP directly.
 
 ## API reference
 
