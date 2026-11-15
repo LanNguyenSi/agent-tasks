@@ -3061,9 +3061,9 @@ html:not([data-theme="light"]) .prose-markdown a {
  * The scope strip on /tasks is wider than the viewport at these
  * widths: .tasks-scope-tabs already scrolls within itself (base rule,
  * never the page); here it also gets a right-edge fade (mask) so the
- * hidden overflow is visible, and its scroll-padding keeps a tab the
- * browser scrolls into view (keyboard selection focuses the next tab)
- * clear of the fade, so the active tab never rests under it. */
+ * hidden overflow is visible, and 24px of trailing padding (as wide
+ * as the fade) so the last tab can scroll fully clear of that fade
+ * instead of resting under it. */
 @media (max-width: 760px) {
   .tabs-tab {
     min-height: 40px;
@@ -3089,7 +3089,17 @@ html:not([data-theme="light"]) .prose-markdown a {
 
   .tasks-scope-tabs {
     overflow-x: auto;
-    scroll-padding-right: 24px;
+    /* The fade is static: it always covers the strip's inner right
+       24px. This trailing padding (as wide as the fade) extends the
+       scroll range so the last tab can scroll fully clear of it:
+       measured at 390px (clientWidth 364, scrollWidth 423), scrolled
+       to its end (scrollLeft 59 of 59) "Recently Done" ends at
+       x=353, at the fade start 354; without the padding the strip
+       maxes at scrollLeft 35 and the tab ends at x=377, 23px inside
+       the fade. At 600px the strip (423px) does not overflow, so the
+       fade falls on this padding (last tab ends at x=412, fade start
+       413), never on a tab. */
+    padding-inline-end: 24px;
     -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
     mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
   }

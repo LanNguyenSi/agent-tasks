@@ -7,7 +7,9 @@
  *  - every listed selector gets `min-height: 40px` (and the icon-only
  *    row-actions trigger also `min-width: 40px`) inside the 760px block;
  *  - the scope strip keeps `overflow-x: auto` and both mask-image
- *    spellings (the right-edge fade is the only overflow cue);
+ *    spellings with their exact fade stops (the right-edge fade is
+ *    the only overflow cue), plus the 24px trailing padding that lets
+ *    the last tab scroll fully clear of that fade;
  *  - the base (desktop) rules are untouched: their fixed heights stay,
  *    and the 40px sizes exist only inside the media block.
  */
@@ -132,8 +134,34 @@ describe("globals.css mobile touch targets (<= 760px)", () => {
     const body = touchRules.get(".tasks-scope-tabs");
     expect(body).toBeDefined();
     expect(body).toMatch(/overflow-x:\s*auto/);
-    expect(body).toMatch(/-webkit-mask-image:\s*linear-gradient\(/);
-    expect(body).toMatch(/(^|\s)mask-image:\s*linear-gradient\(/);
+    const decls = body!
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(";")
+      .map((decl) => decl.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    // The fade itself: both spellings, with the opaque stop at
+    // 24px from the right edge and a fully transparent end stop.
+    const FADE =
+      "linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%)";
+    expect(decls).toContain(`-webkit-mask-image: ${FADE}`);
+    expect(decls).toContain(`mask-image: ${FADE}`);
+  });
+
+  it("gives the strip trailing space as wide as the fade", () => {
+    const body = touchRules.get(".tasks-scope-tabs");
+    expect(body).toBeDefined();
+    const decls = body!
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(";")
+      .map((decl) => decl.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    // Trailing padding extends the scroll range so the last tab can
+    // scroll fully clear of the static fade.
+    expect(decls).toContain("padding-inline-end: 24px");
+    // scroll-padding-right stays out: it has no demonstrable effect
+    // on this strip (focus scrolling never fires for a partly
+    // clipped tab), so only the trailing padding clears the last tab.
+    expect(decls.some((decl) => decl.startsWith("scroll-padding"))).toBe(false);
   });
 
   it("leaves the desktop geometry on the base rules", () => {
