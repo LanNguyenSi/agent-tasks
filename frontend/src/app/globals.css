@@ -3051,6 +3051,50 @@ html:not([data-theme="light"]) .prose-markdown a {
   .tabs-tab { transition: none; }
 }
 
+/* ── Touch targets up to 760px ──────────────────────────────────
+ * Below the 760px breakpoint every interactive control in the tasks
+ * surface and the app header reaches a 40px touch target (WCAG 2.2's
+ * 24px AA floor stays on desktop: these rules live in a media query,
+ * so >760px geometry is untouched). min-height/min-width grow the box
+ * around the existing height/width instead of replacing them, and the
+ * growth comes from the box, not the font.
+ * The scope strip on /tasks is wider than the viewport at these
+ * widths: .tasks-scope-tabs already scrolls within itself (base rule,
+ * never the page); here it also gets a right-edge fade (mask) so the
+ * hidden overflow is visible, and its scroll-padding keeps a tab the
+ * browser scrolls into view (keyboard selection focuses the next tab)
+ * clear of the fade, so the active tab never rests under it. */
+@media (max-width: 760px) {
+  .tabs-tab {
+    min-height: 40px;
+  }
+
+  .filter-chip {
+    min-height: 40px;
+  }
+
+  .tasks-row-actions-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .app-nav-link {
+    min-height: 40px;
+  }
+
+  /* New task button (and the other sm header actions) on /tasks */
+  .page-header-actions .btn--sm {
+    min-height: 40px;
+  }
+
+  .tasks-scope-tabs {
+    overflow-x: auto;
+    scroll-padding-right: 24px;
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+  }
+}
+
 /* ── Tooltip ──────────────────────────────────────────────────── */
 
 .tooltip-wrapper {
