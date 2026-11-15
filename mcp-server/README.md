@@ -28,7 +28,7 @@ Three environment variables:
 | `AGENT_TASKS_BASE_URL`    | no       | `https://agent-tasks.opentriologue.ai`   |
 | `AGENT_TASKS_MCP_LEGACY`  | no       | unset (default tool set only)            |
 
-Obtain a token from the agent-tasks UI under **Settings → API Tokens**.
+Obtain a token from the agent-tasks UI under **Team settings → API Tokens**.
 The token scope determines which tools succeed at runtime; tools that require
 missing scopes return an API error describing the missing scope.
 

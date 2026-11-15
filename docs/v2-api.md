@@ -142,7 +142,7 @@ Available scopes: `tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, 
 
 ## Token issuance
 
-The fast path: open **Settings → API Tokens** and click **Connect an agent**. A modal generates a team-scoped token (90d TTL, minimum viable scopes) and gives a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl. For non-default scopes (ops, read-only monitors, etc.), click **Create custom token** instead.
+The fast path: open **Team settings → API Tokens** and click **Connect an agent**. A modal generates a team-scoped token (90d TTL, minimum viable scopes) and gives a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl. For non-default scopes (ops, read-only monitors, etc.), click **Create custom token** instead.
 
 ## Merge-event paths
 
