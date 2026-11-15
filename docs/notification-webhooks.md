@@ -158,8 +158,10 @@ before JSON parsing (Express `express.raw()`, Hono `c.req.raw.text()`,
 
 ## Delivery semantics
 
-`createSignal` and `maybeDeliverSignalWebhook` live in
-`backend/src/services/signal.ts`, `deliverSignalWebhook` in
+`createSignal`, `createSignals` (one row per recipient of a fan-out
+event, then one delivery for the event) and `maybeDeliverSignalWebhooks`
+(groups signals by project, task and type and sends one POST per group)
+live in `backend/src/services/signal.ts`, `deliverSignalWebhook` in
 `backend/src/services/notification-webhook.ts`, and the signal routes in
 `backend/src/routes/signals.ts`. The sequence below shows that the request
 which creates a signal never waits on push delivery, and where the egress
@@ -168,16 +170,16 @@ check, the timeout, the retry and the audit row come in:
 ```mermaid
 sequenceDiagram
   participant E as Emitting service
-  participant S as createSignal
+  participant S as createSignal / createSignals
   participant P as deliverSignalWebhook
   participant R as Receiver
   participant Q as Signal routes
   participant A as Agent
   E->>S: createSignal(input)
   S->>S: insert Signal row
-  S-)S: maybeDeliverSignalWebhook (not awaited)
+  S-)S: maybeDeliverSignalWebhooks, one call per event (not awaited)
   S-->>E: Signal row
-  Note over S: maybeDeliverSignalWebhook stops here<br/>when the project has no notificationWebhookUrl
+  Note over S: delivery stops here<br/>when the project has no notificationWebhookUrl
   S->>P: deliverSignalWebhook
   loop at most 2 attempts, 2 s apart, stop on 2xx
     P->>P: guardedFetch: check every connect<br/>address (private hosts blocked unless allowlisted)
