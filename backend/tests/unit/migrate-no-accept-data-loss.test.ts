@@ -252,6 +252,8 @@ const MIGRATE_KEYS = new Set([
   "networks",
   "restart",
   "mem_limit",
+  // CPU cap only; it does not change what migrate runs or whether it runs.
+  "cpus",
   "logging",
 ]);
 const DEPENDS_ON_KEYS = new Set(["condition", "required", "restart"]);
