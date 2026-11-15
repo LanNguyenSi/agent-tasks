@@ -51,10 +51,12 @@ Retention: keep a rolling window of daily pairs on the host (delete the
 off-host copy is the one that survives the loss of the host.
 
 One-line check of the newest dump's age, from a shell where `BACKUP_DIR`
-is set; empty output means the newest dump is already more than a day old:
+is set; empty output means there is no non-empty dump from the last day,
+and an error from `find` (for example an unset or wrong `BACKUP_DIR`) means
+the check itself did not run:
 
 ```bash
-find "$BACKUP_DIR" -name 'db-*.sql' -mtime -1 -print
+find "$BACKUP_DIR" -name 'db-*.sql' -size +0 -mtime -1 -print
 ```
 
 ## Backing up
@@ -289,13 +291,16 @@ df -h
 docker system df
 ```
 
-`docker image prune -f` prunes dangling images only, the untagged build
-generations each deploy leaves behind. Do not use `docker image prune
--a`: `-a` also removes every image no container currently uses, and that
-includes the image of the previous release, which is the rollback target
-(see [Applying a destructive schema change](#applying-a-destructive-schema-change)
-for how rollbacks fall back to the previous commit); losing it turns the
-next rollback into a cold full rebuild on this small host. Check disk
+`docker image prune -f` removes dangling images only. The app services in
+`docker-compose.prod.yml` are built, not pulled (`build:` keys, no tagged
+`image:`), so each deploy retags the image name and the previous release's
+image becomes dangling: `-f` removes it too. That is safe, because a
+rollback does not start a kept image, it rebuilds the previous commit (see
+[Applying a destructive schema change](#applying-a-destructive-schema-change))
+and reuses the builder cache. Do not use `docker image prune -a` or a
+`docker system prune -a`: they also remove unused tagged base images and
+build layers that rebuild would reuse, which turns the next rollback into a
+cold full rebuild on this small host. Check disk
 usage after every deploy (`df -h` for the filesystem, `docker system df`
 for what Docker holds) and treat about 80 % full as the act-now watermark,
 before the next deploy rather than after a failed one: first delete

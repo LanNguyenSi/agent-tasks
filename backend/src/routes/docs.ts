@@ -40,7 +40,7 @@ export const openApiSpec = {
         type: "http",
         scheme: "bearer",
         bearerFormat: "API Token",
-        description: "Agent token from Settings > API Tokens, e.g. at_xxx",
+        description: "Agent token from Team settings > API Tokens, e.g. at_xxx",
       },
     },
     schemas: {
