@@ -32,7 +32,7 @@ services:
     # small dataset). Bump if pg_stat_activity ever shows pressure.
     mem_limit: 512m
     # Idle ~0-2.6% of one core (6-core prod host, short quiet sample).
-    # 1.0 is ~10x the observed peak and stops a runaway query plan from
+    # 1.0 is well above the observed idle (0-8.5% of a core) and stops a runaway query plan from
     # taking every core from the other tenants on the shared host. Not
     # lower than 1.0: vacuum and index builds are CPU-bound and throttling
     # them extends lock hold times into pile-up territory. Raise this if
@@ -173,7 +173,7 @@ services:
     # handler from eating the whole host on a memory-leak regression.
     mem_limit: 768m
     # Idle ~0-8.5% of one core (6-core prod host, short quiet sample).
-    # 1.0 is ~10x the observed peak and stops a busy loop in a request
+    # 1.0 is well above the observed idle (0-8.5% of a core) and stops a busy loop in a request
     # handler or the confidence scorer from starving Traefik, db and the
     # other containers on the shared host. Raise this if `docker stats`
     # ever shows backend pinned at the cap under real traffic.
@@ -255,7 +255,7 @@ services:
     # ample room for the build process during deploy on a 7.7G host.
     mem_limit: 1g
     # Idle ~0-2.4% of one core (6-core prod host, short quiet sample).
-    # 1.0 is ~10x the observed peak; a runaway SSR render can no longer
+    # 1.0 is well above the observed idle (0-8.5% of a core); a runaway SSR render can no longer
     # take every core. With the caps above the four services total 3.5
     # of the host's 6 cores. Raise this if `docker stats` ever shows
     # frontend pinned at the cap.
