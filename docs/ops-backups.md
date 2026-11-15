@@ -20,6 +20,45 @@ at both volumes) is the operator's responsibility.
 All commands below run from the deployment directory on the production
 host, where `docker-compose.prod.yml` and its `.env` live.
 
+## Schedule
+
+The repo ships no schedule for those commands either; this section is the
+recommendation, not automation. Run [Backing up](#backing-up) once a day,
+taking both artifacts (database dump and uploads archive) as a pair, and
+additionally before every destructive schema change (that procedure, see
+[Applying a destructive schema change](#applying-a-destructive-schema-change),
+already requires a fresh dump as a prerequisite).
+
+A daily cadence fixes the recovery point objective: a restore returns the
+site to the last dump, so with a daily schedule **up to 24 hours of data
+can be lost** (everything written since the previous dump). If that is too
+much, schedule the pair more often than daily.
+
+No backup script ships in this repo, so the example below calls a wrapper
+the operator writes themselves (explicitly an example, not a repo file):
+its body is just the commands of the three steps under
+[Backing up](#backing-up), run from the deployment directory, with the
+artifacts named `db-$(date +%F).sql` and `uploads-$(date +%F).tgz`. Host
+crontab of root on the deploy host, daily at 03:15:
+
+```cron
+15 3 * * * /usr/local/bin/agent-tasks-backup >> /var/log/agent-tasks-backup.log 2>&1
+```
+
+Retention: keep a rolling window of daily pairs on the host (delete the
+`db-*.sql` and `uploads-*.tgz` files older than that window, for example
+14 days), and keep the off-host copies of step 3 at least as long; the
+off-host copy is the one that survives the loss of the host.
+
+One-line check of the newest dump's age, from a shell where `BACKUP_DIR`
+is set; empty output means there is no non-empty dump from the last day,
+and an error from `find` (for example an unset or wrong `BACKUP_DIR`) means
+the check itself did not run:
+
+```bash
+find "$BACKUP_DIR" -name 'db-*.sql' -size +0 -mtime -1 -print
+```
+
 ## Backing up
 
 ### 0. Choose the backup directory
@@ -233,6 +272,43 @@ until then.
 
 Do not add the flag to `Dockerfile.migrate`, `docker-compose.prod.yml` or
 `.relay.yml`.
+
+## Disk hygiene
+
+A production deploy runs through agent-relay (runbook:
+`docs/okf/deploy.md`), whose pre-update hook is `docker compose -f
+docker-compose.prod.yml build --pull` (`.relay.yml`), so every deploy
+builds new images and the superseded ones stay on disk. `.relay.yml`
+deliberately has no `post_update` hook: a prune wired in there could
+delete the image a rollback still needs while the deploy is not yet known
+good, so pruning stays a manual step, done after a deploy you have
+verified healthy, on a host `.relay.yml` sizes at 7.7 GB shared with ~25
+containers:
+
+```bash
+docker image prune -f
+df -h
+docker system df
+```
+
+`docker image prune -f` removes dangling images only. The app services in
+`docker-compose.prod.yml` are built, not pulled (`build:` keys, no tagged
+`image:`), so each deploy retags the image name and the previous release's
+image becomes dangling: `-f` removes it too. That is safe, because a
+rollback does not start a kept image, it rebuilds the previous commit (see
+[Applying a destructive schema change](#applying-a-destructive-schema-change))
+and reuses the builder cache. Do not use `docker image prune -a` or a
+`docker system prune -a`: they also remove unused tagged base images and
+build layers that rebuild would reuse, which turns the next rollback into a
+cold full rebuild on this small host. Check disk
+usage after every deploy (`df -h` for the filesystem, `docker system df`
+for what Docker holds) and treat about 80 % full as the act-now watermark,
+before the next deploy rather than after a failed one: first delete
+backups in `$BACKUP_DIR` whose off-host copies
+[Copy both off the host](#3-copy-both-off-the-host) has verified, then
+prune again;
+if space is still tight, remove stopped containers and unused volumes you
+have confirmed you do not need.
 
 ## Related
 

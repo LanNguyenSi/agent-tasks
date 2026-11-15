@@ -51,7 +51,7 @@ Or keep two files and symlink whichever is active to `~/.agent-tasks.json`.
 
 ## Token issuance
 
-Tokens are minted in the agent-tasks web UI under Settings, API Tokens. A token belongs to one team: it can reach that team's projects and any project its creator was invited to individually, and its permission scopes (`tasks:read`, `tasks:claim`, `tasks:transition`, and so on) decide which commands succeed. A command whose scope is missing answers 403. See [docs/agent-workflow.md](../../docs/agent-workflow.md#authentication) for the scope list.
+Tokens are minted in the agent-tasks web UI under Team settings → API Tokens. A token belongs to one team: it can reach that team's projects and any project its creator was invited to individually, and its permission scopes (`tasks:read`, `tasks:claim`, `tasks:transition`, and so on) decide which commands succeed. A command whose scope is missing answers 403. See [docs/agent-workflow.md](../../docs/agent-workflow.md#authentication) for the scope list.
 
 ## Verifying configuration
 

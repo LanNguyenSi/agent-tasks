@@ -40,7 +40,7 @@ export const openApiSpec = {
         type: "http",
         scheme: "bearer",
         bearerFormat: "API Token",
-        description: "Agent token from Settings > API Tokens, e.g. at_xxx",
+        description: "Agent token from Team settings > API Tokens, e.g. at_xxx",
       },
     },
     schemas: {
@@ -2181,7 +2181,7 @@ docsRouter.get("/docs", (c) => {
     <div class="intro">
       <h1>agent-tasks API (Agent Guide)</h1>
       <p>
-        Use a Bearer token from <code>Settings → API Tokens</code>. For task automation you typically need
+        Use a Bearer token from <code>Team settings → API Tokens</code>. For task automation you typically need
         <code>projects:read</code>, <code>tasks:read</code>, <code>tasks:create</code>, <code>tasks:claim</code>,
         <code>tasks:transition</code>.
       </p>

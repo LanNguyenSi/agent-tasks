@@ -103,7 +103,8 @@ services:
       # Optional, empty by default (the backend treats empty like unset).
       # SSO_ENCRYPTION_KEY is required before any SSO connection is created;
       # BACKEND_URL is the public backend origin used for SSO callback URLs;
-      # IDEMPOTENCY_TTL_DAYS and REDIS_URL are documented in .env.example.
+      # IDEMPOTENCY_TTL_DAYS, REDIS_URL and REDIS_KEY_PREFIX are documented
+      # in .env.example.
       SSO_ENCRYPTION_KEY: ${SSO_ENCRYPTION_KEY:-}
       BACKEND_URL: ${BACKEND_URL:-}
       IDEMPOTENCY_TTL_DAYS: ${IDEMPOTENCY_TTL_DAYS:-}
