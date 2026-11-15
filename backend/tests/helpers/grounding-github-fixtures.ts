@@ -16,7 +16,7 @@ export async function githubGroupFixture(store: Awaited<ReturnType<typeof comple
     await store.db.project.update({ where: { id: fixture.projectId }, data: { githubRepo: repo } });
     await store.db.task.update({ where: { id: fixture.taskId }, data: { status: "review", prUrl: `https://github.com/${repo}/pull/42` } });
   }
-  const make = (db: PrismaClient = store.db) => new GroundingGithubMergeService({ db, config: { audience: "consumer.test", trust: () => issuer.trust }, now: () => seed.now, headProvider: seed.headProvider, mergeProvider: { merge: seed.merge, read: seed.read }, deliverSignal: seed.deliverSignal, legacyClient: seed.ledger });
+  const make = (db: PrismaClient = store.db) => new GroundingGithubMergeService({ db, config: { audience: "consumer.test", trust: () => issuer.trust }, now: () => seed.now, headProvider: seed.headProvider, mergeProvider: { merge: seed.merge, read: seed.read }, deliverSignals: seed.deliverSignal, legacyClient: seed.ledger });
   const service = make();
   const request: OperationInput = { action: "merge", method: "squash", route: { kind: "github_merge", transport: { endpoint: "github_merge", body: { taskId: seed.taskId, owner: "acme", repo: repo.split("/")[1], prNumber: 42, merge_method: "squash", idempotencyKey: "group" } } } };
   return { seed, peer, repo, issuer, service, make, request,

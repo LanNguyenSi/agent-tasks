@@ -14,13 +14,14 @@ Defines the structure of signals that local Claude/Codex-style agents consume vi
 The "no webhook to agent" constraint above applies to the **agent process** —
 local Claude/Codex runs have no inbound endpoint. The **project** is a
 different story: each project can opt into an outbound delivery webhook
-(`notificationWebhookUrl` on the Project row) that receives every Signal as
-a POST. A small bridge (Triologue gateway, n8n, Slack relay, …) can turn
+(`notificationWebhookUrl` on the Project row) that receives every Signal event
+as a POST (one POST per event, listing all its recipients when the event fans
+out). A small bridge (Triologue gateway, n8n, Slack relay, …) can turn
 that push into something the local agent's environment can react to (SSE,
 chat message, file drop, …) without exposing the agent itself.
 
 The push payload is the same Signal shape described below plus a top-level
-`signalId` so receivers can dedup against the polling channel. Delivery is
+`signalId` so receivers can dedup against the polling channel, plus `recipientCount` and `recipients` for the recipients of the event. Delivery is
 best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md)
 for the full contract, headers, and HMAC verification.
 

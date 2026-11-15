@@ -68,6 +68,22 @@ it("N-01 work finish persists original assignee recipients, review comment/audit
   await expect(f.service.lookupRouteOperation(f.taskId, { type: "human", userId: ids.user }, "work", request.route!.transport)).rejects.toMatchObject({ code: "forbidden" });
 });
 
+it("a fan-out review request writes one signal per reviewer and hands them to delivery as ONE call", async () => {
+  await f.workflow(); await f.evidence();
+  const second = randomUUID();
+  await f.db.user.create({ data: { id: second, login: `second-${second}` } });
+  await f.db.teamMember.create({ data: { teamId: ids.team, userId: second, role: "REVIEWER" } });
+
+  await f.service.complete(f.taskId, actor, "work", input("work_finish", "finish", false, "Finished"));
+
+  const signals = await f.db.signal.findMany({ where: { taskId: f.taskId, type: "review_needed" } });
+  expect(signals.map(s => s.recipientUserId).sort()).toEqual([ids.user, second].sort());
+  // One delivery call for the event, carrying both committed rows (not one call per recipient).
+  expect(f.deliverSignal).toHaveBeenCalledTimes(1);
+  const handed = (f.deliverSignal.mock.calls as unknown as Array<[Array<{ id: string }>]>)[0]![0];
+  expect(handed.map(row => row.id).sort()).toEqual(signals.map(row => row.id).sort());
+});
+
 it.each(["missing", "wrong", "valid"])("N-07 local review route %s receipt guards all durable effects", async evidence => {
   await review(true);
   if (evidence !== "missing") await f.evidence("approve");

@@ -114,7 +114,7 @@ A separate `STALE_WHEN_DONE` constant suppresses two signal types (`review_neede
 | `task_force_transitioned` | Admin used `force=true` on a transition | The claimant + the active reviewer | no | yes |
 | `self_merge_notice` | `AWAITS_CONFIRMATION` self-merge landed on `done` | Every human team member (one signal each) | no | yes |
 
-Every emitted signal is pushed via outbound webhook when the parent project has `notificationWebhookUrl` configured. The push is best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md) for the contract, payload shape, and HMAC verification.
+Every emitted signal event is pushed via outbound webhook when the parent project has `notificationWebhookUrl` configured, as one POST per event: an event that writes one signal per recipient (such as `review_needed`) is still one POST, listing all its recipients. The push is best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md) for the contract, payload shape, and HMAC verification.
 
 `task_pickup` returns a discriminated union:
 

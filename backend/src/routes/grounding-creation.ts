@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zValidate } from "../lib/z-validate.js";
 import { type Signal, type PrismaClient } from "@prisma/client";
 import type { AppVariables } from "../types/hono.js";
-import { maybeDeliverSignalWebhook } from "../services/signal.js";
+import { maybeDeliverSignalWebhooks } from "../services/signal.js";
 import { batchImportSchema, createTaskSchema, importTaskSchema } from "./tasks.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { forbidden } from "../middleware/error.js";
@@ -102,7 +102,7 @@ export function createGroundingCreationRouter(db: PrismaClient, attempts?: Groun
           return { task: await tx.task.findUniqueOrThrow({ where: { id: task.id }, include: groundingRouteTaskInclude }), confidence: directConfidence(task), signals };
           });
           if (!committed) return null;
-          for (const signal of committed.signals) void maybeDeliverSignalWebhook(signal, db).catch(() => {});
+          void maybeDeliverSignalWebhooks(committed.signals, db).catch(() => {});
           return { task: committed.task, confidence: committed.confidence };
         };
         if (!batch) { const created = await create(items[0]!); return created ? c.json(created, 201) : c.json({ error: "conflict", message: "externalRef already exists" }, 409); }

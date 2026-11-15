@@ -6,7 +6,7 @@
  */
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
-import { createSignal, type SignalContext } from "./signal.js";
+import { createSignal, createSignals, type SignalContext } from "./signal.js";
 
 export interface ReviewRecipient {
   type: "agent" | "human";
@@ -104,7 +104,7 @@ async function buildSignalContext(
  * Called when a task transitions to "review".
  *
  * Side effects:
- *   - Creates durable Signal per eligible reviewer
+ *   - Creates durable Signal per eligible reviewer (one webhook delivery for all)
  *   - Adds a [system] timeline comment listing eligible reviewers
  *   - Logs a task.review_needed audit event with recipient list
  */
@@ -122,18 +122,20 @@ export async function emitReviewSignal(
     : "Human";
   const context = await buildSignalContext(taskId, "agent", assigneeName, { assigneeName });
 
-  // Create durable signals for each recipient
+  // Create a durable signal per recipient (pull delivery is per row), but ONE
+  // push webhook delivery for the whole review request: createSignals sends the
+  // notification once with the full recipient list.
   if (context) {
-    for (const r of recipients) {
-      await createSignal({
-        type: "review_needed",
+    await createSignals(
+      recipients.map((r) => ({
+        type: "review_needed" as const,
         taskId,
         projectId,
         recipientAgentId: r.type === "agent" ? r.id : null,
         recipientUserId: r.type === "human" ? r.id : null,
         context,
-      });
-    }
+      })),
+    );
   }
 
   // Timeline comment

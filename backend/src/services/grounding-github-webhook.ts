@@ -15,7 +15,7 @@ import { applyGithubObservedContext, type GithubObservedContextChange } from "./
 import { pickMergeTargetStatus } from "./github-webhook.js";
 import { createInitialStatus } from "./task-status-input.js";
 import { createTaskAvailableSignalsInTx } from "./task-signal.js";
-import { maybeDeliverSignalWebhook } from "./signal.js";
+import { maybeDeliverSignalWebhooks } from "./signal.js";
 
 export class GroundingGithubWebhookError extends Error {
   constructor(readonly code: "grounding_webhook_invalid" | "grounding_webhook_conflict", readonly status: 400 | 409) { super(code); }
@@ -115,7 +115,7 @@ export class GroundingGithubWebhookService {
       await tx.groundingGithubWebhookDelivery.update({ where: { deliveryId: input.deliveryId }, data: { result, completedAt: new Date() } });
       return result;
     });
-    for (const signal of signals) void maybeDeliverSignalWebhook(signal, this.db).catch(() => {});
+    void maybeDeliverSignalWebhooks(signals, this.db).catch(() => {});
     return result;
   }
 

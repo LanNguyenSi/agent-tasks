@@ -167,7 +167,9 @@ describe("notification webhook — e2e against a real HTTP server", () => {
         "projectId",
         "projectSlug",
         "recipientAgentId",
+        "recipientCount",
         "recipientUserId",
+        "recipients",
         "signalId",
         "taskId",
         "type",
@@ -181,6 +183,8 @@ describe("notification webhook — e2e against a real HTTP server", () => {
       projectSlug: "agent-tasks",
       recipientAgentId: "agent-9",
       recipientUserId: null,
+      recipientCount: 1,
+      recipients: [{ signalId, recipientAgentId: "agent-9", recipientUserId: null }],
       context,
     });
     // createdAt is ISO-8601 (round-trips through Date unchanged).

@@ -28,7 +28,7 @@ export async function completionFixture(store: Awaited<ReturnType<typeof complet
   const merge = vi.fn<GroundingMergeProvider["merge"]>(async () => { f.proof = { ...f.proof, merged: true, mergeCommitSha: "b".repeat(40) }; });
   const read = vi.fn<GroundingMergeProvider["read"]>(async () => ({ ...f.proof }));
   const head = vi.fn(async () => f.head);
-  const deps = (client: PrismaClient = db) => ({ db: client, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, deliverSignal, headProvider: head, legacyClient: ledger, mergeProvider: { merge, read } });
+  const deps = (client: PrismaClient = db) => ({ db: client, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, deliverSignals: deliverSignal, headProvider: head, legacyClient: ledger, mergeProvider: { merge, read } });
   const attempts = new GroundingAttemptsService(deps());
   const make = (client = db) => serviceFactory(deps(client));
   if (mode === "EXTERNAL_V1") await attempts.provision({ taskId, projectId, subjectMode: "CODE_HEAD" });

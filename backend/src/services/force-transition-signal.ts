@@ -21,8 +21,13 @@
  * they happen to also be the claimant or reviewer — to avoid self-noise.
  */
 
+import type { Signal } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { createSignal, type SignalContext } from "./signal.js";
+import {
+  insertSignalRow,
+  maybeDeliverSignalWebhooks,
+  type SignalContext,
+} from "./signal.js";
 import { logger } from "../lib/logger.js";
 
 export interface ForceTransitionSignalInput {
@@ -101,18 +106,20 @@ export async function emitForceTransitionedSignal(
       });
     }
 
-    let written = 0;
+    // One row per recipient, written one by one so a failing recipient is
+    // logged and skipped; the rows that were written go out as ONE webhook
+    // delivery for the forced transition.
+    const written: Signal[] = [];
     for (const [key, target] of targets.entries()) {
       try {
-        await createSignal({
+        written.push(await insertSignalRow({
           type: "task_force_transitioned",
           taskId: input.taskId,
           projectId: input.projectId,
           recipientAgentId: target.recipientAgentId ?? null,
           recipientUserId: target.recipientUserId ?? null,
           context,
-        });
-        written++;
+        }));
       } catch (err) {
         logger.error(
           {
@@ -126,7 +133,8 @@ export async function emitForceTransitionedSignal(
       }
     }
 
-    return written;
+    void maybeDeliverSignalWebhooks(written);
+    return written.length;
   } catch (err) {
     // Signal emission is supplementary. A failure must not prevent the
     // transition from landing — match the audit-log error posture.

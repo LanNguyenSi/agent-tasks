@@ -508,7 +508,7 @@ it("ST1-M1 grouped mounted default head accepts canonical GitHub casing without 
   const before = await store.db.groundingAttempt.findUniqueOrThrow({ where: { id: challenge.attemptId } });
   expect(JSON.parse(before.contextBytes.toString()).deliverable.repo).toBe(storedRepo);
   f.proof.repo = storedRepo;
-  const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
+  const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignals: f.deliverSignal });
   const result = await createApp("", attempts, { db: store.db, service, scope: defaultScope(), remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope: defaultScope() }) }).fetch(request(mergeBody())); expect(result.status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
   expect((await store.db.groundingAttempt.findUniqueOrThrow({ where: { id: challenge.attemptId } })).contextBytes).toEqual(before.contextBytes); expect(fetcher).toHaveBeenCalled();
 });
