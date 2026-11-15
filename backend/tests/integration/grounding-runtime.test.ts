@@ -5,6 +5,8 @@ const harness = vi.hoisted(() => ({ db: null as PrismaClient | null }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
 vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: vi.fn(), recordTerminalSnapshot: vi.fn(), recordClarification: vi.fn(), recordAbandonDisposition: vi.fn(), clearDisposition: vi.fn() }));
+const webhookSender = vi.hoisted(() => ({ deliver: vi.fn(async (_input: unknown) => {}) }));
+vi.mock("../../src/services/notification-webhook.js", () => ({ deliverSignalWebhook: webhookSender.deliver }));
 import { createApp } from "../../src/app.js";
 import { composeGroundingRuntime } from "../../src/services/grounding-runtime.js";
 import { completionStore } from "../helpers/grounding-completion-fixtures.js";
@@ -287,6 +289,30 @@ it("real composed CODE_HEAD creation and grouped GitHub merge retain one databas
   expect(await store.db.groundingGithubMergeGroup.findFirstOrThrow({ where: { seedTaskId: task.id } })).toMatchObject({ state: "COMPLETED" });
   expect(await store.db.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "done", autoMergeSha: "b".repeat(40) });
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
+});
+
+it("selected creation with several claim-eligible agents writes one task_available signal each and ONE webhook delivery", async () => {
+  const second = randomUUID();
+  await store.db.agentToken.create({ data: { id: second, teamId: ids.team, createdById: ids.user, name: "Second", tokenHash: `second-${second}`, scopes: ["tasks:claim"] } });
+  try {
+    await store.db.project.update({ where: { id: projectId }, data: { notificationWebhookUrl: "https://hooks.example/inbox" } });
+    webhookSender.deliver.mockClear();
+    const target = await app();
+    const created = await target.request(request(`/projects/${projectId}/tasks`, { title: "Fan-out", status: "open" }, human));
+    expect(created.status).toBe(201);
+    const signals = await store.db.signal.findMany({ where: { projectId, type: "task_available" } });
+    expect(signals.map(row => row.recipientAgentId).sort()).toEqual([ids.agent, second].sort());
+    await vi.waitFor(() => expect(webhookSender.deliver).toHaveBeenCalled());
+    // Let any further (wrong) per-recipient delivery land before counting.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(webhookSender.deliver).toHaveBeenCalledTimes(1);
+    const delivered = webhookSender.deliver.mock.calls[0]![0] as { signalType: string; recipients: { signalId: string }[] };
+    expect(delivered.signalType).toBe("task_available");
+    expect(delivered.recipients.map(row => row.signalId).sort()).toEqual(signals.map(row => row.id).sort());
+  } finally {
+    await store.db.signal.deleteMany({ where: { recipientAgentId: second } });
+    await store.db.agentToken.delete({ where: { id: second } });
+  }
 });
 
 it("signed issue creation enrolls selected projects and preserves unselected behavior and exact dedup", async () => {

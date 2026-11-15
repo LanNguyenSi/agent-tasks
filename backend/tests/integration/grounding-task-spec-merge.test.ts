@@ -129,7 +129,7 @@ it("TASK_SPEC merge is refused when the stored signed context no longer matches 
 });
 
 it("TASK_SPEC merge through the base finalization service reserves the observed head and merges with it", async () => {
-  const baseService = new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: vi.fn(async () => {}) });
+  const baseService = new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignals: vi.fn(async () => {}) });
   await toReview();
   const request = { action: "merge" as const, method: "squash" as const, route: { kind: "task_merge" as const, transport: { endpoint: "merge" as const, body: { mergeMethod: "squash" } } } };
   await baseService.reserveMerge(f.taskId, actor, "base-merge", request);
@@ -140,7 +140,7 @@ it("TASK_SPEC merge through the base finalization service reserves the observed 
 });
 
 it("TASK_SPEC base finalization service refuses the merge when the head moves after reservation", async () => {
-  const baseService = new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: vi.fn(async () => {}) });
+  const baseService = new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignals: vi.fn(async () => {}) });
   await toReview();
   await baseService.reserveMerge(f.taskId, actor, "base-merge", { action: "merge", method: "squash", route: { kind: "task_merge", transport: { endpoint: "merge", body: { mergeMethod: "squash" } } } });
   f.head = "c".repeat(40); f.proof = { ...f.proof, headSha: f.head };
@@ -214,7 +214,7 @@ async function requireCi() {
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
 }
-const baseService = () => new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: vi.fn(async () => {}) });
+const baseService = () => new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignals: vi.fn(async () => {}) });
 
 it("TASK_SPEC merge passes the required-CI gate with the lowercased PR URL of a mixed-case project repository", async () => {
   let fetcher: Awaited<ReturnType<typeof requireCi>> | undefined;

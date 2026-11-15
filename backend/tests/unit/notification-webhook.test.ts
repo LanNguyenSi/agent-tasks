@@ -223,6 +223,8 @@ describe("deliverSignalWebhook: happy path (real guardedFetch path)", () => {
       recipientUserId: null,
       context: expect.objectContaining({ taskTitle: "Fix bug" }),
       createdAt: "2026-05-27T12:00:00.000Z",
+      recipientCount: 1,
+      recipients: [{ signalId: "sig-abc", recipientAgentId: "agent-1", recipientUserId: null }],
     });
 
     expect(audited("signal.webhook_delivered")).toEqual([
@@ -246,6 +248,81 @@ describe("deliverSignalWebhook: happy path (real guardedFetch path)", () => {
     expect(hit.headers["x-agenttasks-signature"]).toBe(
       `sha256=${createHmac("sha256", "topsecret").update(hit.body).digest("hex")}`,
     );
+  });
+});
+
+describe("deliverSignalWebhook: fanned-out event (several recipients)", () => {
+  const recipients = [
+    { signalId: "sig-abc", recipientAgentId: "agent-1", recipientUserId: null },
+    { signalId: "sig-def", recipientAgentId: "agent-2", recipientUserId: null },
+    { signalId: "sig-ghi", recipientAgentId: null, recipientUserId: "user-1" },
+  ];
+
+  beforeEach(() => {
+    process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS = "127.0.0.1";
+  });
+
+  it("sends ONE request listing every recipient; the top-level fields stay the first recipient", async () => {
+    await deliverSignalWebhook(buildInput({ recipients }));
+
+    expect(hits).toHaveLength(1);
+    const hit = hits[0]!;
+    // The dedup header and the top-level signalId name the primary (first) Signal.
+    expect(hit.headers["x-agenttasks-signal-id"]).toBe("sig-abc");
+    const body = JSON.parse(hit.body);
+    expect(body).toMatchObject({
+      signalId: "sig-abc",
+      recipientAgentId: "agent-1",
+      recipientUserId: null,
+      recipientCount: 3,
+      recipients,
+    });
+    expect(audited("signal.webhook_delivered")).toEqual([
+      expect.objectContaining({ signalId: "sig-abc", recipientCount: 3, attempts: 1 }),
+    ]);
+  });
+
+  it("signs the body that carries the recipient list", async () => {
+    await deliverSignalWebhook(buildInput({ recipients, webhookSecret: "topsecret" }));
+
+    const hit = hits[0]!;
+    expect(hit.headers["x-agenttasks-signature"]).toBe(signWebhookBody(hit.body, "topsecret"));
+    expect(JSON.parse(hit.body).recipientCount).toBe(3);
+  });
+
+  it("without a recipient list the payload names the one recipient of the input", async () => {
+    await deliverSignalWebhook(buildInput({ recipientAgentId: null, recipientUserId: "user-7" }));
+
+    const body = JSON.parse(hits[0]!.body);
+    expect(body.recipientCount).toBe(1);
+    expect(body.recipients).toEqual([
+      { signalId: "sig-abc", recipientAgentId: null, recipientUserId: "user-7" },
+    ]);
+  });
+
+  describe("when the receiver keeps failing", () => {
+    beforeEach(() => {
+      useFakedTimeoutTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("audits webhook_failed ONCE for the event (one retry, two requests), not once per recipient", async () => {
+      handler = (_req, res) => {
+        res.writeHead(503);
+        res.end("busy");
+      };
+
+      await deliver(buildInput({ recipients }));
+
+      expect(hits).toHaveLength(2);
+      expect(audited("signal.webhook_failed")).toEqual([
+        expect.objectContaining({ signalId: "sig-abc", recipientCount: 3, statusCode: 503, attempts: 2 }),
+      ]);
+      expect(audited("signal.webhook_delivered")).toEqual([]);
+    });
   });
 });
 

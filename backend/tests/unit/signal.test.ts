@@ -109,7 +109,7 @@ describe("createSignal", () => {
 });
 
 describe("createSignals (batch)", () => {
-  it("creates one signal per recipient via createSignal (so webhook delivery fires per row)", async () => {
+  it("creates one signal row per recipient and delivers the webhook once for the batch", async () => {
     await createSignals([
       { type: "review_needed", taskId: "t1", projectId: "p1", recipientAgentId: "a1", context: baseContext },
       { type: "review_needed", taskId: "t1", projectId: "p1", recipientAgentId: "a2", context: baseContext },

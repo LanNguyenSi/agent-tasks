@@ -5,7 +5,7 @@
  */
 import type { Prisma, Signal } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { createSignal, type SignalContext } from "./signal.js";
+import { createSignals, type SignalContext } from "./signal.js";
 import { logAuditEvent } from "./audit.js";
 
 /**
@@ -125,15 +125,16 @@ export async function emitTaskAvailableSignal(
     actor: { type: actorType, name: actorName },
   };
 
-  for (const agent of agents) {
-    await createSignal({
-      type: "task_available",
+  // One signal row per agent, one webhook delivery for the event.
+  await createSignals(
+    agents.map((agent) => ({
+      type: "task_available" as const,
       taskId,
       projectId,
       recipientAgentId: agent.id,
       context,
-    });
-  }
+    })),
+  );
 
   void logAuditEvent({
     action: "task.created",

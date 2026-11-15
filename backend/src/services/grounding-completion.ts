@@ -22,7 +22,7 @@ import { githubPrUrlMatches } from "./grounding-github-fence.js";
 import { logGroundingDecision } from "./audit.js";
 import { checkReviewApprovalGate, checkSelfMergeGate } from "./review-gate.js";
 import { buildGroundingRoutePlan, applyGroundingRoutePlan, type GroundingRoutePlan } from "./grounding-route-effects.js";
-import { maybeDeliverSignalWebhook } from "./signal.js";
+import { maybeDeliverSignalWebhooks } from "./signal.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
 import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
@@ -34,7 +34,8 @@ export interface GroundingCompletionDependencies {
   db: PrismaClient; config: GroundingAttemptsConfig; now?: () => number;
   headProvider?: GroundingHeadProvider; authority?: GroundingAuthority;
   legacyClient?: Pick<GroundingClient, "getLedgerSummary">;
-  deliverSignal?: (signal: Signal) => Promise<void>;
+  /** Webhook delivery for the signals one commit wrote; called once per commit, with all of them (the default groups them per event). */
+  deliverSignals?: (signals: Signal[]) => Promise<void>;
 }
 export interface GroundingDecision {
   routePlan?: GroundingRoutePlan;
@@ -244,10 +245,11 @@ export class GroundingCompletionService {
 
   /** Delivery belongs to this committing invocation, never a historical response. */
   protected async committed<T extends { result: unknown; signals: Signal[]; fresh: boolean }>(commit: T, afterCommit?: GroundingAfterCommit): Promise<T["result"]> {
-    for (const signal of commit.signals) {
-      const deliver = this.deps.deliverSignal ?? ((row: Signal) => maybeDeliverSignalWebhook(row, this.deps.db));
-      // Delivery is best effort and cannot undo the durable transaction.
-      void Promise.resolve().then(() => deliver(signal)).catch(() => {});
+    if (commit.signals.length > 0) {
+      const deliver = this.deps.deliverSignals ?? ((rows: Signal[]) => maybeDeliverSignalWebhooks(rows, this.deps.db));
+      // Delivery is best effort and cannot undo the durable transaction. One call for the
+      // whole commit: a fan-out event (every eligible reviewer, ...) is one delivery, not one per recipient.
+      void Promise.resolve().then(() => deliver(commit.signals)).catch(() => {});
     }
     if (commit.fresh && afterCommit) {
       try { await afterCommit(commit.result); }

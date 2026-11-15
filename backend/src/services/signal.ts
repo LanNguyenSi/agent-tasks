@@ -5,12 +5,14 @@
  * Signals are token-scoped, typed, and include inline context
  * per docs/signal-payload-design.md.
  *
- * When the parent project has `notificationWebhookUrl` configured, every
- * successful create also fires an outbound POST via the
- * notification-webhook service (best-effort, void). See
- * docs/notification-webhooks.md.
+ * When the parent project has `notificationWebhookUrl` configured, a
+ * successful create also fires an outbound POST via the notification-webhook
+ * service (best-effort, void). One event that fans out to several recipients
+ * (every eligible reviewer, every claim-eligible agent, ...) writes one Signal
+ * row per recipient but sends exactly ONE webhook delivery, carrying the whole
+ * recipient list. See docs/notification-webhooks.md.
  */
-import type { Prisma } from "@prisma/client";
+import type { Prisma, Signal } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { deliverSignalWebhook } from "./notification-webhook.js";
 
@@ -57,9 +59,15 @@ export interface CreateSignalInput {
   context: SignalContext;
 }
 
-/** Create a signal for a specific recipient */
-export async function createSignal(input: CreateSignalInput) {
-  const signal = await prisma.signal.create({
+/**
+ * Insert one Signal row without any push delivery. The building block of
+ * `createSignal` and of the fan-out writers: a writer that creates one row per
+ * recipient of a single event inserts them with this and then hands the whole
+ * set to `maybeDeliverSignalWebhooks`, so the receiver gets one delivery for the
+ * event instead of one per recipient.
+ */
+export async function insertSignalRow(input: CreateSignalInput): Promise<Signal> {
+  return prisma.signal.create({
     data: {
       type: input.type,
       taskId: input.taskId,
@@ -69,6 +77,11 @@ export async function createSignal(input: CreateSignalInput) {
       context: input.context as object,
     },
   });
+}
+
+/** Create a signal for a specific recipient (one event, one recipient, one delivery) */
+export async function createSignal(input: CreateSignalInput) {
+  const signal = await insertSignalRow(input);
   // Best-effort push delivery. Fires only when the project has a
   // notification webhook configured. Never throws, never blocks: a network
   // hiccup or a 5xx receiver must not corrupt the originating request.
@@ -77,28 +90,30 @@ export async function createSignal(input: CreateSignalInput) {
 }
 
 /**
- * Create signals for multiple recipients.
+ * Create the signals of ONE event for multiple recipients.
  *
- * Loops createSignal per recipient (instead of a single createMany) so
- * webhook delivery fires per row. Real callers (review-signal,
- * task-signal, force-transition-signal, self-merge-notice) already loop
- * createSignal themselves; this verb is kept as a convenience for
- * callers that prefer a single batch entry point.
+ * Inserts one row per recipient (instead of a single createMany, which cannot
+ * return the generated ids the webhook needs) and then fires a single webhook
+ * delivery for the whole set once every row exists. The inputs must describe one
+ * event (same type and task); `maybeDeliverSignalWebhooks` sends one delivery
+ * per (project, task, type) group, so a mixed list still never repeats a group.
+ * If a row insert throws, the rows already written are still delivered (as one
+ * delivery) before the error propagates, because they exist and are pollable.
  */
 export async function createSignals(inputs: CreateSignalInput[]) {
-  const created = [];
-  for (const input of inputs) {
-    created.push(await createSignal(input));
+  const created: Signal[] = [];
+  try {
+    for (const input of inputs) {
+      created.push(await insertSignalRow(input));
+    }
+  } finally {
+    void maybeDeliverSignalWebhooks(created);
   }
   return created;
 }
 
-/**
- * Look up the parent project's webhook config and dispatch the outbound
- * POST if configured. Swallows any unexpected error so the originating
- * `createSignal` call cannot fail.
- */
-export async function maybeDeliverSignalWebhook(signal: {
+/** The Signal columns the webhook delivery reads. */
+type DeliverableSignal = {
   id: string;
   type: string;
   taskId: string;
@@ -107,10 +122,53 @@ export async function maybeDeliverSignalWebhook(signal: {
   recipientUserId: string | null;
   context: unknown;
   createdAt: Date;
-}, db: Pick<Prisma.TransactionClient, "project"> = prisma): Promise<void> {
+};
+
+/**
+ * Deliver the webhook for a single freshly created signal. Equivalent to
+ * `maybeDeliverSignalWebhooks([signal], db)`.
+ */
+export async function maybeDeliverSignalWebhook(
+  signal: DeliverableSignal,
+  db: Pick<Prisma.TransactionClient, "project"> = prisma,
+): Promise<void> {
+  await maybeDeliverSignalWebhooks([signal], db);
+}
+
+/**
+ * Look up the parent project's webhook config and dispatch the outbound
+ * POST if configured, ONE delivery per event. Signals are grouped by
+ * (project, task, type): every group is one event that fanned out to its
+ * recipients, so the group gets a single delivery whose payload carries all of
+ * its recipients. The first signal of a group is the primary one: its id,
+ * recipient fields and createdAt stay the top-level payload fields, so a
+ * receiver that only knows the single-recipient shape keeps working.
+ *
+ * Swallows any unexpected error so the originating write cannot fail.
+ */
+export async function maybeDeliverSignalWebhooks(
+  signals: DeliverableSignal[],
+  db: Pick<Prisma.TransactionClient, "project"> = prisma,
+): Promise<void> {
+  const groups = new Map<string, DeliverableSignal[]>();
+  for (const signal of signals) {
+    const key = `${signal.projectId}\u0000${signal.taskId}\u0000${signal.type}`;
+    const group = groups.get(key);
+    if (group) group.push(signal);
+    else groups.set(key, [signal]);
+  }
+  await Promise.all([...groups.values()].map((group) => deliverSignalGroup(group, db)));
+}
+
+async function deliverSignalGroup(
+  group: DeliverableSignal[],
+  db: Pick<Prisma.TransactionClient, "project">,
+): Promise<void> {
+  const primary = group[0];
+  if (!primary) return;
   try {
     const project = await db.project.findUnique({
-      where: { id: signal.projectId },
+      where: { id: primary.projectId },
       select: {
         slug: true,
         notificationWebhookUrl: true,
@@ -119,21 +177,26 @@ export async function maybeDeliverSignalWebhook(signal: {
     });
     if (!project?.notificationWebhookUrl) return;
     await deliverSignalWebhook({
-      signalId: signal.id,
-      signalType: signal.type as SignalType,
-      taskId: signal.taskId,
-      projectId: signal.projectId,
+      signalId: primary.id,
+      signalType: primary.type as SignalType,
+      taskId: primary.taskId,
+      projectId: primary.projectId,
       projectSlug: project.slug,
-      recipientAgentId: signal.recipientAgentId,
-      recipientUserId: signal.recipientUserId,
-      context: signal.context as SignalContext,
-      createdAt: signal.createdAt,
+      recipientAgentId: primary.recipientAgentId,
+      recipientUserId: primary.recipientUserId,
+      recipients: group.map((s) => ({
+        signalId: s.id,
+        recipientAgentId: s.recipientAgentId,
+        recipientUserId: s.recipientUserId,
+      })),
+      context: primary.context as SignalContext,
+      createdAt: primary.createdAt,
       webhookUrl: project.notificationWebhookUrl,
       webhookSecret: project.notificationWebhookSecret,
     });
   } catch {
     // deliverSignalWebhook never throws; the only path here is the project
-    // lookup. Swallow so createSignal stays infallible from the caller's
+    // lookup. Swallow so the signal writers stay infallible from the caller's
     // perspective.
   }
 }

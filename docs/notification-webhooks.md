@@ -1,9 +1,9 @@
 # Notification webhooks
 
 Push-delivery for the Signal layer. When a project sets
-`notificationWebhookUrl`, every successful Signal create also POSTs the
-payload to that URL — in addition to (not instead of) the existing
-`task_pickup` polling channel.
+`notificationWebhookUrl`, every Signal event also POSTs the payload to that
+URL, in addition to (not instead of) the existing `task_pickup` polling
+channel. One event is one POST, however many recipients it notifies.
 
 The intended consumer is a small bridge that turns the POST into something
 the agent's environment can react to (Triologue room post, Slack message,
@@ -12,9 +12,18 @@ receive and what guarantees you get.
 
 ## When it fires
 
-Every successful `createSignal` triggers a delivery attempt. That covers
-all seven Signal types — see [events.md](events.md) and
+Every Signal event triggers one delivery. That covers all seven Signal
+types; see [events.md](events.md) and
 [signal-payload-design.md](signal-payload-design.md) for the catalog.
+
+An event that notifies several recipients (a task entering review notifies
+every eligible reviewer, a new claimable task every claim-eligible agent,
+a self-merge every human on the team, a forced transition its claimants)
+writes one durable Signal row per recipient, because the polling channel
+(`task_pickup`, `signals_poll`) is per recipient, but sends **one** webhook
+POST for the whole event. The POST carries the full recipient list in
+`recipients` (see [Body](#body)). Before this change the receiver got one POST
+per recipient, identical apart from the recipient fields.
 
 ## Configuration
 
@@ -54,7 +63,7 @@ without us round-tripping the value. To rotate, PATCH a new value.
 Content-Type: application/json
 User-Agent: agent-tasks-webhook/1
 X-AgentTasks-Event: signal.<type>          // e.g. signal.review_needed
-X-AgentTasks-Signal-Id: <signalId>          // for dedup
+X-AgentTasks-Signal-Id: <signalId>          // for dedup; the primary Signal's id
 X-AgentTasks-Signature: sha256=<hex>        // iff secret is configured
 ```
 
@@ -62,13 +71,19 @@ X-AgentTasks-Signature: sha256=<hex>        // iff secret is configured
 
 ```jsonc
 {
-  "signalId": "uuid",          // unique per Signal — use this to dedup
+  "signalId": "uuid",          // the primary Signal (the first recipient's), use this to dedup
   "type": "review_needed",     // see signal-payload-design.md for the union
   "taskId": "uuid",
   "projectId": "uuid",
   "projectSlug": "agent-tasks",
-  "recipientAgentId": "uuid|null",
-  "recipientUserId": "uuid|null",
+  "recipientAgentId": "uuid|null",   // the primary (first) recipient
+  "recipientUserId": "uuid|null",    // the primary (first) recipient
+  "recipientCount": 3,               // always present; equals recipients.length
+  "recipients": [                    // always present, primary recipient first
+    { "signalId": "uuid", "recipientAgentId": "uuid", "recipientUserId": null },
+    { "signalId": "uuid", "recipientAgentId": "uuid", "recipientUserId": null },
+    { "signalId": "uuid", "recipientAgentId": null, "recipientUserId": "uuid" }
+  ],
   "context": {
     "taskTitle": "Fix bug",
     "taskStatus": "review",
@@ -88,6 +103,31 @@ X-AgentTasks-Signature: sha256=<hex>        // iff secret is configured
 The `context` object follows the same `SignalContext` shape that the
 polling channel returns — see [signal-payload-design.md](signal-payload-design.md)
 for type-specific fields.
+
+### Fan-out events and payload versions
+
+`recipientCount` and `recipients` were added when delivery moved from one POST
+per recipient to one POST per event. Every field that existed before keeps its
+meaning: `signalId`, `recipientAgentId`, `recipientUserId` and `createdAt`
+describe the **primary** Signal, which is the first recipient's (a single-
+recipient event has exactly one recipient, so there nothing changed except the
+two new fields). The `User-Agent` stays `agent-tasks-webhook/1`: the change is
+additive, so a receiver written against the old body keeps working, and it
+now sees one message per event instead of one per recipient.
+
+What a receiver can do with the new fields:
+
+- Show the recipient list or a count (`recipientCount`) instead of one name.
+  `recipients[i].signalId` is the id of that recipient's own Signal row, which
+  is what the polling channel returns and acknowledges.
+- Tell versions apart: the new body always has `recipients` (even for one
+  recipient, as a one-entry list). A body without it comes from a server
+  before this change and describes exactly one recipient.
+- A receiver that dedups on `signalId` keeps doing so; the id is the primary
+  Signal's and is stable for the event.
+- A receiver that posts one message per POST (such as a chat bridge that
+  renders the task, the actor and the link, and ignores the recipient fields)
+  needs no change and now posts once per event.
 
 ## Signature verification
 
@@ -151,7 +191,7 @@ sequenceDiagram
   A->>Q: POST /api/agent/signals/:id/ack
 ```
 
-- **At most once per Signal in the happy path.** Failure → one retry
+- **At most once per event in the happy path.** Failure → one retry
   after 2 seconds → give up. There is no DLQ in v1; if the retry also
   fails, the delivery is dropped (audited, never replayed).
 - **Per-attempt timeout: 5 seconds.** Connect + receive must complete
@@ -242,7 +282,9 @@ but a `failed`-row count spike is the metric to alert on.
 ## Out of scope (v1)
 
 - Per-recipient subscription / multiple URLs per project — set a fanout
-  proxy as the URL if you need this.
+  proxy as the URL if you need this. (A fan-out event is already one POST
+  listing all its recipients; the receiver splits it if it wants per-recipient
+  messages.)
 - Per-event-type opt-in — all seven types are delivered. Filter on
   `X-AgentTasks-Event` at the receiver.
 - Persistent DLQ / multi-attempt backoff — single retry only.

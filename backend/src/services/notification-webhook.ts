@@ -2,8 +2,9 @@
  * Outbound Signal Webhook Delivery
  *
  * Push-delivery sidecar for the Signal layer. When a project has
- * `notificationWebhookUrl` configured, every successful Signal create
- * (see services/signal.ts) fires `deliverSignalWebhook` asynchronously.
+ * `notificationWebhookUrl` configured, every successful Signal event
+ * (see services/signal.ts) fires `deliverSignalWebhook` asynchronously: one
+ * delivery per event, however many recipients (Signal rows) it fanned out to.
  *
  * Semantics:
  *   - Best-effort. Never throws, never blocks the originating request.
@@ -39,7 +40,17 @@ const USER_AGENT = "agent-tasks-webhook/1";
 // docs/notification-webhooks.md.
 const RESPONSE_MAX_BYTES = 64 * 1024;
 
+/** One recipient of a (possibly fanned-out) event: its own Signal row and who it targets. */
+export interface WebhookSignalRecipient {
+  signalId: string;
+  recipientAgentId: string | null;
+  recipientUserId: string | null;
+}
+
 export interface WebhookSignalPayload {
+  // For a fanned-out event the top-level signalId / recipientAgentId /
+  // recipientUserId / createdAt describe the FIRST recipient's Signal (the
+  // primary one); `recipients` lists all of them.
   signalId: string;
   type: SignalType;
   taskId: string;
@@ -49,6 +60,8 @@ export interface WebhookSignalPayload {
   recipientUserId: string | null;
   context: SignalContext;
   createdAt: string; // ISO-8601
+  recipientCount: number;
+  recipients: WebhookSignalRecipient[];
 }
 
 export interface DeliverSignalWebhookInput {
@@ -59,6 +72,11 @@ export interface DeliverSignalWebhookInput {
   projectSlug: string;
   recipientAgentId: string | null;
   recipientUserId: string | null;
+  /**
+   * Every recipient of the event, primary first. Omitted for a single-recipient
+   * signal: the payload then lists the one recipient given by the fields above.
+   */
+  recipients?: WebhookSignalRecipient[];
   context: SignalContext;
   createdAt: Date;
   webhookUrl: string;
@@ -211,7 +229,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Deliver a single Signal payload to the project's notification webhook.
+ * Deliver one Signal event (all its recipients) to the project's notification
+ * webhook.
  *
  * Fire-and-forget by convention: the caller voids the returned promise.
  * The function never throws — internal failures (including synchronous
@@ -220,6 +239,13 @@ function sleep(ms: number): Promise<void> {
  */
 export async function deliverSignalWebhook(input: DeliverSignalWebhookInput): Promise<void> {
   try {
+    const recipients: WebhookSignalRecipient[] = input.recipients ?? [
+      {
+        signalId: input.signalId,
+        recipientAgentId: input.recipientAgentId,
+        recipientUserId: input.recipientUserId,
+      },
+    ];
     const payload: WebhookSignalPayload = {
       signalId: input.signalId,
       type: input.signalType,
@@ -230,6 +256,8 @@ export async function deliverSignalWebhook(input: DeliverSignalWebhookInput): Pr
       recipientUserId: input.recipientUserId,
       context: input.context,
       createdAt: input.createdAt.toISOString(),
+      recipientCount: recipients.length,
+      recipients,
     };
     const body = JSON.stringify(payload);
 
@@ -265,6 +293,7 @@ export async function deliverSignalWebhook(input: DeliverSignalWebhookInput): Pr
         payload: {
           signalId: input.signalId,
           signalType: input.signalType,
+          recipientCount: recipients.length,
           url: input.webhookUrl,
           statusCode: last.statusCode,
           attempts,
@@ -294,6 +323,7 @@ export async function deliverSignalWebhook(input: DeliverSignalWebhookInput): Pr
       payload: {
         signalId: input.signalId,
         signalType: input.signalType,
+        recipientCount: recipients.length,
         url: input.webhookUrl,
         statusCode: last.statusCode,
         // `errMessage` matches the house style used by services/audit.ts

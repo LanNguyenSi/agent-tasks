@@ -21,7 +21,7 @@
  */
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
-import { createSignal, type SignalContext } from "./signal.js";
+import { createSignals, type SignalContext } from "./signal.js";
 import type { Actor } from "../types/auth.js";
 import { logger } from "../lib/logger.js";
 import {
@@ -130,15 +130,16 @@ async function emitSelfMergeNoticeInner(
     actor: { type: input.actor.type, name: actorName },
   };
 
-  for (const h of humans) {
-    await createSignal({
-      type: "self_merge_notice",
+  // One signal row per human, one webhook delivery for the event.
+  await createSignals(
+    humans.map((h) => ({
+      type: "self_merge_notice" as const,
       taskId: input.taskId,
       projectId: input.projectId,
       recipientUserId: h.userId,
       context,
-    });
-  }
+    })),
+  );
 
   void logAuditEvent({
     action: "task.self_merge_notice_emitted",

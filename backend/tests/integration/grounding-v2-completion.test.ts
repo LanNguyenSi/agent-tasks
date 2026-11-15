@@ -718,7 +718,7 @@ it("R1-H1 actual route default head and CI readers use merge-only delegation con
   vi.stubGlobal("fetch", fetcher);
   const deps = { db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now };
   const attempts = new GroundingAttemptsService(deps);
-  const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
+  const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignals: f.deliverSignal });
   const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
   const a = createApp("", attempts, { db: store.db, service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }); await routeEvidence(a);
   expect((await a.fetch(request({}, "merge"))).status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();

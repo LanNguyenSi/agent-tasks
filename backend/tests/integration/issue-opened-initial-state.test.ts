@@ -31,10 +31,10 @@ vi.mock("../../src/lib/prisma.js", () => ({
 // The real delivery runs (a project without a notification webhook sends nothing); the spy records the calls.
 vi.mock("../../src/services/signal.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../src/services/signal.js")>();
-  return { ...original, maybeDeliverSignalWebhook: vi.fn(original.maybeDeliverSignalWebhook) };
+  return { ...original, maybeDeliverSignalWebhooks: vi.fn(original.maybeDeliverSignalWebhooks) };
 });
 
-import { maybeDeliverSignalWebhook } from "../../src/services/signal.js";
+import { maybeDeliverSignalWebhooks } from "../../src/services/signal.js";
 import { handleIssuesEvent } from "../../src/services/github-webhook.js";
 import { GroundingGithubWebhookService } from "../../src/services/grounding-github-webhook.js";
 
@@ -119,7 +119,7 @@ afterAll(async () => {
   if (store) await store.close();
 });
 beforeEach(async () => {
-  vi.mocked(maybeDeliverSignalWebhook).mockClear();
+  vi.mocked(maybeDeliverSignalWebhooks).mockClear();
   userId = randomUUID();
   await db.user.create({ data: { id: userId, login: `u-${userId}` } });
   teamId = randomUUID();
@@ -246,7 +246,7 @@ describe("issues.opened through the grounding webhook handler: replay", () => {
     expect(await signalsOf(projectId)).toHaveLength(1);
   });
 
-  it("hands each signal to the outbound notification webhook once, after the commit, and not again on a replay", async () => {
+  it("hands the signals of one event to the outbound notification webhook once, after the commit, and not again on a replay", async () => {
     const projectId = await seedProject(queuedDefinition);
     await seedAgent();
     await seedAgent();
@@ -260,12 +260,14 @@ describe("issues.opened through the grounding webhook handler: replay", () => {
     await service.handle(input);
     const stored = await signalsOf(projectId);
     expect(stored).toHaveLength(2);
-    // Every delivered signal is a committed row: the spy gets the rows the transaction wrote.
-    expect(vi.mocked(maybeDeliverSignalWebhook).mock.calls.map(([signal]) => signal.id).sort()).toEqual(stored.map((s) => s.id).sort());
+    // One handoff for the event, carrying every committed row the transaction wrote.
+    expect(vi.mocked(maybeDeliverSignalWebhooks)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(maybeDeliverSignalWebhooks).mock.calls[0]![0].map((signal) => signal.id).sort()).toEqual(stored.map((s) => s.id).sort());
 
-    vi.mocked(maybeDeliverSignalWebhook).mockClear();
+    vi.mocked(maybeDeliverSignalWebhooks).mockClear();
     await service.handle(input);
-    expect(vi.mocked(maybeDeliverSignalWebhook)).not.toHaveBeenCalled();
+    // A replay hands over no signal (an empty hand-off delivers nothing).
+    expect(vi.mocked(maybeDeliverSignalWebhooks).mock.calls.flatMap(([signals]) => signals)).toEqual([]);
   });
 
   it("after a serialization failure retries the transaction, delivers only the signals the committed attempt wrote", async () => {
@@ -297,6 +299,6 @@ describe("issues.opened through the grounding webhook handler: replay", () => {
     const stored = await signalsOf(projectId);
     expect(stored).toHaveLength(1);
     // The rolled-back attempt's rows are never handed to the notification webhook.
-    expect(vi.mocked(maybeDeliverSignalWebhook).mock.calls.map(([signal]) => signal.id)).toEqual(stored.map((s) => s.id));
+    expect(vi.mocked(maybeDeliverSignalWebhooks).mock.calls.flatMap(([signals]) => signals.map((signal) => signal.id))).toEqual(stored.map((s) => s.id));
   });
 });
