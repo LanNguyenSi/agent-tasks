@@ -3051,6 +3051,60 @@ html:not([data-theme="light"]) .prose-markdown a {
   .tabs-tab { transition: none; }
 }
 
+/* ── Touch targets up to 760px ──────────────────────────────────
+ * Below the 760px breakpoint every interactive control in the tasks
+ * surface and the app header reaches a 40px touch target (WCAG 2.2's
+ * 24px AA floor stays on desktop: these rules live in a media query,
+ * so >760px geometry is untouched). min-height/min-width grow the box
+ * around the existing height/width instead of replacing them, and the
+ * growth comes from the box, not the font.
+ * The scope strip on /tasks is wider than the viewport at these
+ * widths: .tasks-scope-tabs already scrolls within itself (base rule,
+ * never the page); here it also gets a right-edge fade (mask) so the
+ * hidden overflow is visible, and 24px of trailing padding (as wide
+ * as the fade) so the last tab can scroll fully clear of that fade
+ * instead of resting under it. */
+@media (max-width: 760px) {
+  .tabs-tab {
+    min-height: 40px;
+  }
+
+  .filter-chip {
+    min-height: 40px;
+  }
+
+  .tasks-row-actions-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .app-nav-link {
+    min-height: 40px;
+  }
+
+  /* New task button (and the other sm header actions) on /tasks */
+  .page-header-actions .btn--sm {
+    min-height: 40px;
+  }
+
+  .tasks-scope-tabs {
+    overflow-x: auto;
+    /* The fade is static: it always covers the strip's inner right
+       24px. This trailing padding (as wide as the fade) extends the
+       scroll range so the last tab can scroll fully clear of it:
+       measured at 390px (clientWidth 364, scrollWidth 423), scrolled
+       to its end (scrollLeft 59 of 59) "Recently Done" ends at
+       x=353, at the fade start 354; without the padding the strip
+       maxes at scrollLeft 35 and the tab ends at x=377, 23px inside
+       the fade. At 600px the strip (423px) does not overflow, so the
+       fade falls on this padding (last tab ends at x=412, fade start
+       413), never on a tab. */
+    padding-inline-end: 24px;
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+  }
+}
+
 /* ── Tooltip ──────────────────────────────────────────────────── */
 
 .tooltip-wrapper {
