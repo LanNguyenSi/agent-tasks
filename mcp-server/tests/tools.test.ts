@@ -875,6 +875,36 @@ describe("buildTools", () => {
     expect(parsed.error.allowedNext).toEqual(["pull_requests_create"]);
   });
 
+  it("pull_requests_comment maps 400 cross_repo_pr_rejected to its OWN recipe (wrap threads the tool name)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "cross_repo_pr_rejected",
+          message: "PR points at other/repo, expected acme/agent-tasks.",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    let captured = "";
+    try {
+      await tool("pull_requests_comment").handler({
+        taskId: "55555555-5555-5555-5555-555555555555",
+        owner: "other",
+        repo: "repo",
+        prNumber: 7,
+        body: "hello",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("cross_repo_pr_rejected");
+    expect(parsed.error.recipe).toContain("effective repo");
+    expect(parsed.error.recipe).not.toContain("task_submit_pr");
+    expect(parsed.error.allowedNext).toEqual(["task_note"]);
+  });
+
   // The Grounding write verbs thread their own name into wrap(), so a bare 403
   // from the backend gets THAT verb's precondition list rather than another verb's.
   const BARE_403_ARGS: Array<[string, Record<string, unknown>, string]> = [

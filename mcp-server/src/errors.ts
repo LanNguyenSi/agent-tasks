@@ -34,7 +34,8 @@
 // task_finish and deprecated v1 routes with different correct retry
 // targets), `cross_repo_pr_rejected` (pull_requests_create's emit site sends
 // owner/repo rather than a prUrl, so the default task_submit_pr recipe would
-// misdirect it), `github_error` (pull_requests_create only) and the grounding
+// misdirect it, and pull_requests_comment has its own branch),
+// `github_error` (pull_requests_create only) and the grounding
 // forbidden table (one precondition list per verb, see 7e). Every other
 // catalog entry is verb-independent by construction.
 //
@@ -704,6 +705,19 @@ function crossRepoRejectedError(message: string, verbContext: string | undefined
       message,
       recipe: "call pull_requests_create again with owner/repo matching this project's own repo",
       allowedNext: ["pull_requests_create"],
+    });
+  }
+  if (verbContext === "pull_requests_comment") {
+    // The comment's owner/repo must be the task's effective deliverable repo
+    // (deliverableRepo when set, else the project's own repo). The verb is
+    // legacy-gated and sends no prUrl, so neither the task_submit_pr recipe
+    // nor a retry of the verb itself is an immediately callable fix.
+    return buildTeachingError({
+      code: "cross_repo_pr_rejected",
+      message,
+      recipe:
+        "the comment targets a PR outside the task's effective repo (its deliverableRepo when set, otherwise the project's own repo); comment on a PR in that repo instead, or leave the note on the task with task_note",
+      allowedNext: ["task_note"],
     });
   }
   return buildTeachingError({
