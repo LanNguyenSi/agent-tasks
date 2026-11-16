@@ -1230,7 +1230,7 @@ export function buildTools(
         idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
       handler: async (input) =>
-        wrap(() => client.commentOnPullRequest(input)),
+        wrap(() => client.commentOnPullRequest(input), "pull_requests_comment"),
     }),
   ];
 

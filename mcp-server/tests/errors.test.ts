@@ -555,6 +555,35 @@ describe("mapBackendError catalog", () => {
     assertAllowedNextRegistered(err, registered);
   });
 
+  it("cross_repo_pr_rejected: verbContext 'pull_requests_comment' gets its own recipe and allowedNext, not task_submit_pr's or pull_requests_create's", () => {
+    const err = mapBackendError(
+      400,
+      {
+        error: "cross_repo_pr_rejected",
+        message: "PR points at other/repo, expected acme/agent-tasks.",
+      },
+      "pull_requests_comment",
+    );
+    expect(err.error.code).toBe("cross_repo_pr_rejected");
+    expect(err.error.message).toBe("PR points at other/repo, expected acme/agent-tasks.");
+    expect(err.error.recipe).toContain("effective repo");
+    expect(err.error.recipe).toContain("task_note");
+    expect(err.error.recipe).not.toContain("task_submit_pr");
+    expect(err.error.recipe).not.toContain("pull_requests_create");
+    expect(err.error.allowedNext).toEqual(["task_note"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("cross_repo_pr_rejected: an unknown verbContext keeps the default task_submit_pr recipe", () => {
+    const err = mapBackendError(
+      400,
+      { error: "cross_repo_pr_rejected", message: "PR points at other/repo." },
+      "some_other_tool",
+    );
+    expect(err.error.recipe).toContain("task_submit_pr");
+    expect(err.error.allowedNext).toEqual(["task_submit_pr"]);
+  });
+
   // ── 5. pr_author_mismatch ───────────────────────────────────────────────
   it("pr_author_mismatch: the 403 maps to a task_submit_pr recipe", () => {
     const err = mapBackendError(403, {
