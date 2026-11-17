@@ -315,6 +315,78 @@ describe("assertPublicUrl", () => {
   });
 });
 
+// ── publicMessages (generic text per refusal class) ───────────────────────────
+
+describe("publicMessages", () => {
+  const MAP: EgressPolicy = {
+    label: "webhook",
+    schemes: ["https:"],
+    publicMessages: {
+      invalid_url: "m-invalid",
+      scheme: "m-scheme",
+      private_address: "m-private",
+      unresolved: "m-unresolved",
+    },
+  };
+  const refusal = (url: string, policy: EgressPolicy): Promise<EgressBlockedError> =>
+    assertPublicUrl(url, policy).then(
+      () => {
+        throw new Error("expected a refusal");
+      },
+      (e: unknown) => e as EgressBlockedError,
+    );
+
+  it("maps each refusal class to its text and keeps the class and detail on the error", async () => {
+    const invalid = await refusal("not a url", MAP);
+    expect([invalid.message, invalid.reason]).toEqual(["m-invalid", "invalid_url"]);
+
+    const scheme = await refusal("ftp://x.example/", MAP);
+    expect([scheme.message, scheme.reason]).toEqual(["m-scheme", "scheme"]);
+
+    const literal = await refusal("https://10.1.1.1/", MAP);
+    expect([literal.message, literal.reason]).toEqual(["m-private", "private_address"]);
+    expect(literal.detail).toMatch(/10\.1\.1\.1/);
+
+    dnsLookupMock.mockResolvedValueOnce([{ address: "10.2.2.2", family: 4 }]);
+    const resolved = await refusal("https://a.evil/", MAP);
+    expect([resolved.message, resolved.reason]).toEqual(["m-private", "private_address"]);
+    expect(resolved.detail).toMatch(/a\.evil -> 10\.2\.2\.2/);
+
+    dnsLookupMock.mockResolvedValueOnce([]);
+    const none = await refusal("https://b.evil/", MAP);
+    expect([none.message, none.reason]).toEqual(["m-unresolved", "unresolved"]);
+  });
+
+  it("a class missing from the map falls back to the detail", async () => {
+    const policy: EgressPolicy = { ...MAP, publicMessages: { scheme: "m-scheme" } };
+    const err = await refusal("https://10.1.1.1/", policy);
+    expect(err.message).toBe(err.detail);
+  });
+
+  it("publicMessage wins over publicMessages when both are set", async () => {
+    const err = await refusal("https://10.1.1.1/", { ...MAP, publicMessage: "single" });
+    expect(err.message).toBe("single");
+  });
+
+  it("the connect-time lookup uses the per-class text too", async () => {
+    dnsLookupMock.mockResolvedValue([{ address: "10.3.3.3", family: 4 }]);
+    const err: unknown = await guardedFetch("https://c.evil/", {}, MAP).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EgressBlockedError);
+    if (!(err instanceof EgressBlockedError)) return;
+    expect([err.message, err.reason]).toEqual(["m-private", "private_address"]);
+    expect(err.detail).toMatch(/c\.evil -> 10\.3\.3\.3/);
+  });
+
+  it("the connect-time lookup maps an empty answer to the unresolved text", async () => {
+    dnsLookupMock.mockResolvedValue([]);
+    const err: unknown = await guardedFetch("https://d.evil/", {}, MAP).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EgressBlockedError);
+    if (!(err instanceof EgressBlockedError)) return;
+    expect([err.message, err.reason]).toEqual(["m-unresolved", "unresolved"]);
+    expect(err.detail).toMatch(/did not resolve: d\.evil/);
+  });
+});
+
 // ── guardedFetch against a local server ──────────────────────────────────────
 
 describe("guardedFetch", () => {

@@ -255,8 +255,14 @@ Every attempt outcome is audit-logged:
   the reason it never succeeded, a private address, "did not resolve", a refused
   redirect, a timeout, an oversized response; any other transport error is
   reduced to its error code, so a connection or TLS error never quotes an
-  address or port; a private-address refusal still names the host and the
-  private address it resolved to).
+  address or port). A refused target is audited with a fixed text per reason
+  class (`webhook host is a private address`, `webhook host did not resolve`,
+  `webhook scheme not allowed`, `webhook URL is not a valid URL`) and never
+  names the address a host resolved to, so the audit cannot be used to map
+  internal host names to addresses (a name that fails DNS outright is audited
+  with the resolver error, which carries only the typed host, for example
+  `getaddrinfo ENOTFOUND <host>`); the host and resolved address are written
+  to the server log only.
 
 Both rows carry `signalId` so you can correlate against the originating
 Signal. Read them from `GET /api/projects/:id/audit?actionPrefix=signal.webhook_`

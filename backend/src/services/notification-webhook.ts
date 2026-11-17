@@ -22,6 +22,7 @@ import {
   EgressRequestError,
   guardedFetch,
   isPrivateAddress,
+  type EgressBlockReason,
   type EgressPolicy,
 } from "../lib/egress-guard.js";
 import { logger } from "../lib/logger.js";
@@ -121,7 +122,8 @@ export function signWebhookBody(body: string, secret: string): string {
 // address, did not resolve, redirect, timeout, too large) names itself in the
 // audit errorMessage; any other transport error is reduced to its error code, so
 // a connection or TLS error never quotes an address or port. A private-address
-// refusal still names the host and the private address it resolved to.
+// refusal names only its class (the host and resolved address go to the server
+// log, not the audit).
 //
 // The address classification and the shared target checks live in
 // lib/egress-guard.ts (shared with the OIDC client); this module keeps the
@@ -149,11 +151,38 @@ export async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
     .split(",")
     .map((h) => h.trim().toLowerCase())
     .filter(Boolean);
-  await assertPublicUrl(rawUrl, {
+  await assertPublicUrl(rawUrl, webhookPolicy(allowedPrivateHosts));
+}
+
+// The project admin chooses the webhook URL and reads `errMessage` back from the
+// audit, so a refusal must not let them map internal names to addresses: the
+// audit text names the refusal class only, the host and resolved address go to
+// the server log.
+const WEBHOOK_PUBLIC_MESSAGES = {
+  invalid_url: "webhook URL is not a valid URL",
+  scheme: "webhook scheme not allowed",
+  private_address: "webhook host is a private address",
+  unresolved: "webhook host did not resolve",
+} as const satisfies Partial<Record<EgressBlockReason, string>>;
+
+function webhookPolicy(allowedPrivateHosts: readonly string[]): EgressPolicy {
+  return {
     label: "webhook",
     schemes: ["http:", "https:"],
     allowedPrivateHosts,
-  });
+    publicMessages: WEBHOOK_PUBLIC_MESSAGES,
+  };
+}
+
+function logRefusedTarget(err: EgressBlockedError): void {
+  try {
+    logger.warn(
+      { component: "notification-webhook", reason: err.reason, detail: err.detail },
+      "webhook target refused",
+    );
+  } catch {
+    // ignore: a broken logger must not change the delivery outcome
+  }
 }
 
 async function attemptDelivery(
@@ -167,11 +196,7 @@ async function attemptDelivery(
     .split(",")
     .map((h) => h.trim().toLowerCase())
     .filter(Boolean);
-  const policy: EgressPolicy = {
-    label: "webhook",
-    schemes: ["http:", "https:"],
-    allowedPrivateHosts,
-  };
+  const policy = webhookPolicy(allowedPrivateHosts);
 
   // Fail fast on the resolve-then-check path so an obviously-internal or bad-
   // scheme target is refused before we open a socket, with the same message text
@@ -181,6 +206,10 @@ async function attemptDelivery(
     await assertPublicWebhookUrl(url);
   } catch (err) {
     // SSRF egress guard rejected the target — never send.
+    if (err instanceof EgressBlockedError) {
+      logRefusedTarget(err);
+      return { ok: false, errorMessage: err.message };
+    }
     return { ok: false, errorMessage: (err as Error).message };
   }
 
@@ -207,13 +236,18 @@ async function attemptDelivery(
     }
     return { ok: false, statusCode: res.status };
   } catch (err) {
-    // EgressBlockedError (refused address) and EgressRequestError (redirect /
-    // timeout / too large) carry messages authored in lib/egress-guard.ts, so
-    // they name the reason and are safe to audit verbatim. Any other error is a
+    // EgressBlockedError (refused address) carries the generic per-class text of
+    // the webhook policy (its detail goes to the log only); EgressRequestError
+    // (redirect / timeout / too large) carries a message authored in
+    // lib/egress-guard.ts. Both are safe to audit verbatim. Any other error is a
     // raw transport failure (ECONNREFUSED, ETIMEDOUT, a TLS error), whose message
     // quotes the resolved address, port and certificate names; reduce it to a
     // fixed text plus the error code only, the way the OIDC client does.
-    if (err instanceof EgressBlockedError || err instanceof EgressRequestError) {
+    if (err instanceof EgressBlockedError) {
+      logRefusedTarget(err);
+      return { ok: false, errorMessage: err.message };
+    }
+    if (err instanceof EgressRequestError) {
       return { ok: false, errorMessage: err.message };
     }
     const code = (err as NodeJS.ErrnoException).code;

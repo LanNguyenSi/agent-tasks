@@ -22,10 +22,19 @@ import {
 import type { AddressInfo } from "node:net";
 import { createHmac } from "node:crypto";
 
-const { mockLogAuditEvent, dnsLookupMock } = vi.hoisted(() => ({
+const { mockLogAuditEvent, dnsLookupMock, guardedFetchSpy } = vi.hoisted(() => ({
   mockLogAuditEvent: vi.fn().mockResolvedValue(undefined),
   dnsLookupMock: vi.fn(),
+  // Wraps the real guardedFetch so a case can make one call throw a transport
+  // error the real socket layer never produces without an errno code.
+  guardedFetchSpy: vi.fn(),
 }));
+
+vi.mock("../../src/lib/egress-guard.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/lib/egress-guard.js")>();
+  guardedFetchSpy.mockImplementation(actual.guardedFetch);
+  return { ...actual, guardedFetch: guardedFetchSpy };
+});
 
 vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: mockLogAuditEvent,
@@ -43,6 +52,7 @@ vi.mock("../../src/lib/logger.js", () => ({
 // resolve-then-check both go through node:dns/promises.lookup.
 vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
 
+import { logger } from "../../src/lib/logger.js";
 import {
   deliverSignalWebhook,
   signWebhookBody,
@@ -431,6 +441,19 @@ describe("deliverSignalWebhook — retry behavior", () => {
     expect(errMessage).not.toMatch(/:\d+/);
   });
 
+  it("reduces a transport error without an errno code to a fixed text, no code suffix", async () => {
+    // A plain Error (no `code`) whose message quotes an address and a port must
+    // not reach the audit; the text is fixed and carries no "(CODE)" suffix.
+    guardedFetchSpy
+      .mockRejectedValueOnce(new Error("boom 10.1.2.3:5432 refused"))
+      .mockRejectedValueOnce(new Error("boom 10.1.2.3:5432 refused"));
+    await deliver(buildInput());
+
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed).toMatchObject({ attempts: 2 });
+    expect(failed?.errMessage).toBe("webhook request failed");
+  });
+
   it("treats a 4xx answer as a failed attempt, retried once", async () => {
     handler = (_req, res) => {
       res.writeHead(422);
@@ -604,8 +627,88 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
     expect(hits).toHaveLength(0);
     const [failed] = audited("signal.webhook_failed");
     expect(failed).toMatchObject({ attempts: 2 });
-    expect(failed?.errMessage).toMatch(/resolves to a private address: rebind\.evil -> 10\.0\.0\.7/);
+    expect(failed?.errMessage).toBe("webhook host is a private address");
+    expect(String(failed?.errMessage)).not.toMatch(/10\.0\.0\.7|rebind\.evil/);
+    // The connect-time refusal logs the detail server-side as well.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "private_address",
+        detail: "webhook host resolves to a private address: rebind.evil -> 10.0.0.7",
+      }),
+      "webhook target refused",
+    );
     expect(audited("signal.webhook_delivered")).toHaveLength(0);
+  });
+
+  it("audits a refused internal name without its address and logs the detail server-side", async () => {
+    // A project admin typed an internal name and reads errMessage back from the
+    // audit: it must name the class only, never the address the name resolved to.
+    dnsLookupMock.mockResolvedValue([{ address: "172.18.0.5", family: 4 }]);
+    await deliver(buildInput({ webhookUrl: "http://postgres.internal/inbox" }));
+
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed?.errMessage).toBe("webhook host is a private address");
+    expect(JSON.stringify(failed)).not.toMatch(/172\.18\.0\.5/);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: "notification-webhook",
+        reason: "private_address",
+        detail: "webhook host resolves to a private address: postgres.internal -> 172.18.0.5",
+      }),
+      "webhook target refused",
+    );
+    // The delivery-failed log line carries the generic audit text only.
+    const failedLog = vi
+      .mocked(logger.warn)
+      .mock.calls.find((c) => c[1] === "signal webhook delivery failed after retry");
+    expect(JSON.stringify(failedLog)).not.toMatch(/172\.18\.0\.5/);
+  });
+
+  it("names the refusal class for a name that does not resolve", async () => {
+    dnsLookupMock.mockResolvedValue([]);
+    await deliver(buildInput({ webhookUrl: "http://void.internal/inbox" }));
+
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed?.errMessage).toBe("webhook host did not resolve");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "unresolved",
+        detail: "webhook host did not resolve: void.internal",
+      }),
+      "webhook target refused",
+    );
+  });
+
+  it("names the refusal class for a bad scheme and an invalid URL", async () => {
+    await deliver(buildInput({ webhookUrl: "ftp://hooks.example/inbox" }));
+    expect(audited("signal.webhook_failed").at(-1)?.errMessage).toBe("webhook scheme not allowed");
+
+    await deliver(buildInput({ webhookUrl: "not a url" }));
+    expect(audited("signal.webhook_failed").at(-1)?.errMessage).toBe(
+      "webhook URL is not a valid URL",
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "scheme" }),
+      "webhook target refused",
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "invalid_url" }),
+      "webhook target refused",
+    );
+  });
+
+  it("a logger that throws does not change the audited refusal", async () => {
+    vi.mocked(logger.warn).mockImplementation(() => {
+      throw new Error("log sink down");
+    });
+    try {
+      await deliver(buildInput());
+      expect(audited("signal.webhook_failed")).toEqual([
+        expect.objectContaining({ errMessage: "webhook host is a private address" }),
+      ]);
+    } finally {
+      vi.mocked(logger.warn).mockReset();
+    }
   });
 });
 
@@ -677,14 +780,16 @@ describe("assertPublicWebhookUrl (SSRF egress guard, M8)", () => {
   });
 
   it("rejects a non-http(s) scheme", async () => {
-    await expect(assertPublicWebhookUrl("ftp://example.com/x")).rejects.toThrow(/scheme not allowed/);
+    await expect(assertPublicWebhookUrl("ftp://example.com/x")).rejects.toThrow(
+      "webhook scheme not allowed",
+    );
   });
 
   it("rejects a hostname that resolves to a private address (DNS rebinding)", async () => {
     dnsLookupMock.mockResolvedValueOnce([{ address: "10.0.0.7", family: 4 }]);
-    await expect(assertPublicWebhookUrl("https://rebind.evil/x")).rejects.toThrow(
-      /resolves to a private address/,
-    );
+    const err = await assertPublicWebhookUrl("https://rebind.evil/x").catch((e: unknown) => e);
+    expect((err as Error).message).toBe("webhook host is a private address");
+    expect((err as { detail: string }).detail).toMatch(/rebind\.evil -> 10\.0\.0\.7/);
   });
 
   it("allows a hostname that resolves to a public address", async () => {
