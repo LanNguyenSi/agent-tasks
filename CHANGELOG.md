@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-17
+
 ### Security
 
 - **The webhook pre-check no longer audits a raw resolver error.** A name that failed DNS outright (NXDOMAIN, a temporary failure) was audited with the resolver message (`getaddrinfo ENOTFOUND <host>`), the one webhook refusal that skipped the fixed per-class text. The `attemptDelivery` pre-check now audits `webhook host did not resolve`, with the error code appended when it is on a fixed allowlist (for example `webhook host did not resolve (ENOTFOUND)`), and audits any other unexpected error as `webhook target check failed`; the raw message goes to the server log only. Tests: `backend/tests/unit/notification-webhook.test.ts`.
