@@ -174,6 +174,41 @@ function webhookPolicy(allowedPrivateHosts: readonly string[]): EgressPolicy {
   };
 }
 
+// Resolver error codes the pre-check may append to the "did not resolve" text.
+// Only a code from this fixed list is audited; the raw resolver message (which
+// carries the typed host) never is.
+const DNS_ERROR_CODES: ReadonlySet<string> = new Set([
+  "ENOTFOUND",
+  "ENODATA",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EAI_NODATA",
+  "EAI_NONAME",
+  "ESERVFAIL",
+  "ETIMEOUT",
+]);
+const WEBHOOK_CHECK_FAILED_MESSAGE = "webhook target check failed";
+
+// Audit text for an error the pre-check threw that is not an EgressBlockedError:
+// a resolver failure (dns.lookup rejecting) gets the "did not resolve" class
+// text, plus the error code when it is on the allowlist; anything else (a bug)
+// gets a fixed generic text. The raw message goes to the server log only.
+function precheckErrorMessage(err: unknown): string {
+  try {
+    logger.warn(
+      { component: "notification-webhook", err: err instanceof Error ? err.message : String(err) },
+      "webhook target check failed",
+    );
+  } catch {
+    // ignore: a broken logger must not change the delivery outcome
+  }
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  if (typeof code === "string" && DNS_ERROR_CODES.has(code)) {
+    return `${WEBHOOK_PUBLIC_MESSAGES.unresolved} (${code})`;
+  }
+  return WEBHOOK_CHECK_FAILED_MESSAGE;
+}
+
 function logRefusedTarget(err: EgressBlockedError): void {
   try {
     logger.warn(
@@ -210,7 +245,7 @@ async function attemptDelivery(
       logRefusedTarget(err);
       return { ok: false, errorMessage: err.message };
     }
-    return { ok: false, errorMessage: (err as Error).message };
+    return { ok: false, errorMessage: precheckErrorMessage(err) };
   }
 
   try {

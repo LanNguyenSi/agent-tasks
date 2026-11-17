@@ -679,6 +679,42 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
     );
   });
 
+  it.each(["ENOTFOUND", "EAI_AGAIN"])(
+    "audits a resolver rejection (%s) with the class text and logs the raw message",
+    async (code) => {
+      dnsLookupMock.mockRejectedValue(
+        Object.assign(new Error(`getaddrinfo ${code} secret-name.internal`), { code }),
+      );
+      await deliver(buildInput({ webhookUrl: "http://secret-name.internal/inbox" }));
+
+      const [failed] = audited("signal.webhook_failed");
+      expect(failed?.errMessage).toBe(`webhook host did not resolve (${code})`);
+      expect(failed?.errMessage).not.toMatch(/secret-name/);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: `getaddrinfo ${code} secret-name.internal` }),
+        "webhook target check failed",
+      );
+    },
+  );
+
+  it("audits a resolver rejection with an unlisted code as a generic check failure", async () => {
+    dnsLookupMock.mockRejectedValue(Object.assign(new Error("boom 10.1.2.3"), { code: "EWEIRD" }));
+    await deliver(buildInput({ webhookUrl: "http://x.internal/inbox" }));
+    expect(audited("signal.webhook_failed")[0]?.errMessage).toBe("webhook target check failed");
+  });
+
+  it("audits a non-DNS error in the pre-check with a fixed text, never its message", async () => {
+    dnsLookupMock.mockRejectedValue(new TypeError("cannot read property of 10.9.9.9"));
+    await deliver(buildInput({ webhookUrl: "http://x.internal/inbox" }));
+    const [failed] = audited("signal.webhook_failed");
+    expect(failed?.errMessage).toBe("webhook target check failed");
+    expect(failed?.errMessage).not.toMatch(/10\.9\.9\.9/);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: "cannot read property of 10.9.9.9" }),
+      "webhook target check failed",
+    );
+  });
+
   it("names the refusal class for a bad scheme and an invalid URL", async () => {
     await deliver(buildInput({ webhookUrl: "ftp://hooks.example/inbox" }));
     expect(audited("signal.webhook_failed").at(-1)?.errMessage).toBe("webhook scheme not allowed");
