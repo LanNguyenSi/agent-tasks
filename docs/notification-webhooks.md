@@ -259,7 +259,9 @@ Every attempt outcome is audit-logged:
   class (`webhook host is a private address`, `webhook host did not resolve`,
   `webhook scheme not allowed`, `webhook URL is not a valid URL`) and never
   names the address a host resolved to, so the audit cannot be used to map
-  internal host names to addresses; the host and resolved address are written
+  internal host names to addresses (a name that fails DNS outright is audited
+  with the resolver error, which carries only the typed host, for example
+  `getaddrinfo ENOTFOUND <host>`); the host and resolved address are written
   to the server log only.
 
 Both rows carry `signalId` so you can correlate against the originating
