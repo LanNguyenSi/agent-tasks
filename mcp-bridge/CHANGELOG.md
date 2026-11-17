@@ -4,6 +4,10 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
 ## Unreleased
 
+## 0.12.0
+
+- Depends on `@agent-tasks/mcp-server` 0.19.0 (new v2 tool `task_advance`, workflow state names as bounded strings, new teaching errors; see that package's changelog).
+
 ## 0.11.0
 
 - Depends on `@agent-tasks/mcp-server` 0.18.0 (zod 4, closing GHSA-mrhx-c7xc-m3w5 for bridge installs; see that package's changelog).
