@@ -15,8 +15,9 @@
  *     refused (a public URL must not bounce the request into an internal host).
  *
  * A refused target throws `EgressBlockedError`: `message` is what a caller may
- * show to a user (generic when the policy sets `publicMessage`), `detail` is
- * the internal reason (host and resolved address) for logs only.
+ * show to a user (generic when the policy sets `publicMessage`, or generic per
+ * refusal class when it sets `publicMessages`), `reason` is the class, `detail`
+ * is the internal reason (host and resolved address) for logs only.
  */
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
@@ -24,12 +25,17 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 
+/** Why a target was refused. Names a class of refusal, never a host or address. */
+export type EgressBlockReason = "invalid_url" | "scheme" | "private_address" | "unresolved";
+
 export class EgressBlockedError extends Error {
   readonly detail: string;
-  constructor(message: string, detail: string) {
+  readonly reason: EgressBlockReason;
+  constructor(message: string, detail: string, reason: EgressBlockReason) {
     super(message);
     this.name = "EgressBlockedError";
     this.detail = detail;
+    this.reason = reason;
   }
 }
 
@@ -67,6 +73,12 @@ export interface EgressPolicy {
    * message equals the internal detail.
    */
   publicMessage?: string;
+  /**
+   * Generic text per refusal class, for a caller that wants the class visible
+   * but never the host or resolved address. Used when `publicMessage` is absent;
+   * a class missing from the map falls back to the internal detail.
+   */
+  publicMessages?: Readonly<Partial<Record<EgressBlockReason, string>>>;
 }
 
 // ── Address classification ───────────────────────────────────────────────────
@@ -189,8 +201,13 @@ export function isBlockedHostname(host: string): boolean {
 
 // ── Target checks ────────────────────────────────────────────────────────────
 
-function blocked(policy: EgressPolicy, detail: string): EgressBlockedError {
-  return new EgressBlockedError(policy.publicMessage ?? detail, detail);
+function blocked(
+  policy: EgressPolicy,
+  reason: EgressBlockReason,
+  detail: string,
+): EgressBlockedError {
+  const message = policy.publicMessage ?? policy.publicMessages?.[reason] ?? detail;
+  return new EgressBlockedError(message, detail, reason);
 }
 
 function isAllowlisted(host: string, policy: EgressPolicy): boolean {
@@ -210,10 +227,10 @@ function checkTarget(
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw blocked(policy, `${policy.label} URL is not a valid URL`);
+    throw blocked(policy, "invalid_url", `${policy.label} URL is not a valid URL`);
   }
   if (!policy.schemes.includes(parsed.protocol)) {
-    throw blocked(policy, `${policy.label} scheme not allowed: ${parsed.protocol}`);
+    throw blocked(policy, "scheme", `${policy.label} scheme not allowed: ${parsed.protocol}`);
   }
   const host = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
   if (isAllowlisted(host, policy)) {
@@ -221,10 +238,10 @@ function checkTarget(
   }
   if (isIP(host)) {
     if (isPrivateAddress(host)) {
-      throw blocked(policy, `${policy.label} host is a private address: ${host}`);
+      throw blocked(policy, "private_address", `${policy.label} host is a private address: ${host}`);
     }
   } else if (isBlockedHostname(host)) {
-    throw blocked(policy, `${policy.label} host is a private address: ${host}`);
+    throw blocked(policy, "private_address", `${policy.label} host is a private address: ${host}`);
   }
   return { parsed, host, allowlisted: false };
 }
@@ -241,12 +258,13 @@ export async function assertPublicUrl(rawUrl: string, policy: EgressPolicy): Pro
   }
   const records = await dnsLookup(host, { all: true });
   if (records.length === 0) {
-    throw blocked(policy, `${policy.label} host did not resolve: ${host}`);
+    throw blocked(policy, "unresolved", `${policy.label} host did not resolve: ${host}`);
   }
   for (const { address } of records) {
     if (isPrivateAddress(address)) {
       throw blocked(
         policy,
+        "private_address",
         `${policy.label} host resolves to a private address: ${host} -> ${address}`,
       );
     }
@@ -285,7 +303,7 @@ function checkingLookup(policy: EgressPolicy): LookupFunction {
     dnsLookup(hostname, { all: true, family: options.family, hints: options.hints }).then(
       (records: LookupAddress[]) => {
         if (records.length === 0) {
-          callback(blocked(policy, `${policy.label} host did not resolve: ${hostname}`), "", 4);
+          callback(blocked(policy, "unresolved", `${policy.label} host did not resolve: ${hostname}`), "", 4);
           return;
         }
         for (const { address } of records) {
@@ -293,6 +311,7 @@ function checkingLookup(policy: EgressPolicy): LookupFunction {
             callback(
               blocked(
                 policy,
+                "private_address",
                 `${policy.label} host resolves to a private address: ${hostname} -> ${address}`,
               ),
               "",
