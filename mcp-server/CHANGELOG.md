@@ -4,6 +4,10 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+## 0.19.0
+
+- The `forbidden` teaching error for the Grounding write verbs (`pull_requests_create`, `pull_requests_merge`, `task_merge`, `task_finish`, `task_abandon`, `task_grounding_attempt_create`) now follows a backend that names the failed precondition in the 403 `message`: a message naming a missing `github:*` scope (`Token missing scope: ...`) gets the admin re-mint text with an empty `allowedNext`, since an existing token never gains a scope, and a 403 with no message (an older backend, or a deliberately bare no-access answer) gets that verb's own list of possible preconditions as the recipe. A non-empty backend message is otherwise passed through unchanged, and a verb outside the six makes no causal claim.
+- Dependencies: `@modelcontextprotocol/sdk` `^1.29.0` -> `^1.32.2`, plus the dev dependencies (`@types/node` `^22.20.5`, `tsx` `^4.23.15`, `typescript` `^5.9.3`, `vitest` `^4.1.12`). No behavior change.
 - `pull_requests_comment` now passes its tool name into error mapping, and a `400 cross_repo_pr_rejected` from it gets its own teaching error (the comment targets a PR outside the task's effective repo, `deliverableRepo` when set, otherwise the project's own repo; comment on a PR in that repo or use `task_note`; `allowedNext: ["task_note"]`) instead of the `task_submit_pr` recipe. Other verbs' recipes are unchanged.
 - README and the missing-token error text: the token pointer now names the real location, **Team settings → API Tokens** (the API Tokens section lives on the team settings page). Text only, no behavior change.
 - Tool text for `task_advance` on a Grounding-provisioned task: the `409 precondition_failed` message now names the edge the backend evaluated and the rules that failed (not every configured gate of the edge). The `task_advance` description, `workflow_primer` and the README say so. Tool text only.
