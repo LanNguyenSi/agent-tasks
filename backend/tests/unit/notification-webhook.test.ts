@@ -679,7 +679,7 @@ describe("deliverSignalWebhook: egress guard on the real path", () => {
     );
   });
 
-  it.each(["ENOTFOUND", "EAI_AGAIN"])(
+  it.each(["ENOTFOUND", "EAI_AGAIN", "EAI_FAIL"])(
     "audits a resolver rejection (%s) with the class text and logs the raw message",
     async (code) => {
       dnsLookupMock.mockRejectedValue(

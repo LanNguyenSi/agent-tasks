@@ -177,16 +177,9 @@ function webhookPolicy(allowedPrivateHosts: readonly string[]): EgressPolicy {
 // Resolver error codes the pre-check may append to the "did not resolve" text.
 // Only a code from this fixed list is audited; the raw resolver message (which
 // carries the typed host) never is.
-const DNS_ERROR_CODES: ReadonlySet<string> = new Set([
-  "ENOTFOUND",
-  "ENODATA",
-  "EAI_AGAIN",
-  "EAI_FAIL",
-  "EAI_NODATA",
-  "EAI_NONAME",
-  "ESERVFAIL",
-  "ETIMEOUT",
-]);
+// These are the codes dns.lookup rejects with (Node reports EAI_NONAME and
+// EAI_NODATA as ENOTFOUND).
+const DNS_ERROR_CODES: ReadonlySet<string> = new Set(["ENOTFOUND", "EAI_AGAIN", "EAI_FAIL"]);
 const WEBHOOK_CHECK_FAILED_MESSAGE = "webhook target check failed";
 
 // Audit text for an error the pre-check threw that is not an EgressBlockedError:
