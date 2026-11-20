@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **PR create and PR comment fail closed when the task has no effective repository.** `POST /api/github/pull-requests` and `POST /api/github/pull-requests/:prNumber/comments` act with a team member's delegated GitHub token on a body-supplied `owner`/`repo`, and accepted any repository when neither the project's `githubRepo` nor the task's `deliverableRepo` was set (or when the effective value did not parse as `owner/repo`). Both routes now answer `400 { error: "no_effective_repo", message }` in that case, with a hint to set the task's `deliverableRepo` or the project's `githubRepo`; the check runs after the project-access gate and before the delegation lookup, so no GitHub call is made, nothing is written to the task and no idempotency record is stored. Where Grounding is configured its effect-boundary refusal keeps precedence over the new 400. Projects and tasks with a usable repo behave as before (a match passes, a mismatch answers `cross_repo_pr_rejected`), and `task_finish`, `task_submit_pr` and `PATCH /api/tasks/:id` keep accepting any `prUrl` when no repo is bound. **Operator note:** tasks in projects without a linked `githubRepo` can no longer create or comment on PRs through agent-tasks until a repo is set; the MCP server has no teaching error for the new code yet. Tests: `backend/tests/unit/github-pr-create-no-repo.test.ts`, `backend/tests/unit/github-pr-comment-cross-repo.test.ts`, `backend/tests/unit/gates-registry.test.ts`.
+
 ## [0.34.0] - 2026-11-17
 
 ### Security

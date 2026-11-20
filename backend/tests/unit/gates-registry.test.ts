@@ -14,6 +14,8 @@ import {
   checkTaskStatusForMerge,
   checkPrRepoMatchesProject,
   checkOwnerRepoMatchesProject,
+  requireEffectiveRepo,
+  noEffectiveRepoMessage,
   effectiveDeliverableRepo,
   isForeignDeliverable,
 } from "../../src/services/gates/index.js";
@@ -369,6 +371,63 @@ describe("checkOwnerRepoMatchesProject", () => {
       project,
     );
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("requireEffectiveRepo", () => {
+  it("is ok when the project repo is set and the task has no override", () => {
+    expect(requireEffectiveRepo({}, { githubRepo: "LanNguyenSi/agent-tasks" })).toEqual({ ok: true });
+  });
+
+  it("is ok when only the task override is set (unbound project)", () => {
+    expect(
+      requireEffectiveRepo({ deliverableRepo: "foreign-org/foreign-repo" }, { githubRepo: null }),
+    ).toEqual({ ok: true });
+  });
+
+  it("is missing when neither the project nor the task names a repo", () => {
+    expect(requireEffectiveRepo({}, { githubRepo: null })).toEqual({
+      ok: false,
+      reason: "missing",
+      effectiveRepo: null,
+    });
+    expect(requireEffectiveRepo({ deliverableRepo: null }, { githubRepo: null }).ok).toBe(false);
+  });
+
+  it.each(["", "   "])("treats the empty or blank value %j as missing", (value) => {
+    expect(requireEffectiveRepo({}, { githubRepo: value })).toMatchObject({ ok: false, reason: "missing" });
+    expect(requireEffectiveRepo({ deliverableRepo: value }, { githubRepo: "a/b" })).toMatchObject({
+      ok: false,
+      reason: "missing",
+    });
+  });
+
+  it.each(["no-slash", "owner/", "/repo"])("is malformed for %j and keeps the stored value", (value) => {
+    expect(requireEffectiveRepo({}, { githubRepo: value })).toEqual({
+      ok: false,
+      reason: "malformed",
+      effectiveRepo: value,
+    });
+  });
+
+  it("the task override wins over the project repo, also when the override is the unusable one", () => {
+    expect(requireEffectiveRepo({ deliverableRepo: "no-slash" }, { githubRepo: "a/b" })).toMatchObject({
+      ok: false,
+      reason: "malformed",
+    });
+    expect(requireEffectiveRepo({ deliverableRepo: "c/d" }, { githubRepo: "no-slash" })).toEqual({ ok: true });
+  });
+
+  it("leaves checkOwnerRepoMatchesProject unchanged: no binding is still ok there", () => {
+    expect(checkOwnerRepoMatchesProject("a", "b", {}, { githubRepo: null })).toEqual({ ok: true });
+  });
+
+  it("messages name both repo fields for a missing repo and the value for a malformed one", () => {
+    const missing = requireEffectiveRepo({}, { githubRepo: null });
+    const malformed = requireEffectiveRepo({}, { githubRepo: "no-slash" });
+    if (missing.ok || malformed.ok) throw new Error("expected refusals");
+    expect(noEffectiveRepoMessage(missing)).toMatch(/githubRepo.*deliverableRepo/);
+    expect(noEffectiveRepoMessage(malformed)).toContain('"no-slash"');
   });
 });
 

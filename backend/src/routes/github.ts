@@ -19,7 +19,10 @@ import {
   checkTaskStatusForMerge,
   taskStatusForMergeRejectionMessage,
   checkOwnerRepoMatchesProject,
+  NO_EFFECTIVE_REPO_ERROR,
+  noEffectiveRepoMessage,
   prRepoMatchesProjectRejectionMessage,
+  requireEffectiveRepo,
   effectiveDeliverableRepo,
   isForeignDeliverable,
 } from "../services/gates/index.js";
@@ -231,6 +234,26 @@ githubRouter.post(
     // GitHub. Without this, the requested owner/repo was written to
     // task.prUrl/prNumber unchecked — the same hole task_finish/submit_pr
     // close for their own prUrl payloads, just reached from the create side.
+    //
+    // Fail closed when the task has no usable effective repo (project
+    // `githubRepo` and task `deliverableRepo` both unset, or a value that is
+    // not `owner/repo`): there is nothing to compare the body-supplied target
+    // against, and the delegated token could otherwise open a PR in any
+    // repository it reaches. Where Grounding is configured its refusal for
+    // the target keeps precedence over this 400. Nothing is read from the
+    // delegation store, sent to GitHub or stored for the idempotency key here.
+    const groundingGuard = groundingRemoteGuardFor(c);
+    const repoRequirement = requireEffectiveRepo(task, task.project);
+    if (!repoRequirement.ok) {
+      if (groundingGuard) {
+        const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, kind: "create", taskId: task.id });
+        if (refused) return c.json({ error: refused.error, message: refused.message }, refused.status);
+      }
+      return c.json(
+        { error: NO_EFFECTIVE_REPO_ERROR, message: noEffectiveRepoMessage(repoRequirement) },
+        400,
+      );
+    }
     const crossRepo = checkOwnerRepoMatchesProject(body.owner, body.repo, task, task.project);
     if (!crossRepo.ok) {
       return c.json(
@@ -265,7 +288,6 @@ githubRouter.post(
     // and does NOT create a second PR on GitHub. Gate checks above run on
     // every retry (they're pure + cheap; the caller learns the current
     // answer, not a stale one).
-    const groundingGuard = groundingRemoteGuardFor(c);
     const outcome = await withIdempotency<unknown>(
       {
         projectId: task.project.id,
@@ -830,7 +852,22 @@ githubRouter.post(
     // token can reach. Runs BEFORE the delegation lookup and the GitHub call,
     // and nothing is stored for the idempotency key on this path (only 2xx
     // answers are).
+    //
+    // The same fail-closed rule as PR-create applies first: a task with no
+    // usable effective repo (nothing set, or not `owner/repo`) answers
+    // `400 no_effective_repo` instead of accepting any repository.
     const groundingGuard = groundingRemoteGuardFor(c);
+    const repoRequirement = requireEffectiveRepo(task, task.project);
+    if (!repoRequirement.ok) {
+      if (groundingGuard) {
+        const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, prNumber, kind: "comment", taskId: task.id });
+        if (refused) return c.json({ error: refused.error, message: refused.message }, refused.status);
+      }
+      return c.json(
+        { error: NO_EFFECTIVE_REPO_ERROR, message: noEffectiveRepoMessage(repoRequirement) },
+        400,
+      );
+    }
     const crossRepo = checkOwnerRepoMatchesProject(body.owner, body.repo, task, task.project);
     if (!crossRepo.ok) {
       // Where Grounding is configured its refusal for the repository and PR

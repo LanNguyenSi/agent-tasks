@@ -86,7 +86,7 @@ Public MCP transport remains separate follow-up work.
 
 **Provisioned direct routes**: an enrolled task's direct transition, review and status-PATCH routes are resolved under a locked, persisted route descriptor. The server applies the workflow, role and review gates to that descriptor and rechecks it when a receipt is ingested. A positive decision needs an `Idempotency-Key`; the only direct force path is a human-admin transition with a nonblank reason. `POST /tasks/:id/advance` on an enrolled task uses the transition transport and descriptor with an `advance` marker in the transport body; its target is a work stage, never review-like or terminal, so it is always a disposition without a receipt. This does not relax the existing v2 claim model, and it does not cover indirect workflow, webhook or MCP writers.
 
-**Cross-repo `prUrl` guard** (`checkPrRepoMatchesProject`, `backend/src/services/gates/pr-repo-matches-project.ts`, ADR-0010 §5b): active only when `project.githubRepo` is set. Parses `owner/repo` out of both the `prUrl` payload (`github\.com\/([^/]+)\/([^/]+)\/pull\/`) and `project.githubRepo`, case-insensitive compare; a mismatch is rejected with `400 { error: "cross_repo_pr_rejected", message }`. Prevents an agent token valid for project A from driving a merge against project B's repo via a spoofed PR URL.
+**Cross-repo `prUrl` guard** (`checkPrRepoMatchesProject`, `backend/src/services/gates/pr-repo-matches-project.ts`, ADR-0010 §5b): on the `prUrl` write paths active only when `project.githubRepo` (or the task's `deliverableRepo`) is set. Parses `owner/repo` out of both the `prUrl` payload (`github\.com\/([^/]+)\/([^/]+)\/pull\/`) and `project.githubRepo`, case-insensitive compare; a mismatch is rejected with `400 { error: "cross_repo_pr_rejected", message }`. Prevents an agent token valid for project A from driving a merge against project B's repo via a spoofed PR URL. The server-side PR create and PR comment routes (`POST /github/pull-requests`, `POST /github/pull-requests/:n/comments`) do not take the "no binding means accept" branch: `requireEffectiveRepo` (same file) refuses a task whose effective repo (`deliverableRepo ?? githubRepo`) is unset, empty or not `owner/repo` with `400 { error: "no_effective_repo", message }` before the delegation lookup, after the project-access gate, with the Grounding effect-boundary refusal answering first where it is configured.
 
 The check runs at `task_finish` (`backend/src/routes/tasks.ts:3883#"checkPrRepoMatchesProject"`), `submit-pr` (`backend/src/routes/tasks.ts:4399#"checkPrRepoMatchesProject"`), and both actor branches of `PATCH /tasks/:id` (agent lane `backend/src/routes/tasks.ts:5433#"checkPrRepoMatchesProject"`, human lane `backend/src/routes/tasks.ts:5522#"checkPrRepoMatchesProject"`).
 
@@ -126,7 +126,7 @@ effect boundary (`grounding-scope.ts:103`): with configuration enabled,
 `performPrMerge` checks the exact repository and PR number right before the
 GitHub merge call (`services/github-merge.ts:143`), and the legacy PR creator
 and commenter check the repository (and PR) they post to
-(`routes/github.ts:279`, `routes/github.ts:885`). The check refuses with
+(`routes/github.ts:301`, `routes/github.ts:922`). The check refuses with
 `409 grounding_enrollment_required` a repository string that is not exactly
 canonical, an enforced repository, a protected/`EXTERNAL_V1`/bound/held task's
 PR (including such a task whose own repository string is not canonical and
@@ -144,8 +144,8 @@ access outside agent-tasks (tokens, the GitHub UI, other apps) is not governed
 by the check. With configuration enabled a GitHub redirect on any of the
 three legacy writes (a renamed or transferred repository) is answered with
 `409 github_redirect_refused` instead of being followed
-(`services/github-merge.ts:195`, `routes/github.ts:309`,
-`routes/github.ts:908`). The configured GitHub create and merge routes check
+(`services/github-merge.ts:195`, `routes/github.ts:331`,
+`routes/github.ts:945`). The configured GitHub create and merge routes check
 the caller's project access with the legacy rule right after the task lookup,
 before any Grounding read or lock (`routes/grounding-github.ts:82`,
 `routes/grounding-github.ts:130`), so a caller without access gets the legacy

@@ -15,8 +15,12 @@
  * resolves the repo the guard actually compares against; every write path
  * that stores a `prUrl` must route through it (see docs/workflow-preconditions.md).
  *
- * Active only when the effective repo is set — projects (and tasks) without
- * a linked repo don't have a "home" to compare against and accept any URL.
+ * The prUrl write paths (task_finish, submit_pr, PATCH) are active only when
+ * the effective repo is set: projects (and tasks) without a linked repo
+ * don't have a "home" to compare against and accept any URL there. The
+ * server-side PR create and PR comment routes act with a delegated token on a
+ * body-supplied owner/repo and instead fail closed through
+ * `requireEffectiveRepo`.
  */
 import { parseOwnerRepo } from "../transition-rules.js";
 import type { Gate } from "./types.js";
@@ -127,6 +131,58 @@ export function checkOwnerRepoMatchesProject(
   return compareOwnerRepoAgainst(owner, repo, effectiveRepo);
 }
 
+/**
+ * Result of `requireEffectiveRepo`: whether a task has a usable `owner/repo`
+ * to compare a body-supplied target against.
+ */
+export type EffectiveRepoRequirementResult =
+  | { ok: true }
+  | {
+      ok: false;
+      /** `missing`: neither the task nor the project names a repo (unset, empty or blank). `malformed`: the effective repo is set but is not `owner/repo`. */
+      reason: "missing" | "malformed";
+      /** The effective repo string as stored, or null when none is set. */
+      effectiveRepo: string | null;
+    };
+
+/** Error code the PR create and PR comment routes answer when `requireEffectiveRepo` fails. */
+export const NO_EFFECTIVE_REPO_ERROR = "no_effective_repo";
+
+/**
+ * Fail-closed counterpart of the "no binding, accept anything" branches in
+ * `checkOwnerRepoMatchesProject`. The server-side PR create and PR comment
+ * routes act with a team member's delegated GitHub token on a body-supplied
+ * `owner/repo`; with no effective repo (or one that does not parse) there is
+ * nothing to compare that target against, so the routes refuse instead of
+ * accepting any repository the delegated token can reach.
+ *
+ * Deliberately separate from `checkPrRepoMatchesProject` and
+ * `checkOwnerRepoMatchesProject`, whose "no binding means ok" semantics the
+ * prUrl write paths (task_finish, submit_pr, PATCH) keep.
+ */
+export function requireEffectiveRepo(
+  task: PrRepoMatchesProjectTask,
+  project: PrRepoMatchesProjectProject,
+): EffectiveRepoRequirementResult {
+  const effectiveRepo = effectiveDeliverableRepo(task, project);
+  if (effectiveRepo === null || effectiveRepo === undefined || effectiveRepo.trim() === "") {
+    return { ok: false, reason: "missing", effectiveRepo: null };
+  }
+  if (!parseOwnerRepo(effectiveRepo)) {
+    return { ok: false, reason: "malformed", effectiveRepo };
+  }
+  return { ok: true };
+}
+
+export function noEffectiveRepoMessage(
+  result: Extract<EffectiveRepoRequirementResult, { ok: false }>,
+): string {
+  if (result.reason === "malformed") {
+    return `This task's effective deliverable repo "${result.effectiveRepo}" is not in owner/repo form. Set the task's deliverableRepo or the project's githubRepo to an owner/repo value.`;
+  }
+  return "This task has no effective deliverable repo: neither the project's githubRepo nor the task's deliverableRepo is set. Set one of them (owner/repo) before creating or commenting on pull requests through agent-tasks.";
+}
+
 function compareOwnerRepoAgainst(
   owner: string,
   repo: string,
@@ -171,7 +227,8 @@ export const prRepoMatchesProjectGate: Gate = {
     }
     return {
       active: false,
-      because: "Project has no linked GitHub repo; any PR URL is accepted.",
+      because:
+        "Project has no linked GitHub repo; task_finish, submit_pr and tasks_update accept any PR URL, while pull_requests_create and PR comments are refused with no_effective_repo unless the task sets a deliverableRepo.",
     };
   },
 };
