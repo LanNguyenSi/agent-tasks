@@ -239,6 +239,11 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
     if (!user) {
       return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=not_provisioned`);
     }
+    // The sub is already bound to an identity of another issuer (or of an
+    // unknown connection): no session, nothing was written.
+    if ("refused" in user) {
+      return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=sso_identity_conflict`);
+    }
 
     const sessionToken = await createSessionToken(user.id, config.SESSION_SECRET);
     const isSecure = config.NODE_ENV === "production";

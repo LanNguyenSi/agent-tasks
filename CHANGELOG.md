@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **An OIDC login can no longer reach a user through an identity minted by another issuer.** The SSO callback looked up the identity by `provider=oidc` and `sub` alone, then rebound it to the current connection and added the user to that connection's team, so a team admin who controls any IdP could assert a victim's `sub` through their own connection and sign in as the victim. `upsertUserFromOidc` (`backend/src/services/sso.ts`) now uses an existing identity only when its bound connection has the same issuer as the current one (exact string compare after removing trailing slashes); otherwise, and when the bound connection is unset or deleted, it refuses before any write: no session, no identity rebind, no profile update, no team membership, a warning log without the `sub`, and a redirect to `/auth/error?reason=sso_identity_conflict`. The same issuer through another team's connection works as before, and the email-link path for a `sub` without an identity is unchanged. **Operator note:** an identity row with an unset or dangling `ssoConnectionId` can no longer sign in through SSO; such rows have to be fixed by hand. Documented in `docs/enterprise-sso.md`. Tests: `backend/tests/unit/sso-identity-binding.test.ts`, `backend/tests/unit/sso-routes.test.ts`.
+
 ## [0.34.0] - 2026-11-17
 
 ### Security

@@ -6,6 +6,7 @@
  */
 
 import { prisma } from "../lib/prisma.js";
+import { logger } from "../lib/logger.js";
 import { config } from "../config/index.js";
 import { decryptSecret, encryptSecret } from "./sso-crypto.js";
 import type { OidcIdTokenClaims } from "./oidc.js";
@@ -196,6 +197,21 @@ async function generateUniqueLogin(base: string): Promise<string> {
 }
 
 /**
+ * Refusal returned by `upsertUserFromOidc` when the (oidc, sub) identity
+ * already exists but was minted by an issuer other than the one of the
+ * connection the login came through (or its connection is unknown).
+ */
+export interface OidcLoginRefusal {
+  refused: "identity_conflict";
+}
+
+// Issuers are compared as exact strings after removing trailing slashes, the
+// same normalisation the connection upsert and the OIDC client apply.
+function normalizeIssuer(issuer: string): string {
+  return issuer.replace(/\/+$/, "");
+}
+
+/**
  * Look up (or provision) a user from an OIDC ID token, attach/refresh the
  * UserIdentity row, and ensure they're a HUMAN_MEMBER of the connection's
  * team when auto-provisioning is enabled.
@@ -203,6 +219,11 @@ async function generateUniqueLogin(base: string): Promise<string> {
  * Returns `null` when the SSO connection has auto-provisioning disabled
  * and no identity/email match exists — callers should render an error in
  * that case rather than silently creating an orphan user.
+ *
+ * Returns an `OidcLoginRefusal` when an identity for this `sub` exists and
+ * the connection it is bound to has a different issuer, or is missing (null
+ * or deleted). A `sub` is only unique per issuer, so another IdP asserting the
+ * same value must not reach that user. Nothing is written in that case.
  */
 export async function upsertUserFromOidc(
   ssoConnection: {
@@ -213,7 +234,7 @@ export async function upsertUserFromOidc(
     emailDomains: string[];
   },
   claims: OidcIdTokenClaims,
-): Promise<{ id: string; login: string; email: string | null } | null> {
+): Promise<{ id: string; login: string; email: string | null } | OidcLoginRefusal | null> {
   const providerUserId = claims.sub;
   const email = typeof claims.email === "string" ? claims.email.toLowerCase() : null;
   const emailVerified = claims.email_verified === true;
@@ -236,6 +257,44 @@ export async function upsertUserFromOidc(
     where: { provider_providerUserId: { provider: "oidc", providerUserId } },
     include: { user: true },
   });
+
+  // 1a. An existing identity is only usable through a connection of the same
+  //     issuer. Fail closed when the bound connection is unknown.
+  if (existingIdentity) {
+    const boundConnectionId = existingIdentity.ssoConnectionId;
+    const boundConnection =
+      boundConnectionId === null
+        ? null
+        : boundConnectionId === ssoConnection.id
+          ? ssoConnection
+          : await prisma.ssoConnection.findUnique({
+              where: { id: boundConnectionId },
+              select: { issuer: true },
+            });
+    if (
+      !boundConnection ||
+      normalizeIssuer(boundConnection.issuer) !== normalizeIssuer(ssoConnection.issuer)
+    ) {
+      // The sub is never logged; the identity row id is enough to trace it.
+      logger.warn(
+        {
+          component: "sso",
+          phase: "identity_lookup",
+          identityId: existingIdentity.id,
+          connectionId: ssoConnection.id,
+          boundConnectionId,
+          cause:
+            boundConnectionId === null
+              ? "unbound"
+              : boundConnection
+                ? "issuer_mismatch"
+                : "connection_missing",
+        },
+        "SSO login refused: identity is bound to another issuer",
+      );
+      return { refused: "identity_conflict" };
+    }
+  }
 
   let user = existingIdentity?.user ?? null;
 

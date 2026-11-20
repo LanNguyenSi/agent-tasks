@@ -74,7 +74,7 @@ A typical rollout:
 
 ### What stops account takeover
 
-Two checks protect against the most common IdP-linked-account attacks:
+Three checks protect against the most common IdP-linked-account attacks:
 
 1. **Email-verified requirement for linking.** `upsertUserFromOidc` will only
    link an SSO login to an existing local/GitHub user when the IdP asserts
@@ -86,6 +86,21 @@ Two checks protect against the most common IdP-linked-account attacks:
    SSO connection. Public free-mail domains (`gmail.com`, `outlook.com`, and
    a few others) are blocked outright. This prevents one team from silently
    auto-joining users from another team.
+3. **An identity is bound to its issuer.** An OIDC `sub` is only unique
+   within one issuer, so an existing identity row (looked up by
+   `provider=oidc` and `sub`) is only used when the connection it is bound
+   to has the same issuer as the connection the login comes through.
+   Issuers are compared as exact strings after removing trailing slashes. A
+   login through a connection with another issuer, or for an identity whose
+   bound connection is unset or was deleted, is refused with
+   `/auth/error?reason=sso_identity_conflict`: no session is issued, the
+   identity is not rebound, the profile is not updated and no team
+   membership is added. The backend logs a warning with the identity row id
+   and both connection ids, never the `sub`. The same issuer through another
+   team's connection signs in as before (the identity is rebound to that
+   connection and the user joins that team). Changing the issuer of an
+   existing connection does not re-check identities that connection already
+   minted.
 
 ### What's *not* enforced
 
@@ -226,6 +241,7 @@ Login-flow endpoints are public:
 | Login redirect lands on `/auth/error?reason=sso_unavailable` | OIDC discovery failed at login time (network, IdP outage). Check backend logs for the sanitized error message. |
 | Login redirect lands on `/auth/error?reason=state_mismatch` | State/nonce cookies were dropped or tampered with. Usually means a cross-origin cookie issue — verify `BACKEND_URL` matches the origin serving the backend. |
 | Login redirect lands on `/auth/error?reason=not_provisioned` | The SSO connection has `autoProvision=false` and the user isn't already in the team. Add them via the normal team-member flow first. |
+| Login redirect lands on `/auth/error?reason=sso_identity_conflict` | The IdP's `sub` already belongs to an identity minted by a connection with a different issuer, or the identity's connection is unset or was deleted. The login is refused on purpose (see "What stops account takeover"); an operator has to resolve the identity row by hand. |
 | Login redirect lands on `/auth/error?reason=sso_failed` | Generic fall-through; check backend logs. ID token verification failures (bad signature, wrong audience, expired, nonce mismatch) land here. |
 | Login redirect lands on `/auth/error?reason=bad_request` | The callback arrived without a `code`, or without the transient state/nonce/PKCE cookies. Usually a cookie that was blocked or expired (the cookies live 10 minutes), or the callback URL was opened directly. |
 | Login redirect lands on `/auth/error?reason=sso_not_configured` | The connection was disabled or deleted between the login redirect and the callback. |

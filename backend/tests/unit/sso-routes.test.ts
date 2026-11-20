@@ -562,6 +562,27 @@ describe("GET /sso/:teamSlug/callback", () => {
     );
   });
 
+  it("identity bound to another issuer → reason=sso_identity_conflict, no session", async () => {
+    mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
+    mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
+    mocks.decryptClientSecret.mockResolvedValue("secret");
+    mocks.exchangeCode.mockResolvedValue({ id_token: "idtok" });
+    mocks.verifyIdToken.mockResolvedValue({ sub: "u1", email: "u@e.com" });
+    mocks.upsertUserFromOidc.mockResolvedValue({ refused: "identity_conflict" });
+
+    const res = await ssoLoginRouter.request(
+      "/sso/acme/callback?code=C&state=STATE123",
+      { headers: { Cookie: `${GOOD_COOKIES}; sso_redirect=%2Finvite%2Fabc` } },
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "http://localhost:3000/auth/error?reason=sso_identity_conflict",
+    );
+    expect(mocks.createSessionToken).not.toHaveBeenCalled();
+    expect(mocks.buildSessionCookie).not.toHaveBeenCalled();
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("session="))).toBe(false);
+  });
+
   it("exchangeCode throws → reason=sso_failed; raw error text not leaked in Location", async () => {
     mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
     mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
