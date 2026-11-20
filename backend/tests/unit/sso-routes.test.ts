@@ -522,6 +522,15 @@ describe("GET /sso/:teamSlug/callback", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("http://localhost:3000/home");
 
+    // The service gets the connection id and the issuer the token was verified
+    // against, nothing else from the callback's snapshot of the connection.
+    expect(mocks.verifyIdToken.mock.calls[0]![0].expectedIssuer).toBe(ENABLED_CONNECTION.issuer);
+    expect(mocks.upsertUserFromOidc).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertUserFromOidc.mock.calls[0]).toEqual([
+      { id: ENABLED_CONNECTION.id, issuer: ENABLED_CONNECTION.issuer },
+      { sub: "oidc-user-123", email: "user@acme.com", iss: "https://idp.example.com" },
+    ]);
+
     // createSessionToken was called with the DB user id and the session secret.
     expect(mocks.createSessionToken).toHaveBeenCalledWith(
       "db-user-id-1",

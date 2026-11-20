@@ -225,16 +225,9 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
       expectedNonce: storedNonce,
     });
 
-    const user = await upsertUserFromOidc(
-      {
-        id: connection.id,
-        teamId: connection.teamId,
-        issuer: connection.issuer,
-        autoProvision: connection.autoProvision,
-        emailDomains: connection.emailDomains,
-      },
-      claims,
-    );
+    // Only the id and the issuer the token was verified against are passed:
+    // the service re-reads every other setting of the connection under a lock.
+    const user = await upsertUserFromOidc({ id: connection.id, issuer: connection.issuer }, claims);
 
     if (!user) {
       return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=not_provisioned`);
