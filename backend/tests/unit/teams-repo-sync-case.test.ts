@@ -18,6 +18,7 @@ import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
 import type { GitHubRepo } from "../../src/services/github-sync.js";
+import { logAuditEvent } from "../../src/services/audit.js";
 
 const prismaMocks = vi.hoisted(() => ({
   teamMemberFindUnique: vi.fn(),
@@ -306,5 +307,86 @@ describe("POST /teams/:id/sync: prune", () => {
     expect(body).toMatchObject({ synced: 0, created: 0, updated: 0, pruned: 0, skippedPrune: true });
     expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
     expect(prismaMocks.projectDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /teams/:id/sync: prune is for team admins only", () => {
+  const STALE_ROWS = [
+    { id: "p-keep", githubRepo: STORED_REPO },
+    { id: "p-gone", githubRepo: "lannguyensi/retired" },
+  ];
+
+  for (const role of ["HUMAN_MEMBER", "REVIEWER"]) {
+    it(`${role} never loads the prune candidates, never deletes, and is told why`, async () => {
+      prismaMocks.teamMemberFindUnique.mockResolvedValue({ teamId: TEAM_ID, userId: HUMAN.userId, role });
+      githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+      prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
+      prismaMocks.projectFindMany.mockResolvedValue(STALE_ROWS);
+
+      const res = await makeApp(HUMAN);
+      const body = (await res.json()) as Record<string, unknown>;
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ updated: 1, pruned: 0, pruneDeferred: false, skippedPrune: false, pruneSkipped: "not_admin" });
+      expect(String(body.message)).toContain("Stale projects are only removed by a team admin.");
+      expect(prismaMocks.projectUpdate).toHaveBeenCalledTimes(1);
+      expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
+      expect(prismaMocks.projectDeleteMany).not.toHaveBeenCalled();
+      expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a non-admin with an empty list: skippedPrune and pruneSkipped are both set, the empty-list sentence comes first", async () => {
+    prismaMocks.teamMemberFindUnique.mockResolvedValue({ teamId: TEAM_ID, userId: HUMAN.userId, role: "HUMAN_MEMBER" });
+    githubMocks.listUserRepos.mockResolvedValue([]);
+
+    const res = await makeApp(HUMAN);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ pruned: 0, skippedPrune: true, pruneSkipped: "not_admin", pruneDeferred: false });
+    expect(body.message).toBe(
+      "GitHub sync returned 0 repositories; prune was skipped for safety. Stale projects are only removed by a team admin.",
+    );
+  });
+
+  it("an admin prunes as before, reports pruneSkipped null and audits the deleted ids with team and actor", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
+    prismaMocks.projectFindMany.mockResolvedValue(STALE_ROWS);
+
+    const res = await makeApp(HUMAN);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ pruned: 1, pruneSkipped: null, skippedPrune: false });
+    expect(String(body.message)).not.toContain("team admin");
+    expect(prismaMocks.projectDeleteMany).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith({
+      action: "project.synced",
+      actorId: HUMAN.userId,
+      payload: { teamId: TEAM_ID, via: "team_sync_prune", projectIds: ["p-gone"], deletedCount: 1 },
+    });
+  });
+
+  it("an admin with no stale project emits no audit event", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
+    prismaMocks.projectFindMany.mockResolvedValue([{ id: "p-keep", githubRepo: STORED_REPO }]);
+
+    await makeApp(HUMAN);
+
+    expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
+  });
+
+  it("an admin whose DELETE reports 0 rows emits no audit event", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
+    prismaMocks.projectFindMany.mockResolvedValue(STALE_ROWS);
+    prismaMocks.projectDeleteMany.mockResolvedValue({ count: 0 });
+
+    const res = await makeApp(HUMAN);
+
+    expect(((await res.json()) as { pruned: number }).pruned).toBe(0);
+    expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
   });
 });

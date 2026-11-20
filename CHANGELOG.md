@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **A team sync only deletes projects when the caller is a team admin.** `POST /api/teams/:id/sync` removed every GitHub-bound project of the team that was missing from the caller's own repository list, with its tasks, comments, artifacts and attachments, and any member could trigger it: a `HUMAN_MEMBER` or `REVIEWER` whose GitHub account sees fewer repositories than the team tracks could wipe the rest. The create and update half still runs for every member; the prune now runs only for a team `ADMIN` (no instance-wide admin exists, so the team role is the whole check). A non-admin gets 200 with `pruned: 0`, the new `pruneSkipped: "not_admin"` (`null` for an admin) and a message clause saying stale projects are only removed by a team admin; an empty repository list still sets `skippedPrune` as well. When an admin's prune removes projects, one `project.synced` audit event records the team id, the actor and the deleted project ids. Tests: `backend/tests/unit/teams-repo-sync-case.test.ts` and, on a real Postgres, `backend/tests/integration/teams-sync-repo-case-db.test.ts`. Docs: the team sync paragraph of `docs/sequence-flows.md`, `docs/permissions.md` and `docs/v2-api.md`.
+
 ## [0.34.0] - 2026-11-17
 
 ### Security

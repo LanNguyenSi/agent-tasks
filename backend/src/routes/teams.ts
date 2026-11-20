@@ -258,6 +258,14 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   let fenced = 0;
   let pruneDeferred = false;
 
+  // The prune deletes every bound project (with its tasks, comments, artifacts
+  // and attachments) that is missing from THIS caller's GitHub repository list,
+  // so any member could wipe projects by syncing from an account that sees
+  // fewer repositories. Only a team ADMIN prunes; everyone else still creates
+  // and updates. There is no instance-wide admin concept in this codebase, so
+  // the team role is the whole check.
+  const canPrune = membership.role === "ADMIN";
+
   for (const repo of repos) {
     // GitHub repository names are case-insensitive, while `project.githubRepo`
     // keeps whatever case the binding was written in, so an exact match missed
@@ -325,7 +333,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   // in depth: `mode` applies to `notIn` on the Postgres engine (checked against
   // a real database), so a binding that differs from a listed repo only in
   // letter case is never removed even if the id list were wrong.
-  if (repoFullNames.length > 0) {
+  if (canPrune && repoFullNames.length > 0) {
     const listed = new Set(repoFullNames.map((fullName) => fullName.toLowerCase()));
     const boundProjects = await prisma.project.findMany({
       where: { teamId, githubRepo: { not: null } },
@@ -348,6 +356,22 @@ teamRouter.post("/teams/:id/sync", async (c) => {
           },
         });
         pruned = deleted.count;
+        if (pruned > 0) {
+          // The removal is irreversible (the tasks go with the project), so
+          // the ids are kept in the audit trail. `projectIds` is the id list
+          // handed to the DELETE; `deletedCount` is what the database
+          // reported, and the two differ only if a row vanished in between.
+          await logAuditEvent({
+            action: "project.synced",
+            actorId: actor.userId,
+            payload: {
+              teamId,
+              via: "team_sync_prune",
+              projectIds: staleIds,
+              deletedCount: pruned,
+            },
+          });
+        }
       } catch (err) {
         // A stale binding under an active grounding fence rejects the whole
         // statement (one transaction, nothing removed). The loop above has
@@ -359,7 +383,12 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     }
   }
 
+  // `skippedPrune` keeps its meaning (the caller's list was empty) and is set
+  // whatever the role; `pruneSkipped` names the role reason. A non-admin with
+  // an empty list therefore gets both, and the message carries the
+  // empty-list sentence first and the admin clause after it.
   const skippedPrune = repoFullNames.length === 0;
+  const pruneSkipped = canPrune ? null : ("not_admin" as const);
 
   return c.json({
     synced: repos.length,
@@ -369,14 +398,17 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     fenced,
     pruneDeferred,
     skippedPrune,
-    message: skippedPrune
-      ? "GitHub sync returned 0 repositories; prune was skipped for safety."
-      : `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)` +
-        (fenced > 0
-          ? `; ${fenced} skipped because a repository operation is in flight, sync again shortly`
-          : "") +
-        (pruneDeferred
-          ? "; removal of stale projects was postponed because a repository operation is in flight, sync again shortly"
-          : ""),
+    pruneSkipped,
+    message:
+      (skippedPrune
+        ? "GitHub sync returned 0 repositories; prune was skipped for safety."
+        : `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)` +
+          (fenced > 0
+            ? `; ${fenced} skipped because a repository operation is in flight, sync again shortly`
+            : "") +
+          (pruneDeferred
+            ? "; removal of stale projects was postponed because a repository operation is in flight, sync again shortly"
+            : "")) +
+      (canPrune ? "" : " Stale projects are only removed by a team admin."),
   });
 });
