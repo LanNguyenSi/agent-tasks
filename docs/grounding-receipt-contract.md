@@ -531,6 +531,11 @@ access and eligible creation delegation. It normalizes repository identity
 and request defaults, then persists the original actor, key, request
 fingerprint and task-bound PR_CREATE intent before remote dispatch. A changed
 actor or request conflicts; a repeated request revalidates current authority.
+When the task has no usable effective repository (neither a project
+`githubRepo` nor a task `deliverableRepo`, or a value that is not `owner/repo`),
+a new `createOrResume` answers `400 no_effective_repo` before any reservation,
+fence or provider call; the existing compare of the request's repository with
+the effective repository applies otherwise.
 
 The persisted random operation UUID supplies a per-intent correlation marker.
 The provider appends `<!-- agent-tasks:pr-create:<operation-id> -->` to the wire

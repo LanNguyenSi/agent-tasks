@@ -8,7 +8,10 @@
  * set, else the project's `githubRepo`; both sides compare lowercased, so a
  * pure case difference is the SAME repo and is accepted. A mismatch answers
  * the PR-create envelope: 400 { error: "cross_repo_pr_rejected", message },
- * before the delegation lookup and before any GitHub call.
+ * before the delegation lookup and before any GitHub call. A task with no
+ * usable effective repo (nothing set, or a value that is not `owner/repo`)
+ * fails closed with 400 { error: "no_effective_repo", message }; where
+ * Grounding is configured its refusal keeps precedence over that 400.
  *
  * Route-wiring tests only: GitHub fetch is spied, delegation / access /
  * audit are mocked. Without an `idempotencyKey` the route executes the
@@ -22,11 +25,14 @@ import type { GroundingRemoteTargetGuard } from "../../src/services/grounding-sc
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
+  toolFindUnique: vi.fn().mockResolvedValue(null),
+  toolCreate: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     task: { findUnique: prismaMocks.taskFindUnique },
+    toolInvocation: { findUnique: prismaMocks.toolFindUnique, create: prismaMocks.toolCreate },
   },
 }));
 
@@ -100,17 +106,23 @@ function wireTask(input: {
   });
 }
 
-async function postComment(owner: string, repo: string, guard: GroundingRemoteTargetGuard | null = null) {
+async function postComment(
+  owner: string,
+  repo: string,
+  guard: GroundingRemoteTargetGuard | null = null,
+  idempotencyKey?: string,
+) {
   return makeApp(AGENT, guard).request("/pull-requests/7/comments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ taskId: TASK_ID, owner, repo, body: "LGTM" }),
+    body: JSON.stringify({ taskId: TASK_ID, owner, repo, body: "LGTM", ...(idempotencyKey ? { idempotencyKey } : {}) }),
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   hasProjectAccessMock.mockResolvedValue(true);
+  prismaMocks.toolFindUnique.mockResolvedValue(null);
   findDelegationUserMock.mockResolvedValue({
     userId: "u1",
     login: "delegate",
@@ -229,18 +241,105 @@ describe("POST /pull-requests/:prNumber/comments cross-repo guard", () => {
     fetchMock.mockRestore();
   });
 
-  it("no binding (project.githubRepo null, no deliverableRepo): the gate is inactive, any repo is accepted", async () => {
+  it("no binding (project.githubRepo null, no deliverableRepo): fails closed with 400 no_effective_repo, before delegation and GitHub", async () => {
     wireTask({ githubRepo: null, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await postComment("someone", "anything");
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_effective_repo");
+    expect(body.message).toContain("githubRepo");
+    expect(body.message).toContain("deliverableRepo");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    expect(logAuditEventMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it.each([
+    ["an empty githubRepo", { githubRepo: "", deliverableRepo: null }],
+    ["a blank githubRepo", { githubRepo: "   ", deliverableRepo: null }],
+    ["an empty deliverableRepo (it wins over the project repo, so nothing usable is left)", { githubRepo: HOME_REPO, deliverableRepo: "" }],
+  ])("%s fails closed with 400 no_effective_repo", async (_label, input) => {
+    wireTask(input);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await postComment("lannguyensi", "repo");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "no_effective_repo" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("an empty deliverableRepo over a set githubRepo says so instead of claiming neither is set", async () => {
+    wireTask({ githubRepo: HOME_REPO, deliverableRepo: "" });
+
+    const res = await postComment("lannguyensi", "repo");
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_effective_repo");
+    expect(body.message).toContain("deliverableRepo is empty and overrides");
+    expect(body.message).not.toContain("neither");
+  });
+
+  it("with an idempotencyKey the refusal reads and writes no idempotency record", async () => {
+    wireTask({ githubRepo: null, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await postComment("someone", "anything", null, "comment-key-no-repo");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "no_effective_repo" });
+    expect(prismaMocks.toolFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.toolCreate).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it.each([
+    ["a githubRepo without a slash", { githubRepo: "not-a-repo", deliverableRepo: null }],
+    ["a githubRepo with an empty repo part", { githubRepo: "owner/", deliverableRepo: null }],
+    ["a malformed deliverableRepo", { githubRepo: HOME_REPO, deliverableRepo: "no-slash" }],
+  ])("%s (not owner/repo) fails closed with 400 no_effective_repo naming the value", async (_label, input) => {
+    wireTask(input);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await postComment("lannguyensi", "repo");
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_effective_repo");
+    expect(body.message).toContain(`"${input.deliverableRepo ?? input.githubRepo}" is not in owner/repo form`);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("unbound project with a deliverableRepo: the comment is compared against it (pass and mismatch)", async () => {
+    wireTask({ githubRepo: null, deliverableRepo: DELIVERABLE_REPO });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ id: 13, html_url: "https://github.com/x", body: "LGTM" }), {
         status: 201,
       }),
     );
 
-    const res = await postComment("someone", "anything");
+    const allowed = await postComment("acme", "deliverable");
+    expect(allowed.status).toBe(201);
 
-    expect(res.status).toBe(201);
-    expect(fetchMock).toHaveBeenCalled();
+    const refused = await postComment("someone", "anything");
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: "cross_repo_pr_rejected",
+      message: `PR belongs to someone/anything but this task's effective deliverable repo is ${DELIVERABLE_REPO}`,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     fetchMock.mockRestore();
   });
 
@@ -285,6 +384,37 @@ describe("POST /pull-requests/:prNumber/comments cross-repo guard with the Groun
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "cross_repo_pr_rejected" });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("no effective repo: a repository the boundary refuses is answered by the boundary, not by no_effective_repo", async () => {
+    wireTask({ githubRepo: null, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const guard = vi.fn().mockResolvedValue(refusal);
+
+    const res = await postComment("other-org", "other-repo", guard);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "grounding_enrollment_required", message: "refused by the boundary" });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(guard).toHaveBeenCalledWith({ repo: FOREIGN_REPO, prNumber: 7, kind: "comment", taskId: TASK_ID });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("no effective repo: a repository the boundary does not refuse is still refused with 400 no_effective_repo", async () => {
+    wireTask({ githubRepo: null, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const guard = vi.fn().mockResolvedValue(null);
+
+    const res = await postComment("other-org", "other-repo", guard);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "no_effective_repo" });
     expect(guard).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(findDelegationUserMock).not.toHaveBeenCalled();

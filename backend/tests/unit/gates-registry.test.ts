@@ -14,6 +14,9 @@ import {
   checkTaskStatusForMerge,
   checkPrRepoMatchesProject,
   checkOwnerRepoMatchesProject,
+  requireEffectiveRepo,
+  prRepoMatchesProjectGate,
+  noEffectiveRepoMessage,
   effectiveDeliverableRepo,
   isForeignDeliverable,
 } from "../../src/services/gates/index.js";
@@ -369,6 +372,110 @@ describe("checkOwnerRepoMatchesProject", () => {
       project,
     );
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("requireEffectiveRepo", () => {
+  it("is ok when the project repo is set and the task has no override", () => {
+    expect(requireEffectiveRepo({}, { githubRepo: "LanNguyenSi/agent-tasks" })).toEqual({
+      ok: true,
+      effectiveRepo: "LanNguyenSi/agent-tasks",
+    });
+  });
+
+  it("is ok when only the task override is set (unbound project)", () => {
+    expect(
+      requireEffectiveRepo({ deliverableRepo: "foreign-org/foreign-repo" }, { githubRepo: null }),
+    ).toEqual({ ok: true, effectiveRepo: "foreign-org/foreign-repo" });
+  });
+
+  it("is missing when neither the project nor the task names a repo", () => {
+    expect(requireEffectiveRepo({}, { githubRepo: null })).toEqual({
+      ok: false,
+      reason: "missing",
+      effectiveRepo: null,
+    });
+    expect(requireEffectiveRepo({ deliverableRepo: null }, { githubRepo: null }).ok).toBe(false);
+  });
+
+  it.each(["", "   "])("treats the empty or blank value %j as missing", (value) => {
+    expect(requireEffectiveRepo({}, { githubRepo: value })).toMatchObject({ ok: false, reason: "missing" });
+    expect(requireEffectiveRepo({ deliverableRepo: value }, { githubRepo: "a/b" })).toMatchObject({
+      ok: false,
+      reason: "missing",
+    });
+  });
+
+  it.each(["no-slash", "owner/", "/repo"])("is malformed for %j and keeps the stored value", (value) => {
+    expect(requireEffectiveRepo({}, { githubRepo: value })).toEqual({
+      ok: false,
+      reason: "malformed",
+      effectiveRepo: value,
+    });
+  });
+
+  it("flags an empty or blank deliverableRepo that overrides a set project repo, and only then", () => {
+    expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: "a/b" })).toEqual({
+      ok: false,
+      reason: "missing",
+      effectiveRepo: null,
+      emptyOverride: true,
+    });
+    expect(requireEffectiveRepo({ deliverableRepo: "  " }, { githubRepo: "a/b" })).toMatchObject({ emptyOverride: true });
+    // A whitespace-only project repo is no repo: nothing is shadowed (kills a dropped trim on the project side).
+    expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: "  " })).toEqual({
+      ok: false,
+      reason: "missing",
+      effectiveRepo: null,
+    });
+    // Nothing is shadowed when the project repo is empty too, or the task has no override.
+    expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: "" })).not.toHaveProperty("emptyOverride");
+    expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: null })).not.toHaveProperty("emptyOverride");
+    expect(requireEffectiveRepo({ deliverableRepo: null }, { githubRepo: null })).not.toHaveProperty("emptyOverride");
+    expect(requireEffectiveRepo({}, { githubRepo: "" })).not.toHaveProperty("emptyOverride");
+  });
+
+  it("the task override wins over the project repo, also when the override is the unusable one", () => {
+    expect(requireEffectiveRepo({ deliverableRepo: "no-slash" }, { githubRepo: "a/b" })).toMatchObject({
+      ok: false,
+      reason: "malformed",
+    });
+    expect(requireEffectiveRepo({ deliverableRepo: "c/d" }, { githubRepo: "no-slash" })).toEqual({
+      ok: true,
+      effectiveRepo: "c/d",
+    });
+  });
+
+  it("leaves checkOwnerRepoMatchesProject unchanged: no binding is still ok there", () => {
+    expect(checkOwnerRepoMatchesProject("a", "b", {}, { githubRepo: null })).toEqual({ ok: true });
+  });
+
+  it("messages name both repo fields for a missing repo and the value for a malformed one", () => {
+    const missing = requireEffectiveRepo({}, { githubRepo: null });
+    const malformed = requireEffectiveRepo({}, { githubRepo: "no-slash" });
+    if (missing.ok || malformed.ok) throw new Error("expected refusals");
+    expect(noEffectiveRepoMessage(missing)).toMatch(/githubRepo.*deliverableRepo/);
+    expect(noEffectiveRepoMessage(malformed)).toContain('"no-slash"');
+    expect(noEffectiveRepoMessage(missing)).toContain("neither");
+    const shadowed = requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: "a/b" });
+    if (shadowed.ok) throw new Error("expected a refusal");
+    expect(noEffectiveRepoMessage(shadowed)).toContain("deliverableRepo is empty and overrides");
+  });
+});
+
+describe("prRepoMatchesProjectGate.describe", () => {
+  it("an unbound project is inactive and its text names the PR create and comment refusal", () => {
+    const d = prRepoMatchesProjectGate.describe({ githubRepo: null } as Parameters<typeof prRepoMatchesProjectGate.describe>[0]);
+    expect(d.active).toBe(false);
+    expect(d.because).toContain("no_effective_repo");
+    expect(d.because).toContain("pull_requests_create");
+    expect(d.because).not.toContain("any PR URL is accepted.");
+  });
+
+  it("a bound project is active and names the repo", () => {
+    const d = prRepoMatchesProjectGate.describe({ githubRepo: "owner/repo" } as Parameters<typeof prRepoMatchesProjectGate.describe>[0]);
+    expect(d.active).toBe(true);
+    expect(d.because).toContain("owner/repo");
   });
 });
 

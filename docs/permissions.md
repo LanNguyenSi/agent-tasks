@@ -16,7 +16,8 @@ Agents act through team-scoped agent tokens; what a token may do is set by its [
 |---|---:|---:|---:|---:|
 | Login | yes | yes | yes | no |
 | Create manual project | yes | yes | yes | no |
-| Sync GitHub project | yes | yes | yes | no |
+| Sync GitHub project (create and update) | yes | yes | yes | no |
+| Remove stale projects during a sync (the prune of `POST /api/teams/:id/sync`) | no | no | yes | no |
 | Create task | yes | yes | yes | yes* |
 | Claim task | yes | yes | yes | yes* |
 | Change workflow | no | no | yes | no |

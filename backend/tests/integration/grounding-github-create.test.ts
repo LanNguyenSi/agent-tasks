@@ -208,8 +208,26 @@ it("default provider bounds reads, rejects redirects, and encodes exact branch/b
   expect(fetcher.mock.calls[3]?.[1]).toMatchObject({ method: "POST", redirect: "error" });
 });
 
-it("unbound seed context remains excluded during a committed PR_CREATE dispatch", async () => {
+// The project keeps no repository of its own; the task's deliverableRepo names the
+// repository the create targets, so the create still has an effective repository
+// (a create with none is refused, see the no_effective_repo route tests).
+async function unbindProjectRepo() {
   await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: null } });
+  await f.db.task.update({ where: { id: f.taskId }, data: { deliverableRepo: `${f.request.owner}/${f.request.repo}` } });
+}
+
+it("a task with no effective repository gets 400 no_effective_repo before any fence, operation row or provider call", async () => {
+  await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: null } });
+  const result = await f.call();
+  expect(result).toMatchObject({ status: 400, body: { error: "no_effective_repo" } });
+  expect(f.create).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled();
+  expect(await f.db.groundingGithubCreateOperation.count({ where: { taskId: f.taskId } })).toBe(0);
+  expect(await f.db.groundingGithubFenceIntent.count({ where: { taskId: f.taskId } })).toBe(0);
+  expect(await f.db.task.findUniqueOrThrow({ where: { id: f.taskId } })).toMatchObject({ prUrl: null, prNumber: null });
+});
+
+it("seed context of a project without a repository remains excluded during a committed PR_CREATE dispatch", async () => {
+  await unbindProjectRepo();
   const gate = barrier(); f.create.mockImplementationOnce(async (_request, _token, operationId) => { await gate.wait(); return f.tagged(operationId); });
   const operation = f.call(); await gate.reached;
   const raw = await store.connect().task.update({ where: { id: f.taskId }, data: { branchName: "intruder" } }).then(() => "committed", e => String(e));
@@ -218,9 +236,9 @@ it("unbound seed context remains excluded during a committed PR_CREATE dispatch"
 });
 
 for (const isolationLevel of ["ReadCommitted", "Serializable"] as const) {
-  it.each(["task", "project", "cohort", "binding"] as const)(`${isolationLevel} old snapshot cannot mutate unbound %s context after create dispatch`, async kind => {
+  it.each(["task", "project", "cohort", "binding"] as const)(`${isolationLevel} old snapshot cannot mutate %s context of a project without a repository after create dispatch`, async kind => {
     await f.evidence();
-    await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: null } });
+    await unbindProjectRepo();
     const writer = barrier(); const post = barrier();
     const write = store.connect().$transaction(async tx => {
       await tx.task.findUniqueOrThrow({ where: { id: f.taskId } });
@@ -239,11 +257,11 @@ for (const isolationLevel of ["ReadCommitted", "Serializable"] as const) {
   });
 }
 
-it("different repository/key cannot dispatch a second create for the same unbound task", async () => {
-  await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: null } });
+it("a different key cannot dispatch a second create for the same task of a project without a repository", async () => {
+  await unbindProjectRepo();
   const gate = barrier(); f.create.mockImplementationOnce(async (_request, _token, operationId) => { await gate.wait(); return f.tagged(operationId); });
   const first = f.call(); await gate.reached;
-  const second = await f.restart().createOrResume(f.taskId, f.actor, "other-key", { ...f.request, owner: "other", repo: "repository" }).then(result => result, error => ({ error }));
+  const second = await f.restart().createOrResume(f.taskId, f.actor, "other-key", f.request).then(result => result, error => ({ error }));
   gate.release(); const initial = await first;
   expect(second).toMatchObject({ error: { status: 409 } });
   expect(initial.status).toBe(201); expect(f.create).toHaveBeenCalledTimes(1);

@@ -499,7 +499,8 @@ first (defense-in-depth). `emitTaskApprovedSignal` fires as usual.
 
 `task_submit_pr` and `task_finish { prUrl }` both validate that the PR's
 `owner/repo` matches `project.githubRepo`. Mismatches are rejected with
-`400 cross_repo_pr_rejected`. The `performPrMerge` helper derives
+`400 cross_repo_pr_rejected`. Server-side PR create and PR comment also refuse
+with `400 no_effective_repo` when no repo is set (see below). The `performPrMerge` helper derives
 `owner/repo` exclusively from the project — body-supplied values are
 ignored.
 
@@ -529,8 +530,32 @@ creation):
 - `PATCH /api/tasks/:id` (`prUrl`), both the agent and the human lane
 - `POST /api/github/pull-requests` — validated against the requested
   `owner`/`repo` **before** the PR is created on GitHub
+- `POST /api/github/pull-requests/:n/comments`: validated against the
+  requested `owner`/`repo` **before** the delegated token is looked up
 
-All five reject a mismatch with the same `400 cross_repo_pr_rejected` shape.
+All six reject a mismatch with the same `400 cross_repo_pr_rejected` shape.
+
+**No effective repo (PR create and PR comment fail closed).** The two server-side
+routes act with a team member's delegated GitHub token on a body-supplied
+`owner`/`repo`, so they need something to compare it against. When the
+effective deliverable repo is not usable (the project's `githubRepo` and the
+task's `deliverableRepo` are both unset, empty or blank, or the effective
+value is not in `owner/repo` form) both routes answer
+`400 { error: "no_effective_repo", message }`; the message tells the caller to
+set the task's `deliverableRepo` or the project's `githubRepo`. The check runs
+after the project-access gate and before the delegation lookup, so no GitHub
+call is made, nothing is written to the task and no idempotency record is
+stored. A keyed create owned by the grouped Grounding create service (an
+enforced or enrolled task, or a key with history) applies the same rule in
+`GroundingGithubCreateService` before it takes a fence or calls the provider;
+replaying a completed create of a task that has since lost its repository
+answers `409 precondition_failed`. Where Grounding is configured its refusal
+for the target keeps precedence over this 400 on the legacy handlers (for
+example `409 grounding_enrollment_required` for a repository-less task aimed
+at an enforced repository). The other write paths
+(`task_finish`, `task_submit_pr`, `PATCH /api/tasks/:id`) keep accepting any
+`prUrl` when no repo is bound. The MCP server has no teaching error for
+`no_effective_repo` yet; clients see the backend `error` and `message`.
 
 **What stays forbidden**:
 

@@ -51,10 +51,14 @@ export {
   checkOwnerRepoMatchesProject,
   effectiveDeliverableRepo,
   isForeignDeliverable,
+  NO_EFFECTIVE_REPO_ERROR,
+  noEffectiveRepoMessage,
   prRepoMatchesProjectGate,
   prRepoMatchesProjectRejectionMessage,
+  requireEffectiveRepo,
 } from "./pr-repo-matches-project.js";
 export type {
+  EffectiveRepoRequirementResult,
   PrRepoMatchesProjectResult,
   PrRepoMatchesProjectTask,
 } from "./pr-repo-matches-project.js";
