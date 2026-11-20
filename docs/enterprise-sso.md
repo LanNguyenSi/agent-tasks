@@ -74,7 +74,7 @@ A typical rollout:
 
 ### What stops account takeover
 
-Two checks protect against the most common IdP-linked-account attacks:
+Three checks protect against the most common IdP-linked-account attacks:
 
 1. **Email-verified requirement for linking.** `upsertUserFromOidc` will only
    link an SSO login to an existing local/GitHub user when the IdP asserts
@@ -86,6 +86,83 @@ Two checks protect against the most common IdP-linked-account attacks:
    SSO connection. Public free-mail domains (`gmail.com`, `outlook.com`, and
    a few others) are blocked outright. This prevents one team from silently
    auto-joining users from another team.
+3. **An identity is bound to its issuer.** An OIDC `sub` is only unique
+   within one issuer, so an existing identity row (looked up by
+   `provider=oidc` and `sub`) is only used when the connection it is bound
+   to has the same issuer as the connection the login comes through.
+   Issuers are compared as exact strings after removing trailing slashes. A
+   login through a connection with another issuer, or for an identity whose
+   bound connection is unset or was deleted, is refused with
+   `/auth/error?reason=sso_identity_conflict`: no session is issued, the
+   identity is not rebound, the profile is not updated and no team
+   membership is added. The backend logs a warning with the identity row id
+   and both connection ids, never the `sub`. The same issuer through another
+   team's connection signs in as before (the identity is rebound to that
+   connection and the user joins that team, subject to rule 4). When a
+   connection's issuer is changed, every identity bound to that connection
+   is unbound in the same transaction, so the new IdP cannot reuse those
+   `sub` values; the affected users are refused until an operator rebinds
+   them (see below). The same happens when a `PUT` saves over a connection
+   row it did not see when it started (two concurrent `PUT`s creating the
+   team's first connection): it cannot compare issuers, so it unbinds. The
+   lockout reaches further than that one team: an identity is a single row
+   per `sub`, bound to the connection of the user's last SSO login, so an
+   issuer change or a delete of that one connection locks the user out of
+   SSO through every team on that issuer.
+
+   A login decides and writes in one database transaction and reads every
+   input of that decision under a row lock there, connections before the
+   identity: its own connection (issuer, `autoProvision`, claimed domains;
+   the login fails with `sso_failed` when the issuer is no longer the one
+   the ID token was verified against, or the row is gone), then the
+   connection the identity is bound to, then the identity row, which must
+   still be bound to the connection that was just locked. If the identity
+   was unbound, rebound or created by someone else in between, the attempt
+   is rolled back and run once more against the new state. One case is not
+   retried: two first logins for a new `sub` that would also create the
+   same login name (the same user signing in twice in parallel). The second
+   fails on the unique login name before it reaches the identity and ends
+   in `sso_failed` with nothing written; the next attempt signs in. `PUT`
+   locks the connection row before it compares issuers and saves, and a
+   `DELETE` waits for a row that a login holds, so an issuer change or a
+   delete of either connection takes effect entirely before a login reads
+   or entirely after it committed, and the unbind of an issuer change then
+   covers what that login wrote. This also holds for a login through one
+   connection while the connection the identity is bound to changes its
+   issuer.
+4. **No team join without auto-provisioning.** With `autoProvision=false`,
+   an SSO login only succeeds for a user who is already a member of the
+   connection's team, also when the identity or a verified email matches;
+   anyone else gets `not_provisioned` (no session, no membership, the
+   identity is not rebound). Such a login never writes a membership row, so
+   a member who is removed while their login runs is not added back, and
+   `autoProvision` is the value stored when the login takes its lock, not
+   the one the callback read earlier. With `autoProvision=true` a user who
+   is not yet a member joins as `HUMAN_MEMBER`; an existing role is kept.
+
+Residual: identities are keyed by `sub` alone. The first connection that
+asserts a `sub` that has never been seen claims it, so an IdP of another
+issuer can pre-claim a `sub` before its real owner first signs in, and the
+real owner is then refused with `sso_identity_conflict`. Keying identities by
+issuer and `sub` would close this and needs a schema change.
+
+**Rebinding a locked-out identity by hand.** Check which IdP the user
+really belongs to, then point the row at a connection of that issuer:
+
+```sql
+UPDATE user_identities
+SET "ssoConnectionId" = '<id of a connection with the right issuer>'
+WHERE provider = 'oidc' AND "providerUserId" = '<sub>';
+```
+
+Rows that would currently be refused (unset or deleted connection):
+
+```sql
+SELECT ui.id, ui."userId", ui."ssoConnectionId"
+FROM user_identities ui
+LEFT JOIN sso_connections sc ON sc.id = ui."ssoConnectionId"
+WHERE ui.provider = 'oidc' AND (ui."ssoConnectionId" IS NULL OR sc.id IS NULL);
+```
 
 ### What's *not* enforced
 
@@ -203,7 +280,7 @@ the `sso:admin` scope, **not** a session cookie.
 | `GET`  | `/api/sso/whoami` | Returns the team the token belongs to and the current connection (or `null`). Used by the `/settings/team/sso` page to resolve the team without an out-of-band team ID. |
 | `GET`  | `/api/teams/:teamId/sso` | Current SSO connection for the team. `clientSecretEnc` is never returned. |
 | `PUT`  | `/api/teams/:teamId/sso` | Create or update. Fails with `400` if OIDC discovery fails (including an issuer that is not an `https` URL on a public address) or the domain is a blocked public-mail provider, and with `409` if a claimed domain is already owned by another team. |
-| `DELETE` | `/api/teams/:teamId/sso` | Remove the connection. Existing sessions for SSO-provisioned users are not invalidated. |
+| `DELETE` | `/api/teams/:teamId/sso` | Remove the connection. Existing sessions for SSO-provisioned users are not invalidated. The identities bound to the connection keep pointing at the deleted row, so a later SSO login for them is refused with `sso_identity_conflict`, also after the connection is recreated with the same issuer (the new row has a new id). To change the client ID or secret, use `PUT`, not delete and recreate; after a recreate, rebind the identities by hand (see "What stops account takeover"). |
 
 Login-flow endpoints are public:
 
@@ -225,8 +302,9 @@ Login-flow endpoints are public:
 | PUT returns `400 Domain ... is a public mail provider` | `gmail.com`, `outlook.com`, etc. cannot be claimed. Use your company's own domain. |
 | Login redirect lands on `/auth/error?reason=sso_unavailable` | OIDC discovery failed at login time (network, IdP outage). Check backend logs for the sanitized error message. |
 | Login redirect lands on `/auth/error?reason=state_mismatch` | State/nonce cookies were dropped or tampered with. Usually means a cross-origin cookie issue — verify `BACKEND_URL` matches the origin serving the backend. |
-| Login redirect lands on `/auth/error?reason=not_provisioned` | The SSO connection has `autoProvision=false` and the user isn't already in the team. Add them via the normal team-member flow first. |
-| Login redirect lands on `/auth/error?reason=sso_failed` | Generic fall-through; check backend logs. ID token verification failures (bad signature, wrong audience, expired, nonce mismatch) land here. |
+| Login redirect lands on `/auth/error?reason=not_provisioned` | The SSO connection has `autoProvision=false` and the user isn't already a member of the team (also when the user already has an SSO identity or a matching account). Add them via the normal team-member flow first. |
+| Login redirect lands on `/auth/error?reason=sso_identity_conflict` | The IdP's `sub` already belongs to an identity minted by a connection with a different issuer, or the identity's connection is unset, was deleted (also deleted and recreated) or changed its issuer. The login is refused on purpose (see "What stops account takeover"); an operator rebinds the identity row by hand. |
+| Login redirect lands on `/auth/error?reason=sso_failed` | Generic fall-through; check backend logs. ID token verification failures (bad signature, wrong audience, expired, nonce mismatch) land here, and so does a login that was in flight while its connection's issuer was changed or the connection was deleted (`SSO connection changed during login`), and the second of two parallel first logins of one new user (unique constraint on the login name); the user starts the login again. |
 | Login redirect lands on `/auth/error?reason=bad_request` | The callback arrived without a `code`, or without the transient state/nonce/PKCE cookies. Usually a cookie that was blocked or expired (the cookies live 10 minutes), or the callback URL was opened directly. |
 | Login redirect lands on `/auth/error?reason=sso_not_configured` | The connection was disabled or deleted between the login redirect and the callback. |
 | Login redirect lands on `/auth/error?reason=access_denied` (or another OAuth code) | The IdP sent back an `error` instead of a `code`. The callback forwards the value after reducing it to `[A-Za-z0-9_-]` (40 characters at most); the error page has its own message for `access_denied`, `server_error`, `temporarily_unavailable`, `login_required`, `consent_required` and `interaction_required`, and a generic one for any other code. |
@@ -239,10 +317,16 @@ The error page reads one query parameter, `reason`, for the SSO callback and the
   old secret is overwritten; there is no dual-secret window, so rotate during
   low-traffic hours.
 - **Change issuer**: update the issuer URL; the backend invalidates both the
-  old and new issuer's discovery cache on save.
+  old and new issuer's discovery cache on save, and unbinds every SSO
+  identity bound to the connection (a trailing slash alone is not a
+  change). Those users are refused with `sso_identity_conflict` until an
+  operator rebinds them.
 - **Disable temporarily**: toggle the **Enabled** checkbox. The connection
   row stays intact; login attempts return 404 and the discovery endpoint
   stops matching.
 - **Delete**: removes the row entirely. Users who were auto-provisioned via
   SSO are *not* removed from the team and can continue to log in via other
-  methods if they have them set.
+  methods if they have them set. Their SSO identities stay bound to the
+  deleted row and are refused with `sso_identity_conflict`, also after a
+  recreate with the same issuer; change client ID or secret with `PUT`
+  instead.
