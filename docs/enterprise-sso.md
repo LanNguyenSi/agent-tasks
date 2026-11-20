@@ -104,7 +104,11 @@ Three checks protect against the most common IdP-linked-account attacks:
    `sub` values; the affected users are refused until an operator rebinds
    them (see below). The same happens when a `PUT` saves over a connection
    row it did not see when it started (two concurrent `PUT`s creating the
-   team's first connection): it cannot compare issuers, so it unbinds.
+   team's first connection): it cannot compare issuers, so it unbinds. The
+   lockout reaches further than that one team: an identity is a single row
+   per `sub`, bound to the connection of the user's last SSO login, so an
+   issuer change or a delete of that one connection locks the user out of
+   SSO through every team on that issuer.
 
    A login decides and writes in one database transaction and reads every
    input of that decision under a row lock there, connections before the
@@ -114,14 +118,18 @@ Three checks protect against the most common IdP-linked-account attacks:
    connection the identity is bound to, then the identity row, which must
    still be bound to the connection that was just locked. If the identity
    was unbound, rebound or created by someone else in between, the attempt
-   is rolled back and run once more against the new state. `PUT` locks the
-   connection row before it compares issuers and saves, and a `DELETE`
-   waits for a row that a login holds, so an issuer change or a delete of
-   either connection takes effect entirely before a login reads or entirely
-   after it committed, and the unbind of an issuer change then covers what
-   that login wrote. This also holds for a login
-   through one connection while the connection the identity is bound to
-   changes its issuer.
+   is rolled back and run once more against the new state. One case is not
+   retried: two first logins for a new `sub` that would also create the
+   same login name (the same user signing in twice in parallel). The second
+   fails on the unique login name before it reaches the identity and ends
+   in `sso_failed` with nothing written; the next attempt signs in. `PUT`
+   locks the connection row before it compares issuers and saves, and a
+   `DELETE` waits for a row that a login holds, so an issuer change or a
+   delete of either connection takes effect entirely before a login reads
+   or entirely after it committed, and the unbind of an issuer change then
+   covers what that login wrote. This also holds for a login through one
+   connection while the connection the identity is bound to changes its
+   issuer.
 4. **No team join without auto-provisioning.** With `autoProvision=false`,
    an SSO login only succeeds for a user who is already a member of the
    connection's team, also when the identity or a verified email matches;
@@ -296,7 +304,7 @@ Login-flow endpoints are public:
 | Login redirect lands on `/auth/error?reason=state_mismatch` | State/nonce cookies were dropped or tampered with. Usually means a cross-origin cookie issue — verify `BACKEND_URL` matches the origin serving the backend. |
 | Login redirect lands on `/auth/error?reason=not_provisioned` | The SSO connection has `autoProvision=false` and the user isn't already a member of the team (also when the user already has an SSO identity or a matching account). Add them via the normal team-member flow first. |
 | Login redirect lands on `/auth/error?reason=sso_identity_conflict` | The IdP's `sub` already belongs to an identity minted by a connection with a different issuer, or the identity's connection is unset, was deleted (also deleted and recreated) or changed its issuer. The login is refused on purpose (see "What stops account takeover"); an operator rebinds the identity row by hand. |
-| Login redirect lands on `/auth/error?reason=sso_failed` | Generic fall-through; check backend logs. ID token verification failures (bad signature, wrong audience, expired, nonce mismatch) land here, and so does a login that was in flight while its connection's issuer was changed or the connection was deleted (`SSO connection changed during login`); the user starts the login again. |
+| Login redirect lands on `/auth/error?reason=sso_failed` | Generic fall-through; check backend logs. ID token verification failures (bad signature, wrong audience, expired, nonce mismatch) land here, and so does a login that was in flight while its connection's issuer was changed or the connection was deleted (`SSO connection changed during login`), and the second of two parallel first logins of one new user (unique constraint on the login name); the user starts the login again. |
 | Login redirect lands on `/auth/error?reason=bad_request` | The callback arrived without a `code`, or without the transient state/nonce/PKCE cookies. Usually a cookie that was blocked or expired (the cookies live 10 minutes), or the callback URL was opened directly. |
 | Login redirect lands on `/auth/error?reason=sso_not_configured` | The connection was disabled or deleted between the login redirect and the callback. |
 | Login redirect lands on `/auth/error?reason=access_denied` (or another OAuth code) | The IdP sent back an `error` instead of a `code`. The callback forwards the value after reducing it to `[A-Za-z0-9_-]` (40 characters at most); the error page has its own message for `access_denied`, `server_error`, `temporarily_unavailable`, `login_required`, `consent_required` and `interaction_required`, and a generic one for any other code. |

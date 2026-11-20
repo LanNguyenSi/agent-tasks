@@ -543,6 +543,40 @@ describe("upsertUserFromOidc: every input is read under a lock inside the transa
   });
 });
 
+describe("upsertUserFromOidc: profile refresh of an identity-matched user", () => {
+  // Each trust input alone must keep the claim's email off the user row.
+  it.each([
+    ["an unverified email on a claimed domain", { email_verified: false }, ["example.com"]],
+    ["email_verified missing", { email_verified: undefined }, ["example.com"]],
+    ["a verified email on an unclaimed domain", { email_verified: true }, ["other.example"]],
+    ["a verified email, no domain claimed", { email_verified: true }, []],
+    ["an unverified email on an unclaimed domain", { email_verified: false }, []],
+  ])("does not write %s to the user", async (_label, claimPatch, domains) => {
+    db.identity = identityBoundTo(LOGIN.id);
+    db.connections[LOGIN.id]!.emailDomains = domains;
+
+    const result = await upsertUserFromOidc(LOGIN, {
+      ...CLAIMS,
+      ...claimPatch,
+      email: "mallory@example.com",
+    } as typeof CLAIMS);
+
+    expect(result).toEqual({ id: VICTIM.id, login: VICTIM.login, email: VICTIM.email });
+    expect(mocks.userUpdate).toHaveBeenCalledTimes(1);
+    const data = mocks.userUpdate.mock.calls[0]![0].data;
+    expect("email" in data).toBe(true);
+    expect(data.email).toBeUndefined();
+  });
+
+  it("writes a verified email on a claimed domain to the user", async () => {
+    db.identity = identityBoundTo(LOGIN.id);
+
+    await upsertUserFromOidc(LOGIN, { ...CLAIMS, email: "Alice.New@example.com" });
+
+    expect(mocks.userUpdate.mock.calls[0]![0].data.email).toBe("alice.new@example.com");
+  });
+});
+
 describe("upsertUserFromOidc: auto-provisioning off never adds a team member", () => {
   beforeEach(() => {
     db.connections[LOGIN.id]!.autoProvision = false;
@@ -739,6 +773,37 @@ describe("upsertUserFromOidc: no identity for the sub", () => {
     expect(mocks.userCreate.mock.calls[0]![0].data.email).toBeUndefined();
     expect(mocks.userUpdate).not.toHaveBeenCalled();
     expect(mocks.identityCreate.mock.calls[0]![0].data).toMatchObject({ userId: "user-new" });
+  });
+
+  // A claimed domain is matched as a whole, never as a suffix or a parent.
+  it.each([
+    ["a domain that ends with the claimed one", "alice@evilcorp.example", ["corp.example"]],
+    ["a subdomain of the claimed one", "alice@sub.corp.example", ["corp.example"]],
+    ["the parent of the claimed one", "alice@corp.example", ["sub.corp.example"]],
+  ])("does not link a verified email on %s", async (_label, email, domains) => {
+    const existing: UserRow = { id: "user-existing", login: "existing", email, name: "Existing", avatarUrl: null };
+    db.users = [existing];
+    db.connections[LOGIN.id]!.emailDomains = domains;
+
+    const result = await upsertUserFromOidc(LOGIN, { ...CLAIMS, email, email_verified: true });
+
+    expect(mocks.userFindUnique).not.toHaveBeenCalledWith({ where: { email } });
+    expect(result).toEqual({ id: "user-new", login: "alice", email: null });
+    expect(mocks.userCreate.mock.calls[0]![0].data.email).toBeUndefined();
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
+    expect(mocks.identityCreate.mock.calls[0]![0].data).toMatchObject({ userId: "user-new" });
+  });
+
+  it("links a verified email whose domain is exactly a claimed one", async () => {
+    const email = "alice@corp.example";
+    const existing: UserRow = { id: "user-existing", login: "existing", email, name: "Existing", avatarUrl: null };
+    db.users = [existing];
+    db.connections[LOGIN.id]!.emailDomains = ["other.example", "corp.example"];
+
+    const result = await upsertUserFromOidc(LOGIN, { ...CLAIMS, email, email_verified: true });
+
+    expect(result).toEqual({ id: existing.id, login: "existing", email });
+    expect(mocks.userCreate).not.toHaveBeenCalled();
   });
 
   it("the claimed domains come from the locked connection row, not from the caller", async () => {

@@ -283,9 +283,9 @@ export function sameIssuer(a: string, b: string): boolean {
  * or deleted). A `sub` is only unique per issuer, so another IdP asserting the
  * same value must not reach that user. Nothing is written in that case.
  *
- * A new identity is inserted, never upserted: when two first logins race for
- * the same new `sub`, the loser's writes roll back and it runs once more
- * against the identity the winner created.
+ * A new identity is inserted, never upserted: a first login that loses that
+ * insert rolls back and runs once more against the winner's identity. A loser
+ * that derived the same new login name fails on the user insert, not retried.
  */
 export async function upsertUserFromOidc(
   ssoConnection: OidcLoginConnection,

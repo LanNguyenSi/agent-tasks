@@ -351,6 +351,32 @@ describe("OIDC identity bound to its issuer (real Postgres)", () => {
   });
 });
 
+describe("concurrent identical first logins (real Postgres)", () => {
+  it("same sub, same connection, same login name: one user, the loser fails on the login name or signs in", async () => {
+    const a = await connection(`https://shared-${U()}.example.com`);
+    for (let i = 0; i < 5; i++) {
+      const sub = `twice-${U()}`;
+      const usersBefore = await db.user.count();
+
+      const results = await Promise.allSettled([login(a, sub), login(a, sub)]);
+
+      const users = results
+        .map((r) => (r.status === "fulfilled" ? userId(r.value) : null))
+        .filter((v): v is string => v !== null);
+      expect(users.length).toBeGreaterThanOrEqual(1);
+      expect(new Set(users).size).toBe(1);
+      // Not retried: the loser fails on the unique login name, before the identity insert.
+      for (const r of results) {
+        if (r.status === "rejected") expect(String(r.reason)).toMatch(/Unique constraint failed.*login/s);
+      }
+      expect((await identity(sub))?.userId).toBe(users[0]);
+      expect(await db.user.count()).toBe(usersBefore + 1);
+      // The next attempt signs in.
+      expect(userId(await login(a, sub))).toBe(users[0]);
+    }
+  });
+});
+
 describe("login through a second connection against an issuer change of the bound connection", () => {
   it("issuer change commits after the login first read the identity: refused, identity stays unbound", async () => {
     const { evil, a, b, sub, victim } = await victimBoundToB();
@@ -422,6 +448,50 @@ describe("login through a second connection against an issuer change of the boun
     expect(await login(await read(b.teamId), sub, { name: "Mallory" })).toEqual(REFUSED);
     expect(userId(await login(b2, sub, { name: "Victim" }))).toBe(victim);
     expect(await teamsOf(victim)).toEqual([a.teamId, b.teamId, b2.teamId].sort());
+  });
+
+  it("the victim rebinds between the attacker login's first read and its lock, then B changes issuer: refused", async () => {
+    const { shared, evil, a, b, sub, victim } = await victimBoundToB();
+    const b2 = await connection(evil);
+    const b3 = await connection(shared);
+    const usersBefore = await db.user.count();
+
+    // The attacker's login has read the identity (bound to B) and is about to lock B.
+    const gate = pauseAt((call) => call.phase === "before" && readsConnection(b.id)(call));
+    const attack = login(b2, sub, { name: "Mallory" });
+    await gate.reached;
+    // The victim signs in through B3: the identity moves from B to B3.
+    expect(userId(await login(b3, sub, { name: "Victim" }))).toBe(victim);
+    // B moves to the attacker's IdP and has nothing to unbind any more.
+    await upsertSsoConnection(b.teamId, input(evil));
+    gate.release();
+
+    // B now has the attacker's issuer, but the identity is no longer bound to
+    // it: the binding read first is not used, and the second pass sees B3.
+    expect(await attack).toEqual(REFUSED);
+    expect((await identity(sub))?.ssoConnectionId).toBe(b3.id);
+    expect(await login(b2, sub, { name: "Mallory" })).toEqual(REFUSED);
+    expect(await login(await read(b.teamId), sub, { name: "Mallory" })).toEqual(REFUSED);
+    await expectVictimUntouched(victim, [a.teamId, b.teamId, b3.teamId], usersBefore);
+  });
+
+  it("a login waits for an uncommitted issuer change of the bound connection, then is refused", async () => {
+    const { evil, a, b, sub, victim } = await victimBoundToB();
+    const b2 = await connection(evil);
+    const usersBefore = await db.user.count();
+
+    // The change has written the attacker's issuer to B and has not unbound or committed yet.
+    const gate = pauseAt((call) => call.phase === "before" && call.point === "tx.userIdentity.updateMany");
+    const change = upsertSsoConnection(b.teamId, input(evil));
+    await gate.reached;
+    const attack = login(b2, sub, { name: "Mallory" });
+    await blockedOnLock(LOGIN_LOCK);
+    gate.release();
+    await change;
+
+    expect(await attack).toEqual(REFUSED);
+    expect((await identity(sub))?.ssoConnectionId).toBeNull();
+    await expectVictimUntouched(victim, [a.teamId, b.teamId], usersBefore);
   });
 
   // No hook and no delay: the unsynchronised race the deterministic cases pin.
@@ -769,6 +839,49 @@ describe("email link for a sub without an identity (real Postgres)", () => {
     expect(await db.userIdentity.count({ where: { userId: user.id } })).toBe(0);
     expect(await teamsOf(user.id)).toEqual([]);
     expect((await db.user.findUnique({ where: { id: result! } }))?.email).toBeNull();
+  });
+
+  it.each([
+    ["a domain that ends with the claimed one", (domain: string) => `evil${domain}`],
+    ["a subdomain of the claimed one", (domain: string) => `sub.${domain}`],
+  ])("does not link a verified email on %s", async (_label, other) => {
+    const id = U();
+    const claimed = `corp-${id}.example`;
+    const email = `alice@${other(claimed)}`;
+    const user = await db.user.create({ data: { login: `alice-${id}`, email, name: "Alice" } });
+    const c = await connection(`https://idp-${U()}.example.com`, { emailDomains: [claimed] });
+    const sub = `suffix-${U()}`;
+
+    const result = userId(await login(c, sub, { email, email_verified: true, name: "Mallory" }));
+
+    expect(result).not.toBeNull();
+    expect(result).not.toBe(user.id);
+    expect(await db.user.findUnique({ where: { id: user.id } })).toMatchObject({ email, name: "Alice" });
+    expect(await db.userIdentity.count({ where: { userId: user.id } })).toBe(0);
+    expect((await db.user.findUnique({ where: { id: result! } }))?.email).toBeNull();
+  });
+
+  it("an identity-matched login only writes a verified email on a claimed domain to the user", async () => {
+    const id = U();
+    const claimed = `corp-${id}.example`;
+    const email = `alice@${claimed}`;
+    const c = await connection(`https://idp-${U()}.example.com`, { emailDomains: [claimed] });
+    const sub = `profile-${U()}`;
+    const user = userId(await login(c, sub, { email, email_verified: true }))!;
+    const stored = async () => (await db.user.findUnique({ where: { id: user } }))?.email;
+    expect(await stored()).toBe(email);
+
+    // Unverified, on the claimed domain.
+    expect(userId(await login(c, sub, { email: `mallory@${claimed}`, email_verified: false }))).toBe(user);
+    expect(await stored()).toBe(email);
+    // Verified, on a domain the connection does not claim (also not by suffix).
+    expect(userId(await login(c, sub, { email: `mallory@evil${claimed}`, email_verified: true }))).toBe(user);
+    expect(await stored()).toBe(email);
+    expect(userId(await login(c, sub, { email: `mallory@other-${id}.example`, email_verified: true }))).toBe(user);
+    expect(await stored()).toBe(email);
+    // Verified and claimed: written.
+    expect(userId(await login(c, sub, { email: `alice.new@${claimed}`, email_verified: true }))).toBe(user);
+    expect(await stored()).toBe(`alice.new@${claimed}`);
   });
 
   it("a domain claim removed after the callback read the connection no longer links", async () => {
