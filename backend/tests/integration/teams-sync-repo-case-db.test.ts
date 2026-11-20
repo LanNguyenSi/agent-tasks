@@ -32,6 +32,7 @@ vi.mock("../../src/services/audit.js", async (orig) => ({
 }));
 
 import { teamRouter } from "../../src/routes/teams.js";
+import { logAuditEvent } from "../../src/services/audit.js";
 import { githubRepoEqualsInsensitive } from "../../src/lib/github-repo-match.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
@@ -44,7 +45,10 @@ beforeAll(async () => {
 afterAll(async () => {
   if (store) await store.close();
 });
-beforeEach(() => gh.listUserRepos.mockReset());
+beforeEach(() => {
+  gh.listUserRepos.mockReset();
+  vi.mocked(logAuditEvent).mockClear();
+});
 
 const repo = (full_name: string) => ({
   id: 1,
@@ -55,12 +59,19 @@ const repo = (full_name: string) => ({
   disabled: false,
 });
 
-async function seedTeam() {
+async function seedTeam(role: "ADMIN" | "HUMAN_MEMBER" | "REVIEWER" = "ADMIN") {
   const userId = randomUUID();
   await db.user.create({ data: { id: userId, login: `u-${userId}`, name: "u", githubAccessToken: "gho_x" } });
   const team = await db.team.create({ data: { name: `t-${userId}`, slug: `t-${userId}` } });
-  await db.teamMember.create({ data: { teamId: team.id, userId, role: "ADMIN" } });
+  await db.teamMember.create({ data: { teamId: team.id, userId, role } });
   return { userId, teamId: team.id };
+}
+/** A second member of an existing team, with its own GitHub token. */
+async function seedMember(teamId: string, role: "ADMIN" | "HUMAN_MEMBER" | "REVIEWER") {
+  const userId = randomUUID();
+  await db.user.create({ data: { id: userId, login: `m-${userId}`, name: "m", githubAccessToken: "gho_m" } });
+  await db.teamMember.create({ data: { teamId, userId, role } });
+  return userId;
 }
 async function seedProject(teamId: string, githubRepo: string | null, createdAt?: Date) {
   const slug = randomUUID();
@@ -244,6 +255,152 @@ describe("POST /teams/:id/sync on real Postgres", () => {
     const r = await sync(userId, teamId);
 
     expect(r.body).toMatchObject({ created: 1, pruned: 1, pruneDeferred: false });
+  });
+});
+
+describe("POST /teams/:id/sync prune is limited to team admins (real Postgres)", () => {
+  for (const role of ["HUMAN_MEMBER", "REVIEWER"] as const) {
+    it(`${role}: a stale binding keeps its project and its tasks, the response says why, no audit event`, async () => {
+      const { teamId } = await seedTeam("ADMIN");
+      const userId = await seedMember(teamId, role);
+      const stale = await seedProject(teamId, "lannguyensi/retired-na");
+      const task = await db.task.create({
+        data: { projectId: stale.id, title: "kept", createdByUserId: userId },
+      });
+      gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here-na")]);
+
+      const r = await sync(userId, teamId);
+
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({
+        synced: 1,
+        created: 1,
+        updated: 0,
+        pruned: 0,
+        pruneDeferred: false,
+        skippedPrune: false,
+        pruneSkipped: "not_admin",
+      });
+      expect(String(r.body.message)).toContain("Stale projects are only removed by a team admin.");
+      expect((await rows(teamId)).map((x) => x.githubRepo).sort()).toEqual(["LanNguyenSi/here-na", "lannguyensi/retired-na"]);
+      expect(await db.project.findUnique({ where: { id: stale.id } })).not.toBeNull();
+      expect(await db.task.findUnique({ where: { id: task.id } })).not.toBeNull();
+      expect(logAuditEvent).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a non-admin still updates an existing binding (create and update branches unchanged)", async () => {
+    const { teamId } = await seedTeam("ADMIN");
+    const userId = await seedMember(teamId, "HUMAN_MEMBER");
+    const bound = await seedProject(teamId, "lannguyensi/agent-tasks-na");
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/agent-tasks-na"), repo("LanNguyenSi/new-na")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ created: 1, updated: 1, pruned: 0, pruneSkipped: "not_admin" });
+    const after = await rows(teamId);
+    expect(after.find((x) => x.id === bound.id)!.githubRepo).toBe("LanNguyenSi/agent-tasks-na");
+    expect(after).toHaveLength(2);
+  });
+
+  it("a non-admin with an empty repository list gets both flags and loses nothing", async () => {
+    const { teamId } = await seedTeam("ADMIN");
+    const userId = await seedMember(teamId, "HUMAN_MEMBER");
+    const stale = await seedProject(teamId, "lannguyensi/retired-empty");
+    gh.listUserRepos.mockResolvedValue([]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ pruned: 0, skippedPrune: true, pruneSkipped: "not_admin", pruneDeferred: false });
+    expect(String(r.body.message)).toBe(
+      "GitHub sync returned 0 repositories; prune was skipped for safety. Stale projects are only removed by a team admin.",
+    );
+    expect(await db.project.findUnique({ where: { id: stale.id } })).not.toBeNull();
+  });
+
+  it("an admin with an empty repository list keeps skippedPrune and pruneSkipped null", async () => {
+    const { userId, teamId } = await seedTeam("ADMIN");
+    const stale = await seedProject(teamId, "lannguyensi/retired-empty-admin");
+    gh.listUserRepos.mockResolvedValue([]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ pruned: 0, skippedPrune: true, pruneSkipped: null, pruneDeferred: false });
+    expect(String(r.body.message)).toBe("GitHub sync returned 0 repositories; prune was skipped for safety.");
+    expect(await db.project.findUnique({ where: { id: stale.id } })).not.toBeNull();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("a non-admin does not reach a fenced stale binding: no deferral, 200, nothing removed", async () => {
+    const { teamId } = await seedTeam("ADMIN");
+    const userId = await seedMember(teamId, "REVIEWER");
+    const fencedStale = await seedProject(teamId, "lannguyensi/stale-fenced-na");
+    const intentId = randomUUID();
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_fence_intents (id, repo, kind, state) VALUES ('${intentId}', 'lannguyensi/stale-fenced-na', 'MERGE', 'ACTIVE')`,
+    );
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_repository_fences (repo, version, "ownerId") VALUES ('lannguyensi/stale-fenced-na', 1, '${intentId}') ON CONFLICT (repo) DO UPDATE SET "ownerId" = EXCLUDED."ownerId"`,
+    );
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/keep-na")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ pruned: 0, pruneDeferred: false, pruneSkipped: "not_admin" });
+    expect(await db.project.findUnique({ where: { id: fencedStale.id } })).not.toBeNull();
+  });
+
+  it("an admin removes the stale projects and the audit event names the team, the actor and every deleted id", async () => {
+    const { teamId } = await seedTeam("ADMIN");
+    const userId = await seedMember(teamId, "ADMIN");
+    const keep = await seedProject(teamId, "LanNguyenSi/keep-adm");
+    const goneA = await seedProject(teamId, "lannguyensi/gone-adm-a");
+    const goneB = await seedProject(teamId, "lannguyensi/gone-adm-b");
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/keep-adm")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ pruned: 2, pruneSkipped: null, pruneDeferred: false, skippedPrune: false });
+    expect(String(r.body.message)).not.toContain("team admin");
+    expect((await rows(teamId)).map((x) => x.id)).toEqual([keep.id]);
+    expect(logAuditEvent).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(logAuditEvent).mock.calls[0]![0];
+    expect(arg).toMatchObject({
+      action: "project.synced",
+      actorId: userId,
+      payload: { teamId, via: "team_sync_prune", deletedCount: 2 },
+    });
+    expect([...(arg.payload as { candidateProjectIds: string[] }).candidateProjectIds].sort()).toEqual([goneA.id, goneB.id].sort());
+  });
+
+  it("an admin with nothing stale emits no audit event", async () => {
+    const { userId, teamId } = await seedTeam("ADMIN");
+    await seedProject(teamId, "LanNguyenSi/all-here");
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/all-here")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ pruned: 0, pruneSkipped: null });
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("an admin whose prune is deferred by a fence emits no audit event", async () => {
+    const { userId, teamId } = await seedTeam("ADMIN");
+    await seedProject(teamId, "lannguyensi/stale-fenced-adm");
+    const intentId = randomUUID();
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_fence_intents (id, repo, kind, state) VALUES ('${intentId}', 'lannguyensi/stale-fenced-adm', 'MERGE', 'ACTIVE')`,
+    );
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_repository_fences (repo, version, "ownerId") VALUES ('lannguyensi/stale-fenced-adm', 1, '${intentId}') ON CONFLICT (repo) DO UPDATE SET "ownerId" = EXCLUDED."ownerId"`,
+    );
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/keep-fenced-adm")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ pruned: 0, pruneDeferred: true, pruneSkipped: null });
+    expect(logAuditEvent).not.toHaveBeenCalled();
   });
 });
 

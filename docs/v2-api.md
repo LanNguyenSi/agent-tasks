@@ -26,7 +26,7 @@ POST /api/teams                   # Create (body { name, slug }; name rule below
 GET  /api/teams/:id
 PATCH /api/teams/:id              # Rename (team admins; body { name }, same name rule; the slug never changes)
 POST /api/teams/:id/members
-POST /api/teams/:id/sync          # GitHub repo sync
+POST /api/teams/:id/sync          # GitHub repo sync (any member; only a team admin also prunes stale projects, others get pruneSkipped: "not_admin")
 # Team name rule (create and rename): trimmed, at most 100 code points, no control characters
 # (NUL, newline, tab, other C0/C1), no unpaired UTF-16 surrogate, no line or paragraph separator (U+2028, U+2029)
 # or bidi control (U+202A-U+202E, U+2066-U+2069), no private-use or noncharacter code point, no tag character
