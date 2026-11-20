@@ -5,6 +5,7 @@
  *  - domain-based discovery for the login page
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { config } from "../config/index.js";
@@ -88,27 +89,48 @@ export async function upsertSsoConnection(teamId: string, input: SsoConnectionIn
   for (const d of domains) validateDomain(d);
   await ensureDomainsUnclaimed(teamId, domains);
 
-  return prisma.ssoConnection.upsert({
-    where: { teamId },
-    create: {
-      teamId,
-      displayName: input.displayName,
-      issuer: input.issuer.replace(/\/+$/, ""),
-      clientId: input.clientId,
-      clientSecretEnc,
-      emailDomains: domains,
-      autoProvision: input.autoProvision ?? true,
-      enabled: input.enabled ?? true,
-    },
-    update: {
-      displayName: input.displayName,
-      issuer: input.issuer.replace(/\/+$/, ""),
-      clientId: input.clientId,
-      clientSecretEnc,
-      emailDomains: domains,
-      autoProvision: input.autoProvision ?? true,
-      enabled: input.enabled ?? true,
-    },
+  return prisma.$transaction(async (tx) => {
+    const previous = await tx.ssoConnection.findUnique({
+      where: { teamId },
+      select: { id: true, issuer: true },
+    });
+    const saved = await tx.ssoConnection.upsert({
+      where: { teamId },
+      create: {
+        teamId,
+        displayName: input.displayName,
+        issuer: input.issuer.replace(/\/+$/, ""),
+        clientId: input.clientId,
+        clientSecretEnc,
+        emailDomains: domains,
+        autoProvision: input.autoProvision ?? true,
+        enabled: input.enabled ?? true,
+      },
+      update: {
+        displayName: input.displayName,
+        issuer: input.issuer.replace(/\/+$/, ""),
+        clientId: input.clientId,
+        clientSecretEnc,
+        emailDomains: domains,
+        autoProvision: input.autoProvision ?? true,
+        enabled: input.enabled ?? true,
+      },
+    });
+    // An OIDC `sub` is only unique per issuer. When the connection moves to
+    // another issuer, the identities it minted (or that were rebound to it)
+    // are unbound, so the next login for them fails closed instead of letting
+    // the new IdP assert their `sub`.
+    if (previous && normalizeIssuer(previous.issuer) !== normalizeIssuer(saved.issuer)) {
+      const unbound = await tx.userIdentity.updateMany({
+        where: { provider: "oidc", ssoConnectionId: previous.id },
+        data: { ssoConnectionId: null },
+      });
+      logger.warn(
+        { component: "sso", phase: "issuer_change", connectionId: previous.id, unbound: unbound.count },
+        "SSO issuer changed: identities of the connection unbound",
+      );
+    }
+    return saved;
   });
 }
 
@@ -220,21 +242,53 @@ function normalizeIssuer(issuer: string): string {
  * and no identity/email match exists — callers should render an error in
  * that case rather than silently creating an orphan user.
  *
+ * It also returns `null` when auto-provisioning is disabled and the matched
+ * user is not already a member of the connection's team: with
+ * auto-provisioning off, SSO never adds anyone to the team.
+ *
  * Returns an `OidcLoginRefusal` when an identity for this `sub` exists and
  * the connection it is bound to has a different issuer, or is missing (null
  * or deleted). A `sub` is only unique per issuer, so another IdP asserting the
  * same value must not reach that user. Nothing is written in that case.
+ *
+ * All writes run in one transaction that re-reads the current connection's
+ * issuer under a row lock, so a concurrent issuer change either sees this
+ * login's identity (and unbinds it) or makes this login fail. When two first
+ * logins race for the same new `sub`, the loser's writes roll back and it runs
+ * once more against the identity the winner created.
  */
 export async function upsertUserFromOidc(
-  ssoConnection: {
-    id: string;
-    teamId: string;
-    issuer: string;
-    autoProvision: boolean;
-    emailDomains: string[];
-  },
+  ssoConnection: OidcLoginConnection,
   claims: OidcIdTokenClaims,
-): Promise<{ id: string; login: string; email: string | null } | OidcLoginRefusal | null> {
+): Promise<OidcLoginResult> {
+  try {
+    return await upsertUserFromOidcOnce(ssoConnection, claims);
+  } catch (err) {
+    if (!(err instanceof IdentityCreateConflict)) throw err;
+  }
+  return upsertUserFromOidcOnce(ssoConnection, claims);
+}
+
+interface OidcLoginConnection {
+  id: string;
+  teamId: string;
+  issuer: string;
+  autoProvision: boolean;
+  emailDomains: string[];
+}
+
+type OidcLoginResult = { id: string; login: string; email: string | null } | OidcLoginRefusal | null;
+
+/** Another login inserted the identity for this sub after our lookup. */
+class IdentityCreateConflict extends Error {}
+
+/** The connection changed issuer or was deleted while this login ran. */
+class ConnectionChangedDuringLogin extends Error {}
+
+async function upsertUserFromOidcOnce(
+  ssoConnection: OidcLoginConnection,
+  claims: OidcIdTokenClaims,
+): Promise<OidcLoginResult> {
   const providerUserId = claims.sub;
   const email = typeof claims.email === "string" ? claims.email.toLowerCase() : null;
   const emailVerified = claims.email_verified === true;
@@ -307,60 +361,105 @@ export async function upsertUserFromOidc(
     user = await prisma.user.findUnique({ where: { email } });
   }
 
-  // 3. Still nothing — provision, if policy allows.
-  if (!user) {
-    if (!ssoConnection.autoProvision) {
+  // 2a. Without auto-provisioning, SSO only signs in users who are already
+  //     members of the connection's team; it never adds one.
+  if (user && !ssoConnection.autoProvision) {
+    const membership = await prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId: ssoConnection.teamId, userId: user.id } },
+      select: { id: true },
+    });
+    if (!membership) {
       return null;
     }
-    const loginBase = email ? (email.split("@")[0] ?? email) : providerUserId;
-    const login = await generateUniqueLogin(loginBase);
-    // Only persist the email when it's trustworthy — otherwise we'd let an
-    // unverified OIDC claim seed a unique-email row that blocks later sign-ups.
-    user = await prisma.user.create({
-      data: {
-        login,
-        email: emailIsTrustworthy ? email : undefined,
-        name: displayName ?? undefined,
-        avatarUrl: picture ?? undefined,
-      },
-    });
-  } else {
-    // Refresh profile fields opportunistically — but don't overwrite a name
-    // the user has set locally with a blank from the IdP, and never overwrite
-    // an email with an unverified claim.
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        name: displayName ?? user.name ?? undefined,
-        avatarUrl: picture ?? user.avatarUrl ?? undefined,
-        email: emailIsTrustworthy ? (email ?? undefined) : undefined,
-      },
-    });
   }
 
-  // 4. Upsert the identity row so future logins hit the fast path.
-  await prisma.userIdentity.upsert({
-    where: { provider_providerUserId: { provider: "oidc", providerUserId } },
-    create: {
-      userId: user.id,
-      provider: "oidc",
-      providerUserId,
-      ssoConnectionId: ssoConnection.id,
-      email,
-    },
-    update: {
-      userId: user.id,
-      ssoConnectionId: ssoConnection.id,
-      email: email ?? undefined,
-    },
-  });
+  // 3. Still nothing: provision, if policy allows.
+  if (!user && !ssoConnection.autoProvision) {
+    return null;
+  }
+  const loginBase = email ? (email.split("@")[0] ?? email) : providerUserId;
+  const newLogin = user ? null : await generateUniqueLogin(loginBase);
+  const matchedUser = user;
 
-  // 5. Ensure membership in the SSO-owning team.
-  await prisma.teamMember.upsert({
-    where: { teamId_userId: { teamId: ssoConnection.teamId, userId: user.id } },
-    create: { teamId: ssoConnection.teamId, userId: user.id, role: "HUMAN_MEMBER" },
-    update: {},
-  });
+  return prisma.$transaction(async (tx) => {
+    // Lock the connection row and re-check its issuer: an issuer change
+    // commits either before this read (the login fails) or after this
+    // transaction (its unbind then covers the identity written here).
+    const current = await tx.$queryRaw<{ issuer: string }[]>`
+      SELECT issuer FROM sso_connections WHERE id = ${ssoConnection.id} FOR SHARE`;
+    if (
+      current.length === 0 ||
+      normalizeIssuer(current[0]!.issuer) !== normalizeIssuer(ssoConnection.issuer)
+    ) {
+      throw new ConnectionChangedDuringLogin("SSO connection changed during login");
+    }
 
-  return { id: user.id, login: user.login, email: user.email };
+    let loginUser: { id: string; login: string; email: string | null };
+    if (!matchedUser) {
+      // Only persist the email when it's trustworthy; otherwise we'd let an
+      // unverified OIDC claim seed a unique-email row that blocks later sign-ups.
+      loginUser = await tx.user.create({
+        data: {
+          login: newLogin!,
+          email: emailIsTrustworthy ? email : undefined,
+          name: displayName ?? undefined,
+          avatarUrl: picture ?? undefined,
+        },
+      });
+    } else {
+      // Refresh profile fields opportunistically, but don't overwrite a name
+      // the user has set locally with a blank from the IdP, and never overwrite
+      // an email with an unverified claim.
+      await tx.user.update({
+        where: { id: matchedUser.id },
+        data: {
+          name: displayName ?? matchedUser.name ?? undefined,
+          avatarUrl: picture ?? matchedUser.avatarUrl ?? undefined,
+          email: emailIsTrustworthy ? (email ?? undefined) : undefined,
+        },
+      });
+      loginUser = matchedUser;
+    }
+
+    // 4. Write the identity row so future logins hit the fast path. A new
+    //    identity is created, never upserted: if another login created it
+    //    since step 1, the issuer check has to run against that row.
+    if (existingIdentity) {
+      await tx.userIdentity.update({
+        where: { id: existingIdentity.id },
+        data: {
+          userId: loginUser.id,
+          ssoConnectionId: ssoConnection.id,
+          email: email ?? undefined,
+        },
+      });
+    } else {
+      try {
+        await tx.userIdentity.create({
+          data: {
+            userId: loginUser.id,
+            provider: "oidc",
+            providerUserId,
+            ssoConnectionId: ssoConnection.id,
+            email,
+          },
+        });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+          throw new IdentityCreateConflict("OIDC identity created concurrently");
+        }
+        throw err;
+      }
+    }
+
+    // 5. Ensure membership in the SSO-owning team (step 2a already refused a
+    //    non-member when auto-provisioning is off).
+    await tx.teamMember.upsert({
+      where: { teamId_userId: { teamId: ssoConnection.teamId, userId: loginUser.id } },
+      create: { teamId: ssoConnection.teamId, userId: loginUser.id, role: "HUMAN_MEMBER" },
+      update: {},
+    });
+
+    return { id: loginUser.id, login: loginUser.login, email: loginUser.email };
+  });
 }
