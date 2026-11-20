@@ -368,6 +368,82 @@ it("an enforced project without a GitHub repository still rejects on every remot
   await expectEnrollmentRequired(await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null)));
   await expectEnrollmentRequired(await a.fetch(request({ taskId: u.taskId, owner: "elsewhere", repo: "unrelated" }, "/api/github/pull-requests/3/merge", null)));
 });
+// The grouped create service owns a keyed create of an enforced project. With
+// no usable effective repository there is nothing to compare the body's target
+// against, so it refuses before any fence, operation row or provider call.
+function groupedCreate(target: string) {
+  const [owner, name] = target.split("/");
+  const raw = { body: "", number: 77, html_url: `https://github.com/${target}/pull/77`, title: "Create", head: { label: `${owner}:feature`, ref: "feature", sha: "a".repeat(40), repo: { full_name: target, owner: { login: owner } } }, base: { ref: "main", repo: { full_name: target } } };
+  const proof = (operationId: string) => ({ ...structuredClone(raw), body: `\n\n${githubCreateCorrelationMarker(operationId)}` });
+  const create = vi.fn<GroundingGithubCreateProvider["create"]>(async (_request, _token, operationId) => proof(operationId));
+  const read = vi.fn<GroundingGithubCreateProvider["read"]>(async (_request, _token, operationId) => ({ complete: true, pullRequests: [proof(operationId)] }));
+  const service = new GroundingGithubCreateService({ db: store.db, provider: { create, read } });
+  return { create, read, service, owner: owner!, name: name!, body: (taskId: string) => ({ taskId, owner: owner!, repo: name!, head: "feature", title: "Create" }) };
+}
+const victimRepo = () => `victim-org/${randomUUID().replaceAll("-", "")}`;
+async function expectNoCreateEffects(u: Awaited<ReturnType<typeof unscopedTask>>, g: ReturnType<typeof groupedCreate>) {
+  expect(g.create).not.toHaveBeenCalled(); expect(g.read).not.toHaveBeenCalled();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+  expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toMatchObject({ prUrl: null, prNumber: null });
+  expect(await store.db.groundingGithubCreateOperation.count({ where: { taskId: u.taskId } })).toBe(0);
+  expect(await store.db.groundingGithubFenceIntent.count({ where: { taskId: u.taskId } })).toBe(0);
+}
+it.each([
+  ["no repository anywhere", null, null],
+  ["an empty project repository", "", null],
+  ["a malformed project repository", "not-a-repo", null],
+  ["an empty deliverableRepo over a valid project repository", "acme/valid", ""],
+  ["a malformed deliverableRepo", "acme/valid", "no-slash"],
+] as const)("a keyed create of an enforced project with %s through the grouped service is refused with 400 no_effective_repo", async (_label, githubRepo, deliverableRepo) => {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: null, prUrl: null, deliverableRepo } });
+  const g = groupedCreate(victimRepo());
+  const result = await app(f.service, g.service, { projectIds: new Set([u.projectId]), repos: new Set() }).fetch(request(g.body(u.taskId), "/api/github/pull-requests", "no-repo-key"));
+  expect(result.status).toBe(400);
+  const body = await result.json() as { error: string; message: string };
+  expect(body.error).toBe("no_effective_repo"); expect(body.message).toContain("deliverableRepo"); expect(body.message).toContain("githubRepo");
+  await expectNoCreateEffects(u, g);
+});
+it("a keyed create outside the enforced scope without a repository is refused by the legacy creator with the same 400", async () => {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: null } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: null, prUrl: null, deliverableRepo: null } });
+  const g = groupedCreate(victimRepo());
+  const result = await app(f.service, g.service, emptyScope).fetch(request(g.body(u.taskId), "/api/github/pull-requests", "no-repo-unenforced-key"));
+  // Outside the enforced scope and without history the legacy creator owns this
+  // request and gives the same answer, with no provider involved.
+  expect(result.status).toBe(400); expect(await result.json()).toMatchObject({ error: "no_effective_repo" });
+  await expectNoCreateEffects(u, g);
+});
+it("a keyed create of an enforced project is compared against its deliverableRepo when the project has no repository (pass and mismatch)", async () => {
+  const u = await unscopedTask();
+  const target = victimRepo();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: null } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: null, prUrl: null, deliverableRepo: target } });
+  const g = groupedCreate(target);
+  const scope = { projectIds: new Set([u.projectId]), repos: new Set<string>() };
+  const other = groupedCreate(victimRepo());
+  const refused = await app(f.service, other.service, scope).fetch(request(other.body(u.taskId), "/api/github/pull-requests", "mismatch-key"));
+  expect(refused.status).toBe(409); expect(await refused.json()).toMatchObject({ error: "precondition_failed" });
+  expect(other.create).not.toHaveBeenCalled();
+  const created = await app(f.service, g.service, scope).fetch(request(g.body(u.taskId), "/api/github/pull-requests", "match-key"));
+  expect(created.status).toBe(201); expect(g.create).toHaveBeenCalledOnce();
+});
+it("replaying a completed grouped create after the task lost its repository is refused like a changed task, not answered 400", async () => {
+  const u = await unscopedTask();
+  const target = victimRepo();
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: null, prUrl: null, deliverableRepo: target } });
+  const g = groupedCreate(target);
+  const scope = { projectIds: new Set([u.projectId]), repos: new Set<string>() };
+  const a = app(f.service, g.service, scope);
+  expect((await a.fetch(request(g.body(u.taskId), "/api/github/pull-requests", "replay-key"))).status).toBe(201);
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: null } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { deliverableRepo: null } });
+  const replay = await a.fetch(request(g.body(u.taskId), "/api/github/pull-requests", "replay-key"));
+  expect(replay.status).toBe(409); expect(await replay.json()).toMatchObject({ error: "precondition_failed" });
+  expect(g.create).toHaveBeenCalledOnce();
+});
 // The legacy merger derives its repository from the project alone, so a task
 // whose project has none is refused by the legacy handler itself, before any
 // GitHub call, whatever its PR URL names.

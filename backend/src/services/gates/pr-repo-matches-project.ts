@@ -143,6 +143,8 @@ export type EffectiveRepoRequirementResult =
       reason: "missing" | "malformed";
       /** The effective repo string as stored, or null when none is set. */
       effectiveRepo: string | null;
+      /** `missing` only: the task's `deliverableRepo` is an empty string that overrides a project `githubRepo` which is set. */
+      emptyOverride?: true;
     };
 
 /** Error code the PR create and PR comment routes answer when `requireEffectiveRepo` fails. */
@@ -166,7 +168,13 @@ export function requireEffectiveRepo(
 ): EffectiveRepoRequirementResult {
   const effectiveRepo = effectiveDeliverableRepo(task, project);
   if (effectiveRepo === null || effectiveRepo === undefined || effectiveRepo.trim() === "") {
-    return { ok: false, reason: "missing", effectiveRepo: null };
+    const projectHasRepo = (project.githubRepo ?? "").trim() !== "";
+    return {
+      ok: false,
+      reason: "missing",
+      effectiveRepo: null,
+      ...(typeof task.deliverableRepo === "string" && projectHasRepo ? { emptyOverride: true as const } : {}),
+    };
   }
   if (!parseOwnerRepo(effectiveRepo)) {
     return { ok: false, reason: "malformed", effectiveRepo };
@@ -179,6 +187,9 @@ export function noEffectiveRepoMessage(
 ): string {
   if (result.reason === "malformed") {
     return `This task's effective deliverable repo "${result.effectiveRepo}" is not in owner/repo form. Set the task's deliverableRepo or the project's githubRepo to an owner/repo value.`;
+  }
+  if (result.emptyOverride) {
+    return "This task's deliverableRepo is empty and overrides the project's githubRepo. Set deliverableRepo to an owner/repo value or clear it.";
   }
   return "This task has no effective deliverable repo: neither the project's githubRepo nor the task's deliverableRepo is set. Set one of them (owner/repo) before creating or commenting on pull requests through agent-tasks.";
 }

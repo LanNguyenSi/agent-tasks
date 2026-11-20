@@ -545,9 +545,14 @@ value is not in `owner/repo` form) both routes answer
 set the task's `deliverableRepo` or the project's `githubRepo`. The check runs
 after the project-access gate and before the delegation lookup, so no GitHub
 call is made, nothing is written to the task and no idempotency record is
-stored. Where Grounding is configured its refusal for the target keeps
-precedence over this 400 (for example `409 grounding_enrollment_required` for
-a repository-less task aimed at an enforced repository). The other write paths
+stored. A keyed create owned by the grouped Grounding create service (an
+enforced or enrolled task, or a key with history) applies the same rule in
+`GroundingGithubCreateService` before it takes a fence or calls the provider;
+replaying a completed create of a task that has since lost its repository
+answers `409 precondition_failed`. Where Grounding is configured its refusal
+for the target keeps precedence over this 400 on the legacy handlers (for
+example `409 grounding_enrollment_required` for a repository-less task aimed
+at an enforced repository). The other write paths
 (`task_finish`, `task_submit_pr`, `PATCH /api/tasks/:id`) keep accepting any
 `prUrl` when no repo is bound. The MCP server has no teaching error for
 `no_effective_repo` yet; clients see the backend `error` and `message`.

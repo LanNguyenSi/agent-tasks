@@ -189,6 +189,18 @@ describe("POST /pull-requests without an effective repo", () => {
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 
+  it("an empty deliverableRepo over a set githubRepo says so instead of claiming neither is set", async () => {
+    wireTask({ githubRepo: HOME_REPO, deliverableRepo: "" });
+
+    const res = await postCreate("lannguyensi", "repo");
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_effective_repo");
+    expect(body.message).toContain("deliverableRepo is empty and overrides");
+    expect(body.message).not.toContain("neither");
+  });
+
   it.each([
     ["a githubRepo without a slash", { githubRepo: "not-a-repo", deliverableRepo: null }],
     ["a githubRepo with an empty repo part", { githubRepo: "owner/", deliverableRepo: null }],
@@ -202,7 +214,7 @@ describe("POST /pull-requests without an effective repo", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("no_effective_repo");
-    expect(body.message).toContain("owner/repo");
+    expect(body.message).toContain(`"${input.deliverableRepo ?? input.githubRepo}" is not in owner/repo form`);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(findDelegationUserMock).not.toHaveBeenCalled();
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();

@@ -267,6 +267,35 @@ describe("exact target", () => {
     expect(github.calls).toEqual([]);
     expect(await store.db.toolInvocation.count({ where: { projectId: requester.projectId } })).toBe(0);
   });
+
+  // A task with no effective repository has nothing to compare a target
+  // against. The boundary's refusal for a repository it protects keeps
+  // precedence; any other target is refused with 400 no_effective_repo, with
+  // no GitHub call, no task write and no idempotency record.
+  const repoless = async (site: "create" | "comment") => {
+    const requester = await requesterTask(store.db, site, canonicalRepo(), null);
+    await store.db.project.update({ where: { id: requester.projectId }, data: { githubRepo: null } });
+    return requester;
+  };
+  it.each(["create", "comment"] as const)("%s: a repository-less task aimed at an enforced repository is answered by the boundary, 409", async site => {
+    const requester = await repoless(site); const target = canonicalRepo();
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured({ projectIds: new Set(), repos: new Set([target]) }).fetch(siteRequest(site, requester.taskId, target, uniquePr(), token, `${site}-enforced-key`));
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    expect(github.calls).toEqual([]);
+  });
+  it.each(["create", "comment"] as const)("%s: a repository-less task aimed at an unprotected repository is refused with 400 no_effective_repo", async site => {
+    const requester = await repoless(site); const target = canonicalRepo();
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const before = await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } });
+    const response = await configured().fetch(siteRequest(site, requester.taskId, target, uniquePr(), token, `${site}-unprotected-key`));
+    expect(response.status).toBe(400);
+    const body = await response.json() as { error: string; message: string };
+    expect(body.error).toBe("no_effective_repo"); expect(body.message).toContain("githubRepo");
+    expect(github.calls).toEqual([]);
+    expect(await store.db.toolInvocation.count({ where: { projectId: requester.projectId } })).toBe(0);
+    expect(await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } })).toEqual(before);
+  });
 });
 
 describe("fence of the requesting task's own repositories", () => {

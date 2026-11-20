@@ -25,11 +25,14 @@ import type { GroundingRemoteTargetGuard } from "../../src/services/grounding-sc
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
+  toolFindUnique: vi.fn().mockResolvedValue(null),
+  toolCreate: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     task: { findUnique: prismaMocks.taskFindUnique },
+    toolInvocation: { findUnique: prismaMocks.toolFindUnique, create: prismaMocks.toolCreate },
   },
 }));
 
@@ -103,17 +106,23 @@ function wireTask(input: {
   });
 }
 
-async function postComment(owner: string, repo: string, guard: GroundingRemoteTargetGuard | null = null) {
+async function postComment(
+  owner: string,
+  repo: string,
+  guard: GroundingRemoteTargetGuard | null = null,
+  idempotencyKey?: string,
+) {
   return makeApp(AGENT, guard).request("/pull-requests/7/comments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ taskId: TASK_ID, owner, repo, body: "LGTM" }),
+    body: JSON.stringify({ taskId: TASK_ID, owner, repo, body: "LGTM", ...(idempotencyKey ? { idempotencyKey } : {}) }),
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   hasProjectAccessMock.mockResolvedValue(true);
+  prismaMocks.toolFindUnique.mockResolvedValue(null);
   findDelegationUserMock.mockResolvedValue({
     userId: "u1",
     login: "delegate",
@@ -266,6 +275,33 @@ describe("POST /pull-requests/:prNumber/comments cross-repo guard", () => {
     fetchMock.mockRestore();
   });
 
+  it("an empty deliverableRepo over a set githubRepo says so instead of claiming neither is set", async () => {
+    wireTask({ githubRepo: HOME_REPO, deliverableRepo: "" });
+
+    const res = await postComment("lannguyensi", "repo");
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_effective_repo");
+    expect(body.message).toContain("deliverableRepo is empty and overrides");
+    expect(body.message).not.toContain("neither");
+  });
+
+  it("with an idempotencyKey the refusal reads and writes no idempotency record", async () => {
+    wireTask({ githubRepo: null, deliverableRepo: null });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await postComment("someone", "anything", null, "comment-key-no-repo");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "no_effective_repo" });
+    expect(prismaMocks.toolFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.toolCreate).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
   it.each([
     ["a githubRepo without a slash", { githubRepo: "not-a-repo", deliverableRepo: null }],
     ["a githubRepo with an empty repo part", { githubRepo: "owner/", deliverableRepo: null }],
@@ -279,7 +315,7 @@ describe("POST /pull-requests/:prNumber/comments cross-repo guard", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("no_effective_repo");
-    expect(body.message).toContain("owner/repo");
+    expect(body.message).toContain(`"${input.deliverableRepo ?? input.githubRepo}" is not in owner/repo form`);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(findDelegationUserMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
