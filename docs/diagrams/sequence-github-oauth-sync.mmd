@@ -18,4 +18,4 @@ sequenceDiagram
     Human->>API: POST /api/teams/:id/sync
     API->>GitHub: list repos visible to this user
     API->>DB: update or create one project per repo
-    API->>DB: delete team projects whose repo is not in the list
+    API->>DB: team admin only: delete team projects whose repo is not in the list, audit the deleted ids
