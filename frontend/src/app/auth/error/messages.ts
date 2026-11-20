@@ -54,6 +54,10 @@ const MESSAGES: ReadonlyMap<string, string> = new Map([
     "Your account is not set up for this team yet. Ask a team admin to add you, then try again.",
   ],
   [
+    "sso_identity_conflict",
+    "Your single sign-on identity is linked to a different sign-in provider, so this sign-in was refused. Trying again will not help; please contact your team admin.",
+  ],
+  [
     "sso_failed",
     "Single sign-on failed. Please try again; if it keeps failing, contact your team admin.",
   ],

@@ -160,6 +160,7 @@ describe("producer parity with the backend redirects", () => {
         "state_mismatch",
         "sso_not_configured",
         "not_provisioned",
+        "sso_identity_conflict",
         "sso_failed",
       ]),
     );
