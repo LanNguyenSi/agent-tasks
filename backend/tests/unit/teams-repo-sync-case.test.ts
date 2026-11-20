@@ -364,7 +364,7 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
     expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith({
       action: "project.synced",
       actorId: HUMAN.userId,
-      payload: { teamId: TEAM_ID, via: "team_sync_prune", projectIds: ["p-gone"], deletedCount: 1 },
+      payload: { teamId: TEAM_ID, via: "team_sync_prune", candidateProjectIds: ["p-gone"], deletedCount: 1 },
     });
   });
 
@@ -376,6 +376,31 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
     await makeApp(HUMAN);
 
     expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
+  });
+
+  it("an admin whose DELETE removes fewer rows than it was handed reports the database count and lists every candidate id", async () => {
+    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
+    prismaMocks.projectFindMany.mockResolvedValue([
+      { id: "p-keep", githubRepo: STORED_REPO },
+      { id: "p-gone-a", githubRepo: "lannguyensi/retired-a" },
+      { id: "p-gone-b", githubRepo: "lannguyensi/retired-b" },
+    ]);
+    prismaMocks.projectDeleteMany.mockResolvedValue({ count: 1 });
+
+    const res = await makeApp(HUMAN);
+
+    expect(((await res.json()) as { pruned: number }).pruned).toBe(1);
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith({
+      action: "project.synced",
+      actorId: HUMAN.userId,
+      payload: {
+        teamId: TEAM_ID,
+        via: "team_sync_prune",
+        candidateProjectIds: ["p-gone-a", "p-gone-b"],
+        deletedCount: 1,
+      },
+    });
   });
 
   it("an admin whose DELETE reports 0 rows emits no audit event", async () => {

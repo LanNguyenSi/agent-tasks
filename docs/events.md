@@ -22,7 +22,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 |---|---|
 | `project.created` | New project |
 | `project.updated` | Settings changed (governance fields, confidence threshold, task template, ...). Also written, with no `projectId` and payload `{ teamId, from, to }`, when a team admin renames a team via `PATCH /api/teams/:id` |
-| `project.synced` | GitHub repo sync |
+| `project.synced` | Written only when a team admin's `POST /api/teams/:id/sync` removes projects (the prune); `projectId` is null and the payload is `{ teamId, via: 'team_sync_prune', candidateProjectIds, deletedCount }`. No event for a sync that removes nothing or is run by a non-admin |
 | `project.invite_created` / `project.invite_consumed` / `project.invite_revoked` | Per-project share-link lifecycle |
 | `project.member_removed` | Collaborator dropped from a project |
 | `project.solo_mode_disabled_by_share` | Auto-flip when a second human enters a soloMode project; the distinct-reviewer gate becomes real from this moment |

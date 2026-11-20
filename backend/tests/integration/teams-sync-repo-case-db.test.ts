@@ -371,7 +371,7 @@ describe("POST /teams/:id/sync prune is limited to team admins (real Postgres)",
       actorId: userId,
       payload: { teamId, via: "team_sync_prune", deletedCount: 2 },
     });
-    expect([...(arg.payload as { projectIds: string[] }).projectIds].sort()).toEqual([goneA.id, goneB.id].sort());
+    expect([...(arg.payload as { candidateProjectIds: string[] }).candidateProjectIds].sort()).toEqual([goneA.id, goneB.id].sort());
   });
 
   it("an admin with nothing stale emits no audit event", async () => {

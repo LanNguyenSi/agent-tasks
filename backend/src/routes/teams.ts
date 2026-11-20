@@ -358,16 +358,17 @@ teamRouter.post("/teams/:id/sync", async (c) => {
         pruned = deleted.count;
         if (pruned > 0) {
           // The removal is irreversible (the tasks go with the project), so
-          // the ids are kept in the audit trail. `projectIds` is the id list
-          // handed to the DELETE; `deletedCount` is what the database
-          // reported, and the two differ only if a row vanished in between.
+          // the ids are kept in the audit trail. `candidateProjectIds` are the
+          // ids handed to the DELETE, not a list of the rows it removed (the
+          // database reports only a count); `deletedCount` is that count, and
+          // it is lower than the candidate list if a row vanished in between.
           await logAuditEvent({
             action: "project.synced",
             actorId: actor.userId,
             payload: {
               teamId,
               via: "team_sync_prune",
-              projectIds: staleIds,
+              candidateProjectIds: staleIds,
               deletedCount: pruned,
             },
           });
