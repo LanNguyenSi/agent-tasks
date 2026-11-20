@@ -52,8 +52,7 @@ export class GroundingGithubCreateService {
     // compare the body-supplied target against (same rule as the legacy creator).
     const requirement = requireEffectiveRepo(task, task.project);
     if (!requirement.ok) throw new NoEffectiveRepoError(requirement);
-    const effective = task.deliverableRepo ?? task.project.githubRepo;
-    if (effective !== null && canonicalGithubRepo(effective) !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
+    if (canonicalGithubRepo(requirement.effectiveRepo) !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
     const chosenId = delegateId ?? (await findDelegationUser(task.project.teamId, "allowAgentPrCreate", { preferUserId: actor.userId, db }))?.userId;
     if (!chosenId) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
     await db.$queryRaw`SELECT id FROM users WHERE id = ${chosenId} FOR SHARE`;

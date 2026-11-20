@@ -377,13 +377,16 @@ describe("checkOwnerRepoMatchesProject", () => {
 
 describe("requireEffectiveRepo", () => {
   it("is ok when the project repo is set and the task has no override", () => {
-    expect(requireEffectiveRepo({}, { githubRepo: "LanNguyenSi/agent-tasks" })).toEqual({ ok: true });
+    expect(requireEffectiveRepo({}, { githubRepo: "LanNguyenSi/agent-tasks" })).toEqual({
+      ok: true,
+      effectiveRepo: "LanNguyenSi/agent-tasks",
+    });
   });
 
   it("is ok when only the task override is set (unbound project)", () => {
     expect(
       requireEffectiveRepo({ deliverableRepo: "foreign-org/foreign-repo" }, { githubRepo: null }),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, effectiveRepo: "foreign-org/foreign-repo" });
   });
 
   it("is missing when neither the project nor the task names a repo", () => {
@@ -419,6 +422,12 @@ describe("requireEffectiveRepo", () => {
       emptyOverride: true,
     });
     expect(requireEffectiveRepo({ deliverableRepo: "  " }, { githubRepo: "a/b" })).toMatchObject({ emptyOverride: true });
+    // A whitespace-only project repo is no repo: nothing is shadowed (kills a dropped trim on the project side).
+    expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: "  " })).toEqual({
+      ok: false,
+      reason: "missing",
+      effectiveRepo: null,
+    });
     // Nothing is shadowed when the project repo is empty too, or the task has no override.
     expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: "" })).not.toHaveProperty("emptyOverride");
     expect(requireEffectiveRepo({ deliverableRepo: "" }, { githubRepo: null })).not.toHaveProperty("emptyOverride");
@@ -431,7 +440,10 @@ describe("requireEffectiveRepo", () => {
       ok: false,
       reason: "malformed",
     });
-    expect(requireEffectiveRepo({ deliverableRepo: "c/d" }, { githubRepo: "no-slash" })).toEqual({ ok: true });
+    expect(requireEffectiveRepo({ deliverableRepo: "c/d" }, { githubRepo: "no-slash" })).toEqual({
+      ok: true,
+      effectiveRepo: "c/d",
+    });
   });
 
   it("leaves checkOwnerRepoMatchesProject unchanged: no binding is still ok there", () => {

@@ -226,7 +226,7 @@ it("a task with no effective repository gets 400 no_effective_repo before any fe
   expect(await f.db.task.findUniqueOrThrow({ where: { id: f.taskId } })).toMatchObject({ prUrl: null, prNumber: null });
 });
 
-it("unbound seed context remains excluded during a committed PR_CREATE dispatch", async () => {
+it("seed context of a project without a repository remains excluded during a committed PR_CREATE dispatch", async () => {
   await unbindProjectRepo();
   const gate = barrier(); f.create.mockImplementationOnce(async (_request, _token, operationId) => { await gate.wait(); return f.tagged(operationId); });
   const operation = f.call(); await gate.reached;
@@ -236,7 +236,7 @@ it("unbound seed context remains excluded during a committed PR_CREATE dispatch"
 });
 
 for (const isolationLevel of ["ReadCommitted", "Serializable"] as const) {
-  it.each(["task", "project", "cohort", "binding"] as const)(`${isolationLevel} old snapshot cannot mutate unbound %s context after create dispatch`, async kind => {
+  it.each(["task", "project", "cohort", "binding"] as const)(`${isolationLevel} old snapshot cannot mutate %s context of a project without a repository after create dispatch`, async kind => {
     await f.evidence();
     await unbindProjectRepo();
     const writer = barrier(); const post = barrier();
@@ -257,7 +257,7 @@ for (const isolationLevel of ["ReadCommitted", "Serializable"] as const) {
   });
 }
 
-it("a different key cannot dispatch a second create for the same unbound task", async () => {
+it("a different key cannot dispatch a second create for the same task of a project without a repository", async () => {
   await unbindProjectRepo();
   const gate = barrier(); f.create.mockImplementationOnce(async (_request, _token, operationId) => { await gate.wait(); return f.tagged(operationId); });
   const first = f.call(); await gate.reached;

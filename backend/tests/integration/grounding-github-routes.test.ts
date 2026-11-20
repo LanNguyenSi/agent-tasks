@@ -389,12 +389,12 @@ async function expectNoCreateEffects(u: Awaited<ReturnType<typeof unscopedTask>>
   expect(await store.db.groundingGithubFenceIntent.count({ where: { taskId: u.taskId } })).toBe(0);
 }
 it.each([
-  ["no repository anywhere", null, null],
-  ["an empty project repository", "", null],
-  ["a malformed project repository", "not-a-repo", null],
-  ["an empty deliverableRepo over a valid project repository", "acme/valid", ""],
-  ["a malformed deliverableRepo", "acme/valid", "no-slash"],
-] as const)("a keyed create of an enforced project with %s through the grouped service is refused with 400 no_effective_repo", async (_label, githubRepo, deliverableRepo) => {
+  ["no repository anywhere", null, null, "neither"],
+  ["an empty project repository", "", null, "neither"],
+  ["a malformed project repository", "not-a-repo", null, '"not-a-repo" is not in owner/repo form'],
+  ["an empty deliverableRepo over a valid project repository", "acme/valid", "", "deliverableRepo is empty and overrides"],
+  ["a malformed deliverableRepo", "acme/valid", "no-slash", '"no-slash" is not in owner/repo form'],
+] as const)("a keyed create of an enforced project with %s through the grouped service is refused with 400 no_effective_repo", async (_label, githubRepo, deliverableRepo, variant) => {
   const u = await unscopedTask();
   await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo } });
   await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: null, prUrl: null, deliverableRepo } });
@@ -402,8 +402,25 @@ it.each([
   const result = await app(f.service, g.service, { projectIds: new Set([u.projectId]), repos: new Set() }).fetch(request(g.body(u.taskId), "/api/github/pull-requests", "no-repo-key"));
   expect(result.status).toBe(400);
   const body = await result.json() as { error: string; message: string };
-  expect(body.error).toBe("no_effective_repo"); expect(body.message).toContain("deliverableRepo"); expect(body.message).toContain("githubRepo");
+  expect(body.error).toBe("no_effective_repo"); expect(body.message).toContain(variant);
+  // The other two message variants are not the one sent.
+  for (const other of ["neither", "is empty and overrides", "is not in owner/repo form"]) if (!variant.includes(other)) expect(body.message).not.toContain(other);
   await expectNoCreateEffects(u, g);
+});
+// The grouped create refuses a repository-less task before it looks at the
+// task's Grounding state: with an unresolved reservation it answers 400, not the
+// 409 grounding_finalization_pending the same request got before the check.
+it("a repository-less enforced task with an unresolved create reservation gets 400 no_effective_repo, before any Grounding refusal", async () => {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: null } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: null, prUrl: null, deliverableRepo: null } });
+  const held = victimRepo(); const [heldOwner, heldName] = held.split("/");
+  const intent = await store.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: held, kind: "PR_CREATE", taskId: u.taskId, state: "ACTIVE" } });
+  await store.db.groundingGithubCreateOperation.create({ data: { id: intent.id, taskId: u.taskId, projectId: u.projectId, key: "earlier-key", actorId: ids.agent, actorUserId: ids.user, actorTeamId: ids.team, fingerprint: "0".repeat(64), request: { owner: heldOwner, repo: heldName, head: "feature", base: "main", title: "Create", body: "" }, delegateUserId: ids.user, state: "RESERVED" } });
+  const g = groupedCreate(victimRepo());
+  const result = await app(f.service, g.service, { projectIds: new Set([u.projectId]), repos: new Set() }).fetch(request(g.body(u.taskId), "/api/github/pull-requests", "new-key"));
+  expect(result.status).toBe(400); expect(await result.json()).toMatchObject({ error: "no_effective_repo" });
+  expect(g.create).not.toHaveBeenCalled(); expect(g.read).not.toHaveBeenCalled();
 });
 it("a keyed create outside the enforced scope without a repository is refused by the legacy creator with the same 400", async () => {
   const u = await unscopedTask();

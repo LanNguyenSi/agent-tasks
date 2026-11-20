@@ -136,7 +136,7 @@ export function checkOwnerRepoMatchesProject(
  * to compare a body-supplied target against.
  */
 export type EffectiveRepoRequirementResult =
-  | { ok: true }
+  | { ok: true; /** The effective repo as stored: `deliverableRepo ?? githubRepo`, non-blank and parseable as `owner/repo`. */ effectiveRepo: string }
   | {
       ok: false;
       /** `missing`: neither the task nor the project names a repo (unset, empty or blank). `malformed`: the effective repo is set but is not `owner/repo`. */
@@ -173,13 +173,14 @@ export function requireEffectiveRepo(
       ok: false,
       reason: "missing",
       effectiveRepo: null,
-      ...(typeof task.deliverableRepo === "string" && projectHasRepo ? { emptyOverride: true as const } : {}),
+      // A blank effective repo with a set project repo can only come from a blank override.
+      ...(projectHasRepo ? { emptyOverride: true as const } : {}),
     };
   }
   if (!parseOwnerRepo(effectiveRepo)) {
     return { ok: false, reason: "malformed", effectiveRepo };
   }
-  return { ok: true };
+  return { ok: true, effectiveRepo };
 }
 
 export function noEffectiveRepoMessage(
