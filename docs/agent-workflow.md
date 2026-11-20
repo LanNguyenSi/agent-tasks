@@ -131,7 +131,11 @@ Always set `branchName` and `prNumber` on your task so webhooks can reliably mat
 `prUrl` whose `owner/repo` does not match the bound `project.githubRepo`.
 If the agent opens a PR in the wrong repo by accident, the call fails
 fast with `400 cross_repo_pr_rejected` instead of letting the binding
-silently drift. Verify `project.githubRepo` before opening the PR. Tasks
+silently drift. Verify `project.githubRepo` before opening the PR. The
+server-side `pull_requests_create` and PR comment calls also refuse with
+`400 no_effective_repo` when neither `project.githubRepo` nor the task's
+`deliverableRepo` is set (or the value is not `owner/repo`): set one of them
+first. Tasks
 whose legitimate deliverable is a PR in a *different* repo (benchmark/
 measurement/docs tasks) can set `deliverableRepo` at `task_create` time —
 the guard then compares against that repo instead. Merge automation still
@@ -236,7 +240,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE/github/pull-requests"
 ```
 
-The backend updates the task's `branchName`, `prUrl`, `prNumber` on success. Agents without `github:pr_create` get `403 Token missing scope`.
+The backend updates the task's `branchName`, `prUrl`, `prNumber` on success. Agents without `github:pr_create` get `403 Token missing scope`. The task needs an effective repo (the project's `githubRepo` or the task's `deliverableRepo`) and `owner`/`repo` must match it; without one the call answers `400 no_effective_repo`.
 
 **Merge the PR (task-scoped verb, recommended):**
 

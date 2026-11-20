@@ -6,6 +6,7 @@ import { canonicalGroundingJson, CREATE_CONSENT_REFUSAL, KEY_OTHER_ACTOR_REFUSAL
 import { groundingTransaction, lockGroundingTask, assertNoGroundingReservation, invalidateGroundingContext, GroundingDecisionError } from "./grounding-transaction.js";
 import { acquireGithubFence, assertGithubFenceOwned, releaseGithubFence, withGithubFenceWrites, canonicalGithubRepo, GithubFenceError, type GithubFenceOwner } from "./grounding-github-fence.js";
 import { findDelegationUser } from "./github-delegation.js";
+import { NO_EFFECTIVE_REPO_ERROR, noEffectiveRepoMessage, requireEffectiveRepo, type EffectiveRepoRequirementResult } from "./gates/pr-repo-matches-project.js";
 import { logGroundingContextMutation } from "./audit.js";
 import { normalizeGithubCreateRequest, githubCreateProof, hasGithubCreateCorrelation, githubGroundingCreateProvider, type GithubCreateRequest, type GithubCreateProof, type GroundingGithubCreateProvider } from "./grounding-github-create-provider.js";
 
@@ -23,7 +24,14 @@ function sameLogical(a: GithubCreateProof, b: GithubCreateProof) {
 function success(taskId: string, request: GithubCreateRequest, proof: GithubCreateProof) {
   return { pullRequest: { number: proof.number, url: proof.url, title: proof.title }, task: { id: taskId, branchName: request.head, prUrl: proof.url, prNumber: proof.number } };
 }
-export type GithubCreateResult = { status: 201; body: ReturnType<typeof success>; replayed?: boolean } | { status: 202; body: { error: "grounding_github_create_pending"; operationId: string; state?: GroundingGithubCreateOperation["state"] } | { error: "grounding_github_create_conflict"; operationId: string }; replayed?: boolean };
+export type GithubCreateResult = { status: 201; body: ReturnType<typeof success>; replayed?: boolean } | { status: 400; body: { error: typeof NO_EFFECTIVE_REPO_ERROR; message: string }; replayed?: boolean } | { status: 202; body: { error: "grounding_github_create_pending"; operationId: string; state?: GroundingGithubCreateOperation["state"] } | { error: "grounding_github_create_conflict"; operationId: string }; replayed?: boolean };
+
+/** The task has no usable effective repository (see `requireEffectiveRepo`): a first create is refused with 400, before any fence, operation row or provider call. */
+// A GroundingDecisionError so that `groundingTransaction` rethrows it instead of
+// reducing it to "unavailable"; `createOrResume` maps it to the 400 body.
+class NoEffectiveRepoError extends GroundingDecisionError {
+  constructor(readonly requirement: Extract<EffectiveRepoRequirementResult, { ok: false }>) { super("precondition_failed"); }
+}
 
 export class GroundingGithubCreateService {
   private readonly provider: GroundingGithubCreateProvider;
@@ -40,8 +48,11 @@ export class GroundingGithubCreateService {
   }
   private async authorize(db: Prisma.TransactionClient, task: GroundingTask, actor: AgentActor, request: GithubCreateRequest, delegateId?: string) {
     if (!await groundingAuthority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
-    const effective = task.deliverableRepo ?? task.project.githubRepo;
-    if (effective !== null && canonicalGithubRepo(effective) !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
+    // Fail closed: with no usable effective repository there is nothing to
+    // compare the body-supplied target against (same rule as the legacy creator).
+    const requirement = requireEffectiveRepo(task, task.project);
+    if (!requirement.ok) throw new NoEffectiveRepoError(requirement);
+    if (canonicalGithubRepo(requirement.effectiveRepo) !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
     const chosenId = delegateId ?? (await findDelegationUser(task.project.teamId, "allowAgentPrCreate", { preferUserId: actor.userId, db }))?.userId;
     if (!chosenId) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
     await db.$queryRaw`SELECT id FROM users WHERE id = ${chosenId} FOR SHARE`;
@@ -57,7 +68,12 @@ export class GroundingGithubCreateService {
     if (operation.state !== "COMPLETED") await assertGithubFenceOwned(db, fence(operation, request));
     const task = await lockGroundingTask(db, taskId);
     if (task.projectId !== operation.projectId) conflict();
-    const delegate = await this.authorize(db, task, actor, request, operation.delegateUserId);
+    // An existing operation whose task later lost its repository is refused like
+    // a changed one (409), never answered as a no-effect 400.
+    const delegate = await this.authorize(db, task, actor, request, operation.delegateUserId).catch(error => {
+      if (error instanceof NoEffectiveRepoError) throw new GroundingDecisionError("precondition_failed");
+      throw error;
+    });
     return { operation, task, delegate };
   }
   private replay(operation: GroundingGithubCreateOperation, request: GithubCreateRequest): GithubCreateResult {
@@ -106,10 +122,8 @@ export class GroundingGithubCreateService {
     });
   }
 
-  async createOrResume(taskId: string, inputActor: Actor, inputKey: string, input: unknown): Promise<GithubCreateResult> {
-    const actor = agent(inputActor); const request = normalizeGithubCreateRequest(input);
-    const key = z.string().trim().min(1).max(255).parse(inputKey); z.guid().parse(taskId);
-    const reservation = await this.transaction(async db => {
+  private reserve(taskId: string, actor: AgentActor, key: string, request: GithubCreateRequest) {
+    return this.transaction(async db => {
       const previous = await db.groundingGithubCreateOperation.findUnique({ where: { taskId_key: { taskId, key } } });
       if (previous) { this.match(previous, actor, request); return (await this.load(db, taskId, actor, key, request)).operation; }
       const before = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
@@ -123,6 +137,18 @@ export class GroundingGithubCreateService {
       return db.groundingGithubCreateOperation.create({ data: { id: owner.id, taskId, projectId: task.projectId, key, actorId: actor.tokenId, actorUserId: actor.userId, actorTeamId: actor.teamId,
         fingerprint: fingerprint(request), request: request as Prisma.InputJsonObject, delegateUserId: delegate.id } });
     });
+  }
+
+  async createOrResume(taskId: string, inputActor: Actor, inputKey: string, input: unknown): Promise<GithubCreateResult> {
+    const actor = agent(inputActor); const request = normalizeGithubCreateRequest(input);
+    const key = z.string().trim().min(1).max(255).parse(inputKey); z.guid().parse(taskId);
+    let reservation: GroundingGithubCreateOperation;
+    try {
+      reservation = await this.reserve(taskId, actor, key, request);
+    } catch (error) {
+      if (error instanceof NoEffectiveRepoError) return { status: 400, body: { error: NO_EFFECTIVE_REPO_ERROR, message: noEffectiveRepoMessage(error.requirement) } };
+      throw error;
+    }
     if (reservation.proofConflict) return this.proofConflict(reservation.id);
 
     const dispatch = await this.transaction(async db => {
