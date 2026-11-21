@@ -767,14 +767,18 @@ export default function ProjectsPage() {
     return <FullPageLoader variant="shell" label="Loading teams…" headerActions={2} />;
   }
 
-  // One band for both states: the title is the page, the summary carries
-  // the team and its project count (or the shared-project count), and the
-  // actions sit on the right like on /tasks and /settings.
+  // One band for both states: the title is the page, the summary carries the
+  // team, its own project count and, when the team view also lists projects
+  // shared in from elsewhere, that shared count too (the toolbar's
+  // "Showing a-b of N" counts the whole list, team-owned and shared alike),
+  // and the actions sit on the right like on /tasks and /settings.
+  const sharedProjectCount = projects.filter((p) => p.accessSource === "project").length;
   const teamProjectCount = selectedTeam
-    ? (selectedTeam.projectCount ?? projects.length)
+    ? (selectedTeam.projectCount ?? projects.length - sharedProjectCount)
     : 0;
   const summary = selectedTeam
-    ? `${selectedTeam.name} · ${teamProjectCount} ${teamProjectCount === 1 ? "project" : "projects"}`
+    ? `${selectedTeam.name} · ${teamProjectCount} ${teamProjectCount === 1 ? "project" : "projects"}` +
+      (sharedProjectCount > 0 ? `, ${sharedProjectCount} shared` : "")
     : `${sharedProjects.length} shared ${sharedProjects.length === 1 ? "project" : "projects"}`;
   const header = (
     <PageHeader title="Projects" summary={summary} truncateSummary>
