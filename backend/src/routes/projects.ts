@@ -19,8 +19,6 @@ import {
 } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import { listEligibleActors } from "../services/eligible-actors.js";
-import { unlink } from "node:fs/promises";
-import { storedFilePath } from "../services/attachment-files.js";
 import {
   GovernanceMode,
   deriveGovernanceModeFromFlags,
@@ -36,8 +34,8 @@ import {
   CLAIM_EVALUATION_ACTIONS,
 } from "../services/confidence-telemetry.js";
 import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
-import { GroundingAccessError } from "../services/grounding-context.js";
-import { groundingTransaction, lockGroundingProjects, lockGroundingTaskUnderProject, assertNoGroundingReservation, GroundingDecisionError } from "../services/grounding-transaction.js";
+import { GroundingAccessError, unavailable } from "../services/grounding-context.js";
+import { deleteProjectWithSafeguards, removeStoredAttachments, type ProjectDeletionResult } from "../services/project-deletion.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 projectRouter.onError((error, c) => {
@@ -648,40 +646,28 @@ projectRouter.delete("/projects/:id", async (c) => {
   }
 
   const projectId = c.req.param("id");
-  let attachments: { url: string }[] = [];
+  let result: ProjectDeletionResult;
   try {
-    await groundingTransaction(prisma, async db => {
-      await lockGroundingProjects(db, [projectId]);
-      const project = await db.project.findUnique({ where: { id: projectId } });
-      if (!project) throw new GroundingAccessError("not_found", 404);
-      await lockProjectAdminGrants(db, actor, project);
-      if (!await hasProjectRole(actor, project.id, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
-      const taskIds = (await db.task.findMany({ where: { projectId }, select: { id: true } })).map(task => task.id).sort();
-      for (const taskId of taskIds) await lockGroundingTaskUnderProject(db, taskId, [projectId]);
-      // Reservation denial deliberately precedes immutable-history denial.
-      for (const taskId of taskIds) await assertNoGroundingReservation(db, taskId);
-      const retained = await Promise.all(taskIds.map(async taskId =>
-        (await db.groundingCohort.findUnique({ where: { taskId } })) ||
-        (await db.groundingBinding.findUnique({ where: { taskId } })) ||
-        (await db.groundingOperation.findFirst({ where: { taskId } }))));
-      if (retained.some(Boolean)) throw new GroundingAccessError("bad_state", 409);
-      attachments = await db.taskAttachment.findMany({ where: { task: { projectId } }, select: { url: true } });
-      await db.project.delete({ where: { id: projectId } });
+    result = await deleteProjectWithSafeguards(prisma, projectId, {
+      admit: async (db, project) => {
+        await lockProjectAdminGrants(db, actor, project);
+        if (!await hasProjectRole(actor, project.id, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
+        return true;
+      },
     });
   } catch (error) {
-    if (error instanceof GroundingDecisionError && error.code === "grounding_finalization_pending") return c.json({ error: error.code }, 409);
-    if (error instanceof GroundingAccessError) {
-      if (error.code === "not_found") return notFound(c);
-      if (error.code === "forbidden") return forbidden(c, "Only project admins can delete projects");
-      return c.json({ error: "grounding_history_retained" }, 409);
-    }
+    if (error instanceof GroundingAccessError && error.code === "forbidden") return forbidden(c, "Only project admins can delete projects");
     throw error;
   }
-  // Reclaim disk only after the admitted database transaction committed.
-  for (const a of attachments) {
-    const abs = storedFilePath(a.url);
-    if (abs) await unlink(abs).catch(() => {});
+  if (!result.ok) {
+    if (result.reason === "not_found") return notFound(c);
+    if (result.reason === "reservation_pending") return c.json({ error: "grounding_finalization_pending" }, 409);
+    if (result.reason === "retained") return c.json({ error: "grounding_history_retained" }, 409);
+    // A repository fence refusal: the grounding transaction's own
+    // "verification unavailable" error, as before the service existed.
+    return unavailable();
   }
+  await removeStoredAttachments(result.attachmentUrls);
 
   return c.json({ success: true });
 });

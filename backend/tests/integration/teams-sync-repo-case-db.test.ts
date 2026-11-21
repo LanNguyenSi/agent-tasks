@@ -219,7 +219,7 @@ describe("POST /teams/:id/sync on real Postgres", () => {
     expect((await rows(teamId)).map((x) => x.githubRepo).sort()).toEqual(["LanNguyenSi/other2", "lannguyensi/fenced2"]);
   });
 
-  it("defers the whole prune (200, nothing removed) when a stale binding sits under an active fence, and a later sync prunes it", async () => {
+  it("defers a stale binding under an active fence (200, that project stays, the others go), and a later sync prunes it", async () => {
     const { userId, teamId } = await seedTeam();
     const keep = await seedProject(teamId, "LanNguyenSi/keep3");
     const fencedStale = await seedProject(teamId, "lannguyensi/stale-fenced3");
@@ -236,14 +236,15 @@ describe("POST /teams/:id/sync on real Postgres", () => {
     const r = await sync(userId, teamId);
 
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ pruned: 0, pruneDeferred: true, skippedPrune: false });
+    expect(r.body).toMatchObject({ pruned: 1, pruneDeferred: true, skippedPrune: false });
     expect(String(r.body.message)).toContain("postponed");
-    expect((await rows(teamId)).map((x) => x.id).sort()).toEqual([keep.id, fencedStale.id, freeStale.id].sort());
+    expect((await rows(teamId)).map((x) => x.id).sort()).toEqual([keep.id, fencedStale.id].sort());
+    expect(await db.project.findUnique({ where: { id: freeStale.id } })).toBeNull();
 
     await db.$executeRawUnsafe(`DELETE FROM grounding_github_repository_fences WHERE repo = 'lannguyensi/stale-fenced3'`);
     await db.$executeRawUnsafe(`UPDATE grounding_github_fence_intents SET state = 'DONE' WHERE id = '${intentId}'`);
     const again = await sync(userId, teamId);
-    expect(again.body).toMatchObject({ pruned: 2, pruneDeferred: false });
+    expect(again.body).toMatchObject({ pruned: 1, pruneDeferred: false });
     expect((await rows(teamId)).map((x) => x.id)).toEqual([keep.id]);
   });
 

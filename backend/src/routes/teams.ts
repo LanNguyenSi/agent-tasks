@@ -11,6 +11,10 @@ import { listUserRepos } from "../services/github-sync.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { githubRepoEqualsInsensitive } from "../lib/github-repo-match.js";
 import { isGithubFenceConflict } from "../services/grounding-github-fence.js";
+import { deleteProjectWithSafeguards, removeStoredAttachments } from "../services/project-deletion.js";
+
+/** Why a stale project survived the prune; the codes `DELETE /projects/:id` answers with. */
+type PruneRetainedReason = "grounding_history_retained" | "grounding_finalization_pending";
 
 export const teamRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -328,11 +332,15 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     }
   }
 
-  // Stale bindings are picked in code (lowercased) and deleted by id. The
-  // DELETE repeats the team scope and the case-insensitive `notIn` as defense
-  // in depth: `mode` applies to `notIn` on the Postgres engine (checked against
-  // a real database), so a binding that differs from a listed repo only in
-  // letter case is never removed even if the id list were wrong.
+  // Stale bindings are picked in code (lowercased) and deleted one project at
+  // a time through the same service as `DELETE /projects/:id`, so a project
+  // with grounding history or a pending grounding operation is kept and
+  // reported instead of failing the sync. Inside each project's transaction
+  // the row is checked again (still this team's, still not in the caller's
+  // list, case-insensitively), which is the defense in depth the former
+  // single DELETE statement carried.
+  const pruneRetained: { projectId: string; reason: PruneRetainedReason }[] = [];
+  const deletedProjectIds: string[] = [];
   if (canPrune && repoFullNames.length > 0) {
     const listed = new Set(repoFullNames.map((fullName) => fullName.toLowerCase()));
     const boundProjects = await prisma.project.findMany({
@@ -346,40 +354,50 @@ teamRouter.post("/teams/:id/sync", async (c) => {
       )
       .map((project) => project.id);
 
-    if (staleIds.length > 0) {
-      try {
-        const deleted = await prisma.project.deleteMany({
-          where: {
-            id: { in: staleIds },
+    try {
+      for (const projectId of staleIds) {
+        const result = await deleteProjectWithSafeguards(prisma, projectId, {
+          admit: async (_db, project) =>
+            project.teamId === teamId &&
+            project.githubRepo !== null &&
+            !listed.has(project.githubRepo.toLowerCase()),
+        });
+        if (result.ok) {
+          deletedProjectIds.push(projectId);
+          await removeStoredAttachments(result.attachmentUrls);
+        } else if (result.reason === "retained") {
+          pruneRetained.push({ projectId, reason: "grounding_history_retained" });
+        } else if (result.reason === "reservation_pending") {
+          pruneRetained.push({ projectId, reason: "grounding_finalization_pending" });
+        } else if (result.reason === "fenced") {
+          // An active grounding fence on this repository refuses the delete.
+          // The loop above has already written, so answer 200 and let the
+          // next sync retry it instead of turning the sync into a 500.
+          pruneDeferred = true;
+        }
+        // "not_found" and "not_eligible": the project vanished or no longer
+        // qualifies since it was picked; there is nothing left to prune.
+      }
+    } finally {
+      pruned = deletedProjectIds.length;
+      if (pruned > 0 || pruneRetained.length > 0) {
+        // The removal is irreversible (the tasks go with the project), so the
+        // ids are kept in the audit trail, also when a later project fails
+        // the request: `candidateProjectIds` are the stale ids picked,
+        // `deletedProjectIds` the ones actually removed, and `skippedProjects`
+        // the ones kept with the reason.
+        await logAuditEvent({
+          action: "project.synced",
+          actorId: actor.userId,
+          payload: {
             teamId,
-            githubRepo: { not: null, notIn: repoFullNames, mode: "insensitive" },
+            via: "team_sync_prune",
+            candidateProjectIds: staleIds,
+            deletedProjectIds,
+            deletedCount: pruned,
+            skippedProjects: pruneRetained,
           },
         });
-        pruned = deleted.count;
-        if (pruned > 0) {
-          // The removal is irreversible (the tasks go with the project), so
-          // the ids are kept in the audit trail. `candidateProjectIds` are the
-          // ids handed to the DELETE, not a list of the rows it removed (the
-          // database reports only a count); `deletedCount` is that count, and
-          // it is lower than the candidate list if a row vanished in between.
-          await logAuditEvent({
-            action: "project.synced",
-            actorId: actor.userId,
-            payload: {
-              teamId,
-              via: "team_sync_prune",
-              candidateProjectIds: staleIds,
-              deletedCount: pruned,
-            },
-          });
-        }
-      } catch (err) {
-        // A stale binding under an active grounding fence rejects the whole
-        // statement (one transaction, nothing removed). The loop above has
-        // already written, so answer 200 and let the next sync retry the
-        // prune instead of turning the sync into a 500.
-        if (!isGithubFenceConflict(err)) throw err;
-        pruneDeferred = true;
       }
     }
   }
@@ -398,6 +416,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     pruned,
     fenced,
     pruneDeferred,
+    pruneRetained,
     skippedPrune,
     pruneSkipped,
     message:
@@ -409,6 +428,9 @@ teamRouter.post("/teams/:id/sync", async (c) => {
             : "") +
           (pruneDeferred
             ? "; removal of stale projects was postponed because a repository operation is in flight, sync again shortly"
+            : "") +
+          (pruneRetained.length > 0
+            ? `; ${pruneRetained.length} stale project${pruneRetained.length === 1 ? " was" : "s were"} kept because of grounding history or a pending grounding operation (see pruneRetained)`
             : "")) +
       (canPrune ? "" : " Stale projects are only removed by a team admin."),
   });
