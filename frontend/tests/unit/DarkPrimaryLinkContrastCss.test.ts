@@ -222,7 +222,17 @@ describe("prose links stay distinguishable from text in both themes (link-in-tex
     expect(ruleBody(".prose-markdown a")).toMatch(/text-decoration:\s*underline\s*;/);
   });
 
-  it("no theme-scoped rule turns the prose link underline off", () => {
-    expect(css).not.toMatch(/html[^{]*\.prose-markdown a\s*\{[^}]*text-decoration:\s*none/);
+  it("no rule targeting a prose link turns its underline off", () => {
+    // Any selector list containing `.prose-markdown a` (with or without a
+    // theme prefix), except pseudo-class variants, must not drop the underline.
+    const rules = css.match(/[^{}]*\{[^}]*\}/g) ?? [];
+    const offenders = rules.filter((rule) => {
+      const [selector, body] = rule.split("{");
+      const targetsProseLink = selector
+        .split(",")
+        .some((part) => /\.prose-markdown a\s*$/.test(part.trim()));
+      return targetsProseLink && /text-decoration:\s*none/.test(body);
+    });
+    expect(offenders).toEqual([]);
   });
 });
