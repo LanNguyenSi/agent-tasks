@@ -17,6 +17,11 @@ const configSchema = z.object({
   // 32-byte key (hex or base64) used to encrypt OIDC client secrets at rest.
   // Required as soon as any SsoConnection exists; optional otherwise.
   SSO_ENCRYPTION_KEY: z.string().default(""),
+  // Key material for the encryption of stored GitHub OAuth tokens (see
+  // services/github-token-crypto.ts). Optional: empty means unset, and the
+  // key is then derived from SESSION_SECRET. Rotating whichever value is in
+  // effect makes stored tokens unreadable (users reconnect GitHub).
+  GITHUB_TOKEN_ENCRYPTION_KEY: z.preprocess(emptyAsUnset, z.string().optional()),
   BACKEND_URL: z.preprocess(emptyAsUnset, urlString().default("http://localhost:3001")),
   FRONTEND_URL: urlString().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),

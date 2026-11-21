@@ -20,6 +20,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { decryptGithubToken, rewriteLegacyGithubToken } from "./github-token-crypto.js";
 
 export type DelegationPermission = "allowAgentPrCreate" | "allowAgentPrMerge" | "allowAgentPrComment";
 
@@ -55,19 +56,44 @@ type DelegationCandidate = {
   allowAgentPrComment: boolean;
 };
 
+/**
+ * `stored` is the raw column value, kept next to the decrypted delegation so
+ * the caller can rewrite a legacy plaintext row once it has picked it.
+ */
+interface PickedDelegation {
+  delegation: DelegationUser;
+  stored: string;
+}
+
 function pickIfEligible(
   user: DelegationCandidate | null | undefined,
   permission: DelegationPermission,
-): DelegationUser | null {
+): PickedDelegation | null {
   if (!user) return null;
   if (!user.githubAccessToken) return null;
+  // An unreadable stored value (wrong key, tampered) counts as not connected.
+  const token = decryptGithubToken(user.githubAccessToken);
+  if (!token) return null;
   if (!user.githubConnectedAt) return null;
   if (!user[permission]) return null;
   return {
-    userId: user.id,
-    login: user.login,
-    githubAccessToken: user.githubAccessToken,
+    delegation: { userId: user.id, login: user.login, githubAccessToken: token },
+    stored: user.githubAccessToken,
   };
+}
+
+/**
+ * Legacy plaintext rows are rewritten encrypted on their first use. Skipped
+ * when the caller reads inside its own transaction (`opts.db`): a failed
+ * statement there would abort that transaction and the user row may be locked
+ * by it, so those rows are left to the next plain read and the start-up sweep.
+ */
+async function finish(
+  picked: PickedDelegation,
+  opts: DelegationOptions,
+): Promise<DelegationUser> {
+  if (!opts.db) await rewriteLegacyGithubToken({ id: picked.delegation.userId }, picked.stored);
+  return picked.delegation;
 }
 
 export async function findDelegationUser(
@@ -82,7 +108,7 @@ export async function findDelegationUser(
       include: { user: { select: userSelect } },
     });
     const eligible = pickIfEligible(preferred?.user, permission);
-    if (eligible) return eligible;
+    if (eligible) return finish(eligible, opts);
   }
 
   const members = await db.teamMember.findMany({
@@ -93,7 +119,7 @@ export async function findDelegationUser(
 
   for (const member of members) {
     const eligible = pickIfEligible(member.user, permission);
-    if (eligible) return eligible;
+    if (eligible) return finish(eligible, opts);
   }
 
   return null;

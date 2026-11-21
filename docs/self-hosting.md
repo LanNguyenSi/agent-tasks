@@ -150,6 +150,44 @@ A crash loop (the process exits) is different: `restart:
 unless-stopped` brings that container back, and the route reappears with
 its first successful probe.
 
+## GitHub token encryption
+
+The GitHub OAuth token of every connected user (`users.githubAccessToken`)
+is stored encrypted: AES-256-GCM, one random IV per value, kept as
+`v1:<iv>:<tag>:<ciphertext>`. The backend decrypts it in memory for each
+GitHub call made on a user's behalf (PR create and merge, repo sync, the
+health probe); no response or log line carries it. The OIDC client secrets
+of SSO connections are a separate store with their own key
+(`SSO_ENCRYPTION_KEY`, `docs/enterprise-sso.md`) and are not affected.
+
+**Key.** `GITHUB_TOKEN_ENCRYPTION_KEY` when it is set and not empty,
+otherwise `SESSION_SECRET`. Either value goes through HKDF-SHA256 with a
+fixed purpose string, so the AES key is never the session secret itself.
+`docker-compose.prod.yml` forwards the variable with an empty default.
+
+**Upgrade.** Tokens stored before this change are plaintext. They keep
+working: a plaintext value is used as it is and rewritten encrypted on its
+first use, and once per backend start a background pass encrypts every
+remaining plaintext row (it does not delay the start, logs only a count and
+is safe to run again or on two instances at once). Rolling back to a build
+without the encryption makes encrypted rows unusable for that build, so
+users reconnect GitHub after such a rollback.
+
+**Rotation and loss of the key.** There is no re-encryption tool. When the
+key in effect changes, every stored token becomes unreadable: the backend
+ignores those tokens (a delegated call falls back to a teammate with a
+readable token or is refused, repo sync asks the user to connect), logs
+nothing about the values, and the GitHub section of Settings shows the
+reconnect banner; each user reconnects GitHub there (new tokens are
+encrypted under the new key). That includes the case where no `GITHUB_TOKEN_ENCRYPTION_KEY` is set
+and you rotate `SESSION_SECRET`: the key then changes with it. To make
+later `SESSION_SECRET` rotations harmless, set `GITHUB_TOKEN_ENCRYPTION_KEY`
+to the value `SESSION_SECRET` has now: the derived key is the same, so no
+stored token becomes unreadable, and the secret can be rotated afterwards
+without disconnecting anyone. Setting it to any other value changes the key
+in effect like a rotation does. A database restore needs the same key
+as the instance that wrote the dump.
+
 ## Related
 
 - `docs/ops-backups.md`: backups, restore, the destructive-schema

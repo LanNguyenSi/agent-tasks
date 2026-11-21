@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   config: { GROUNDING_RUNTIME_CONFIG: "", CORS_ORIGINS: "http://localhost", PORT: 3001 },
   db: { $queryRaw: vi.fn(), $disconnect: vi.fn(), project: { findMany: vi.fn() } },
-  serve: vi.fn(), app: vi.fn(() => ({ fetch: vi.fn() })), sweep: vi.fn(), error: vi.fn(),
+  serve: vi.fn(), app: vi.fn(() => ({ fetch: vi.fn() })), sweep: vi.fn(), tokenSweep: vi.fn(), error: vi.fn(),
 }));
 vi.mock("../../src/config/index.js", () => ({ config: state.config }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: state.db }));
@@ -12,6 +12,7 @@ vi.mock("@hono/node-server", () => ({ serve: state.serve }));
 vi.mock("../../src/app.js", () => ({ createApp: state.app }));
 vi.mock("../../src/lib/logger.js", () => ({ logger: { error: state.error, info: vi.fn() } }));
 vi.mock("../../src/services/idempotency-sweep.js", () => ({ scheduleIdempotencySweep: state.sweep }));
+vi.mock("../../src/services/github-token-crypto.js", () => ({ startLegacyGithubTokenSweep: state.tokenSweep }));
 
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks();
@@ -30,10 +31,11 @@ it("imports the actual entry point and waits for the disabled-state read before 
   state.db.$queryRaw.mockImplementation(() => { entered(); return new Promise(resolve => { finish = resolve; }); });
   const startup = import("../../src/server.js");
   await reached;
-  expect(state.app).not.toHaveBeenCalled(); expect(state.serve).not.toHaveBeenCalled(); expect(state.sweep).not.toHaveBeenCalled();
+  expect(state.app).not.toHaveBeenCalled(); expect(state.serve).not.toHaveBeenCalled(); expect(state.sweep).not.toHaveBeenCalled(); expect(state.tokenSweep).not.toHaveBeenCalled();
   finish([{ present: false }]); await startup;
   expect(state.app).toHaveBeenCalledWith("http://localhost", undefined, undefined, undefined);
   expect(state.serve).toHaveBeenCalledTimes(1); expect(state.sweep).toHaveBeenCalledTimes(1);
+  expect(state.tokenSweep).toHaveBeenCalledTimes(1);
   expect(process.exit).not.toHaveBeenCalled();
 });
 
@@ -45,7 +47,7 @@ it.each(["history", "query error", "missing result", "malformed", "private", "un
   if (condition === "private") state.config.GROUNDING_RUNTIME_CONFIG = '{"enabled":false,"privateKey":"secret"}';
   if (condition === "unknown") state.config.GROUNDING_RUNTIME_CONFIG = '{"enabled":false,"typo":true}';
   await import("../../src/server.js");
-  expect(state.app).not.toHaveBeenCalled(); expect(state.serve).not.toHaveBeenCalled(); expect(state.sweep).not.toHaveBeenCalled();
+  expect(state.app).not.toHaveBeenCalled(); expect(state.serve).not.toHaveBeenCalled(); expect(state.sweep).not.toHaveBeenCalled(); expect(state.tokenSweep).not.toHaveBeenCalled();
   expect(process.exit).toHaveBeenCalledWith(1); expect(state.db.$disconnect).toHaveBeenCalledOnce();
   expect(state.error).toHaveBeenCalledWith("Backend startup refused: grounding configuration or database prerequisites unavailable");
 });
@@ -64,14 +66,14 @@ it("actual enabled entry wires grouped completion, creation and migration on the
   expect(args[2].githubCreate).toBeInstanceOf(GroundingGithubCreateService);
   expect(args[2].db).toBe(state.db); expect(args[2].creationPolicy).toEqual([]);
   expect(args[3]).toBeInstanceOf(GroundingMigrationService);
-  expect(state.serve).toHaveBeenCalledOnce(); expect(state.sweep).toHaveBeenCalledOnce();
+  expect(state.serve).toHaveBeenCalledOnce(); expect(state.sweep).toHaveBeenCalledOnce(); expect(state.tokenSweep).toHaveBeenCalledOnce();
 });
 
 it("actual enabled entry refuses missing SQL installation before listening", async () => {
   state.config.GROUNDING_RUNTIME_CONFIG = '{"enabled":true,"audience":"consumer.test","trust":[],"creationPolicy":[]}';
   state.db.$queryRaw.mockResolvedValue([{ count: 8n }]);
   await import("../../src/server.js");
-  expect(state.app).not.toHaveBeenCalled(); expect(state.serve).not.toHaveBeenCalled(); expect(state.sweep).not.toHaveBeenCalled();
+  expect(state.app).not.toHaveBeenCalled(); expect(state.serve).not.toHaveBeenCalled(); expect(state.sweep).not.toHaveBeenCalled(); expect(state.tokenSweep).not.toHaveBeenCalled();
   expect(process.exit).toHaveBeenCalledWith(1);
 });
 

@@ -4,6 +4,7 @@
 import { prisma } from "../lib/prisma.js";
 import type { GitHubUser } from "./github-oauth.js";
 import { hashPassword } from "./password.js";
+import { encryptGithubToken } from "./github-token-crypto.js";
 
 function slugifyLogin(input: string): string {
   const normalized = input
@@ -70,7 +71,7 @@ export async function upsertUserFromGitHub(
   // TTL (1h) expired. Null forces a fresh probe on the next Settings
   // visit.
   const tokenFields = {
-    githubAccessToken: accessToken,
+    githubAccessToken: encryptGithubToken(accessToken),
     githubConnectedAt: new Date(),
     githubTokenHealthy: null,
     githubTokenLastCheckedAt: null,
@@ -152,7 +153,7 @@ export async function connectGitHubToExistingUser(
       githubId,
       avatarUrl: githubUser.avatar_url,
       name: githubUser.name ?? undefined,
-      githubAccessToken: accessToken,
+      githubAccessToken: encryptGithubToken(accessToken),
       githubConnectedAt: new Date(),
       // See upsertUserFromGitHub — clear probe state so the next
       // Settings visit re-probes with the new token instead of showing

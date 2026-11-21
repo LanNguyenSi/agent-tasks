@@ -33,6 +33,7 @@
  */
 
 import { prisma } from "../lib/prisma.js";
+import { readGithubToken } from "./github-token-crypto.js";
 
 /** How long a definitive probe result (healthy or invalid) is considered fresh. */
 const PROBE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -145,6 +146,7 @@ export async function getTokenHealth(userId: string): Promise<HealthResult> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
+      id: true,
       githubAccessToken: true,
       githubConnectedAt: true,
       githubTokenHealthy: true,
@@ -153,6 +155,17 @@ export async function getTokenHealth(userId: string): Promise<HealthResult> {
   });
   if (!user || !user.githubAccessToken || !user.githubConnectedAt) {
     return { state: "not_connected", lastCheckedAt: null };
+  }
+
+  // A stored token that cannot be read (the encryption key changed, or the
+  // value was tampered with) is of no use to this user. `/auth/me` still
+  // reports GitHub as connected for such a row, and the Settings page only
+  // offers "Reconnect GitHub" for `invalid`, so that is the state returned.
+  // No probe is sent and nothing is stored: the flag in the row describes the
+  // old token, not this one.
+  const token = await readGithubToken(user);
+  if (!token) {
+    return { state: "invalid", lastCheckedAt: null };
   }
 
   const now = Date.now();
@@ -180,7 +193,7 @@ export async function getTokenHealth(userId: string): Promise<HealthResult> {
   }
 
   // Probe needed — stale, never checked, or past the unknown-retry floor.
-  const result = await probeToken(user.githubAccessToken);
+  const result = await probeToken(token);
   const checkedAt = new Date();
 
   if (result === "unknown") {
