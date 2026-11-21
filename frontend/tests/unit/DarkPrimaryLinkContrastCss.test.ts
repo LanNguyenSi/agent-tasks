@@ -190,11 +190,10 @@ describe("accent-hue text rules (nine rules on --primary-fg)", () => {
   });
 
   it("light --primary-fg resolves to the text-safe step, and light keeps --primary as the brand fill", () => {
-    // Light resolves through --primary-text to #4450a8; the light block must
+    // Light resolves through --primary-text; the light block must
     // not override --primary, so the brand swatch and accent buttons stay
     // #5e6ad2 while the nine accent-hue text rules get the AA-safe step.
     expect(lightBlock.match(/--primary:/), "light block must not override --primary").toBeNull();
-    expect(lightFg).toBe("#4450a8");
     expect(lightFg).toBe(lightToken("primary-text"));
   });
 
@@ -206,14 +205,24 @@ describe("accent-hue text rules (nine rules on --primary-fg)", () => {
   });
 });
 
-describe("prose links stay distinguishable from text in dark (link-in-text-block)", () => {
-  it("dark-only rule underlines .prose-markdown links", () => {
-    const body = /(?:^|\n)html:not\(\[data-theme="light"\]\) \.prose-markdown a\s*\{([^}]*)\}/.exec(css)?.[1];
-    expect(body, "globals.css must underline prose links outside the light theme").not.toBeUndefined();
-    expect(body!).toMatch(/text-decoration:\s*underline/);
+describe("light --primary-fg on the --primary-muted fill", () => {
+  const lightFg = resolveHex(lightBlock, "primary-fg");
+
+  it.each(["surface", "bg", "surface-active"])(
+    "light --primary-fg composites to >= 4.5:1 on --primary-muted over light --%s",
+    (surface) => {
+      const painted = fillOver(lightToken(surface));
+      expect(contrast(lightFg, painted), `--primary-fg on the muted fill over light --${surface}`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
+describe("prose links stay distinguishable from text in both themes (link-in-text-block)", () => {
+  it("the base prose link rule underlines at rest (applies in light and dark)", () => {
+    expect(ruleBody(".prose-markdown a")).toMatch(/text-decoration:\s*underline\s*;/);
   });
 
-  it("the base prose link rule keeps light colour-only (no underline)", () => {
-    expect(ruleBody(".prose-markdown a")).toMatch(/text-decoration:\s*none/);
+  it("no theme-scoped rule turns the prose link underline off", () => {
+    expect(css).not.toMatch(/html[^{]*\.prose-markdown a\s*\{[^}]*text-decoration:\s*none/);
   });
 });
