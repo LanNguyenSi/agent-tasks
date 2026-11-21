@@ -4,6 +4,8 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- A `400 no_effective_repo` from `pull_requests_create` or the legacy-gated `pull_requests_comment` (the backend refuses a body-supplied target repository when the task has no effective deliverable repo) maps to its own teaching error instead of the generic degrade: code `no_effective_repo`, the backend message passed through, and a recipe that names both writable fields (the task's `deliverableRepo`, the project's `githubRepo`) and sends the agent to ask the task creator or a team admin to set one; there is no self-service fix, so `allowedNext` is `["task_note"]`. `workflow_primer`'s trap list carries the entry (its sanity ceiling raised for it). Tests: `tests/errors.test.ts`, `tests/primer.test.ts`.
+
 ## 0.19.0
 
 - The `forbidden` teaching error for the Grounding write verbs (`pull_requests_create`, `pull_requests_merge`, `task_merge`, `task_finish`, `task_abandon`, `task_grounding_attempt_create`) now follows a backend that names the failed precondition in the 403 `message`: a message naming a missing `github:*` scope (`Token missing scope: ...`) gets the admin re-mint text with an empty `allowedNext`, since an existing token never gains a scope, and a 403 with no message (an older backend, or a deliberately bare no-access answer) gets that verb's own list of possible preconditions as the recipe. A non-empty backend message is otherwise passed through unchanged, and a verb outside the six makes no causal claim.

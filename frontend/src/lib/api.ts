@@ -634,7 +634,11 @@ export interface TeamSyncResult {
   fenced?: number;
   /** True when the prune was postponed because a stale binding is fenced. */
   pruneDeferred?: boolean;
+  /** Stale projects the prune kept, with the safeguard reason; absent on an older backend. */
+  pruneRetained?: { projectId: string; reason: string }[];
   skippedPrune: boolean;
+  /** `"not_admin"` when the caller is not a team admin, so no stale project was pruned. */
+  pruneSkipped?: "not_admin" | null;
   message: string;
 }
 

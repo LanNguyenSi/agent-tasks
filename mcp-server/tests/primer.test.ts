@@ -56,7 +56,11 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // after it, which left the old ceiling 250 chars short): the grounding_advance_unsupported trap-list entry (mandatory
 // under the trap-list-sync guard) and the several-stages flow's branchName and
 // Grounding-provisioned notes. Same sanity-ceiling rationale as above.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 9700;
+// Ceiling raised from 9700 to 10200 for the no_effective_repo trap-list entry
+// (+~320 chars, 9688 -> 10009): the entry is mandatory under the
+// trap-list-sync guard, so the only alternative to raising the ceiling would
+// be cutting unrelated prose. Same sanity-ceiling rationale as above.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 10200;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -94,6 +98,7 @@ const NON_VERB_TOKENS = new Set([
   "request_changes", // task_finish outcome literal / review action label
   "precondition_failed", // 422 error code (unmet workflow gate)
   "cross_repo_pr_rejected", // 400 error code (task_submit_pr)
+  "no_effective_repo", // 400 error code (pull_requests_create / pull_requests_comment with no effective repo)
   "already_claimed", // 409 error code example (rc-v1-C004 review round 2)
   "not_claimed", // 403 error code (rc-v1-C005: acting without a claim)
   "pr_author_mismatch", // 403 error code (rc-v1-C005: task_submit_pr)

@@ -339,8 +339,8 @@ export default function ProjectsPage() {
   }, [router]);
 
   // Access decision once the user and the shell's team list are known.
-  // `error` (the list could not be loaded) keeps the page loading, as the
-  // page's own failed lookup did.
+  // `error` (the list could not be loaded) is not decided here: the
+  // teamsLoadFailed branch below answers it with a banner and a Retry.
   if (user && teamsStatus === "ready" && teams.length > 0 && loading) setLoading(false);
 
   useEffect(() => {
