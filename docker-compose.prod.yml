@@ -202,6 +202,16 @@ services:
         NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-agent-tasks.opentriologue.ai}
     environment:
       NODE_ENV: production
+      # API_URL is the origin the frontend's server-side GitHub OAuth
+      # redirects point the browser at (frontend/src/app/api/auth/github/
+      # route.ts and .../connect/route.ts), so it must be browser-
+      # addressable whenever those frontend routes are actually reached.
+      # In this stack they are not: the agent-tasks-api router's
+      # PathPrefix(`/api`) rule above matches /api/auth/github* and sends
+      # them to the backend, so Traefik never reaches the frontend route
+      # and this container-network value is never used as a redirect
+      # target. Do not set it to the public origin: if the router split
+      # ever changed, the route would then 302 to itself in a loop.
       API_URL: http://backend:3001
     depends_on:
       - backend
@@ -231,7 +241,13 @@ services:
     # consecutive failures de-route a serving container ~15s after the last
     # good probe when probes fail fast, ~30s when each probe hits the 5s
     # timeout (the interval restarts after each probe finishes; both
-    # measured). A de-route self-heals with the next successful probe.
+    # measured). A de-route clears with the next successful probe only
+    # while the server is transiently sick: a hung server does NOT
+    # self-heal, because Docker never restarts an unhealthy container
+    # and restart: unless-stopped acts on process exit only, so the
+    # de-route persists until the process answers again. Recovery is
+    # an external uptime probe plus an operator restart, or an
+    # operator-run autoheal (docs/self-hosting.md).
     # Detection bounds measured locally (idle Mac; slower under VPS load):
     # healthy ~5-6s after start; connection-refused unhealthy ~21s; hung
     # server (accepts TCP, never responds) is the slowest mode at ~41s.

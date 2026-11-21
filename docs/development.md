@@ -102,7 +102,7 @@ The backend validates its environment at startup (`backend/src/config/index.ts`)
 | `WEBHOOK_ALLOWED_PRIVATE_HOSTS` | empty | Hosts exempt from the private-address check on notification webhooks, see [notification-webhooks.md](notification-webhooks.md) |
 | `ANTHROPIC_API_KEY`, `AGENT_TASKS_REWRITE_MODEL` | unset, `claude-haiku-4-5` | Suggest-rewrite helper, see [llm-rewrite-helper.md](llm-rewrite-helper.md) |
 | `NEXT_PUBLIC_API_URL` (frontend) | `http://localhost:3001` | Backend origin for browser calls; baked in at `next build` |
-| `API_URL` (frontend) | `http://localhost:3001` | Backend origin for the server-side GitHub login and connect redirects |
+| `API_URL` (frontend) | `http://localhost:3001` | Backend origin for the server-side GitHub login and connect redirects. The redirect lands in the browser, so the value must be browser-addressable whenever those frontend routes are reached; in the prod compose stack Traefik's `/api` router sends `/api/auth/github*` to the backend, so the frontend routes are not used there and the compose value (`http://backend:3001`) never becomes a redirect target (see `docs/self-hosting.md`) |
 
 ### Startup failures
 
