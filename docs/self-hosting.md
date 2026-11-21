@@ -38,7 +38,7 @@ need all of this in place:
      (Traefik answers ACME HTTP-01 challenge requests on that entrypoint
      before the redirect applies, so the certificate request still works).
 3. **DNS**: an A (and/or AAAA) record for `APP_DOMAIN` pointing at the
-   server, since the router rules match on `Host(\`${APP_DOMAIN}\`)` and
+   server, since the router rules match on ``Host(`${APP_DOMAIN}`)`` and
    Let's Encrypt validates that name.
 
 Then check the config and the route:
@@ -79,10 +79,13 @@ Rotate in this order, as one short procedure:
 2. Then write the same value to `POSTGRES_PASSWORD` in the deployment
    `.env`. The value is interpolated into the `DATABASE_URL` strings, so
    keep it URL-safe (reserved characters such as `@ : # / ? %` break the
-   URL).
-3. Then apply it: `docker compose -f docker-compose.prod.yml up -d`.
+   URL), and free of `$` and backticks, which the double-quoted shell
+   string in step 1 would expand.
+3. Then apply it, right after steps 1 and 2 (until then the running
+   backend still holds the old password, so new database connections
+   fail and `/api/health` can answer 503): `docker compose -f docker-compose.prod.yml up -d`.
    The changed interpolation recreates `db`, `migrate` and `backend`
-   (a short database outage while `db` restarts); Postgres restarts
+   (`frontend`, which depends on `backend`, may be recreated too; a short database outage while `db` restarts); Postgres restarts
    without re-initializing, so the volume and data are untouched and
    the containers now carry the new value.
 
