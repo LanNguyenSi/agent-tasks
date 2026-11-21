@@ -36,6 +36,7 @@ import {
   getProject,
   projectCanAdmin,
   getWorkflowRules,
+  isEffectiveWorkflow,
   listWorkflowTemplates,
   resetProjectWorkflow,
   updateWorkflow,
@@ -64,6 +65,11 @@ import { validateStateRules } from "./_components/stateRules";
 import { TransitionsTable } from "./_components/TransitionsTable";
 import { StrandingReportBanner } from "./_components/StrandingReportBanner";
 
+// Shown when a response the page would put into `workflow` is not an
+// effective workflow (a proxy or mock answering `{ ok: true }`): the
+// previous workflow stays loaded and the retry banner offers a reload.
+const WORKFLOW_SHAPE_ERROR = "The server returned an unexpected workflow response";
+
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function WorkflowEditorPage() {
@@ -89,6 +95,13 @@ export default function WorkflowEditorPage() {
   // no longer has; shown once, cleared by the next action and by Cancel.
   const [strandingReport, setStrandingReport] = useState<StrandingReport | null>(null);
   const [resetting, setResetting] = useState(false);
+  // Set when a server response failed `isEffectiveWorkflow`: the editor is
+  // replaced by the retry banner until a reload answers a real workflow.
+  const [shapeError, setShapeError] = useState(false);
+  const [retryingWorkflow, setRetryingWorkflow] = useState(false);
+  // Bumped by Retry: the mount effect reruns the whole first load (user,
+  // project, workflow, rules, templates), not just the workflow.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // ConfirmDialog states, each dialog independent.
   const [confirmReset, setConfirmReset] = useState(false);
@@ -124,19 +137,35 @@ export default function WorkflowEditorPage() {
         // ADMIN or per-project PROJECT_ADMIN, also when the caller holds a team
         // role). `accessRole` is only the fallback for an older backend.
         setIsAdmin(projectCanAdmin(proj));
-        setWorkflow(wf);
+        if (isEffectiveWorkflow(wf)) {
+          setWorkflow(wf);
+          if (reloadKey > 0) {
+            // A Retry: leave the banner state and drop any stale draft.
+            setShapeError(false);
+            setError(null);
+            setDraft(null);
+          }
+        } else {
+          // A body that is not an effective workflow would blank the editor;
+          // say so and let the retry banner reload it.
+          setError(WORKFLOW_SHAPE_ERROR);
+          setShapeError(true);
+        }
         setRules(catalog);
         setTemplates(tpls);
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRetryingWorkflow(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [projectId, router]);
+  }, [projectId, router, reloadKey]);
 
   const ruleLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -351,7 +380,13 @@ export default function WorkflowEditorPage() {
     setError(null);
     try {
       const next = await customizeProjectWorkflow(projectId);
+      if (!isEffectiveWorkflow(next)) {
+        setError(WORKFLOW_SHAPE_ERROR);
+        setShapeError(true);
+        return;
+      }
       setWorkflow(next);
+      setShapeError(false);
       setDraft(null);
     } catch (err) {
       setError((err as Error).message);
@@ -366,7 +401,13 @@ export default function WorkflowEditorPage() {
     setError(null);
     try {
       const { report, ...next } = await applyWorkflowTemplate(projectId, slug);
+      if (!isEffectiveWorkflow(next)) {
+        setError(WORKFLOW_SHAPE_ERROR);
+        setShapeError(true);
+        return;
+      }
       setWorkflow(next);
+      setShapeError(false);
       setDraft(null);
       setSavedBanner(false);
       setStrandingReport(report ?? null);
@@ -390,9 +431,19 @@ export default function WorkflowEditorPage() {
   function handleCancel() {
     setDraft(null);
     setError(null);
+    setShapeError(false);
     setSavedBanner(false);
     setStrandingReport(null);
     setExpandedInstructions(new Set());
+  }
+
+  // Retry from the retry banner: rerun the whole first load, so the admin
+  // flag, rules and templates come back along with the workflow, and drop
+  // back into the editor when a real workflow answers.
+  function handleRetryWorkflow() {
+    if (!projectId) return;
+    setRetryingWorkflow(true);
+    setReloadKey((k) => k + 1);
   }
 
   async function doSave() {
@@ -407,7 +458,13 @@ export default function WorkflowEditorPage() {
     try {
       const { report } = await updateWorkflow(workflow.workflowId, { definition: draft });
       const refreshed = await getEffectiveWorkflow(projectId);
+      if (!isEffectiveWorkflow(refreshed)) {
+        setError(WORKFLOW_SHAPE_ERROR);
+        setShapeError(true);
+        return;
+      }
       setWorkflow(refreshed);
+      setShapeError(false);
       setDraft(null);
       setSavedBanner(true);
       setStrandingReport(report ?? null);
@@ -432,7 +489,14 @@ export default function WorkflowEditorPage() {
     setError(null);
     try {
       const { report, ...next } = await resetProjectWorkflow(projectId);
+      if (!isEffectiveWorkflow(next)) {
+        setError(WORKFLOW_SHAPE_ERROR);
+        setShapeError(true);
+        setConfirmReset(false);
+        return;
+      }
       setWorkflow(next);
+      setShapeError(false);
       setDraft(null);
       setConfirmReset(false);
       setSavedBanner(false);
@@ -472,15 +536,27 @@ export default function WorkflowEditorPage() {
     );
   }
 
-  if (error && !workflow) {
+  // A loaded page never goes blank: whether the first fetch failed, a
+  // response failed `isEffectiveWorkflow`, or the workflow carries no
+  // definition, one danger banner says so and Retry reloads the page's
+  // data (the editor comes back when a real one answers).
+  if (shapeError || !workflow || !activeDef) {
     return (
-      <AlertBanner tone="danger" title="Could not load workflow">
-        {error}
-      </AlertBanner>
+      <>
+        <AlertBanner tone="danger" title="Could not load workflow">
+          {error ?? "The workflow could not be read from the server."}
+        </AlertBanner>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={handleRetryWorkflow}
+          loading={retryingWorkflow}
+        >
+          Retry
+        </Button>
+      </>
     );
   }
-
-  if (!workflow || !activeDef) return null;
 
   const isDefault = workflow.source === "default";
   const canEdit = !isDefault && isAdmin;

@@ -115,6 +115,22 @@ describe("/projects: heading", () => {
   });
 });
 
+describe("/projects: shared clause", () => {
+  it("counts only projects shared in by project access; team projects and ones without an accessSource are not shared", async () => {
+    vi.mocked(getTasks).mockResolvedValue([]);
+    vi.mocked(getTeams).mockResolvedValue([{ ...TEAM, projectCount: 3 } as Team]);
+    const mk = (id: string, accessSource?: string) =>
+      ({ id, teamId: "t1", name: `P ${id}`, slug: id, description: null, githubRepo: null, accessSource }) as unknown as Project;
+    vi.mocked(getProjects).mockResolvedValue([mk("a", "team"), mk("b", "team"), mk("c", "team"), mk("d")]);
+    render(<ProjectsPage />);
+    // The summary reads the project list: wait for all four rows before
+    // asserting on it, or the check runs against the empty list.
+    await waitFor(() => expect(screen.getByText("P d")).toBeInTheDocument());
+    expect(document.querySelector(".page-header-summary")).toHaveTextContent("Team One · 3 projects");
+    expect(document.querySelector(".page-header-summary")).not.toHaveTextContent("shared");
+  });
+});
+
 describe("/projects: active task count", () => {
   it("counts open and in_progress only", async () => {
     vi.mocked(getTasks).mockResolvedValue(
