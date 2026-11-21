@@ -584,6 +584,48 @@ describe("mapBackendError catalog", () => {
     expect(err.error.allowedNext).toEqual(["task_submit_pr"]);
   });
 
+  // ── 4a. no_effective_repo ───────────────────────────────────────────────
+  const NO_EFFECTIVE_REPO_MESSAGE =
+    "This task has no effective deliverable repo: neither the project's githubRepo nor the task's deliverableRepo is set. Set one of them (owner/repo) before creating or commenting on pull requests through agent-tasks.";
+
+  it("no_effective_repo: the 400 keeps its own code and the backend message verbatim instead of the generic degrade", () => {
+    const err = mapBackendError(400, {
+      error: "no_effective_repo",
+      message: NO_EFFECTIVE_REPO_MESSAGE,
+    });
+    expect(err.error.code).toBe("no_effective_repo");
+    expect(err.error.code).not.toBe("http_400");
+    expect(err.error.message).toBe(NO_EFFECTIVE_REPO_MESSAGE);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it("no_effective_repo: the recipe names both writable fields, sends the agent to ask the task creator or a team admin, and offers task_note (no self-service fix exists)", () => {
+    const err = mapBackendError(400, {
+      error: "no_effective_repo",
+      message: NO_EFFECTIVE_REPO_MESSAGE,
+    });
+    expect(err.error.recipe).toContain("deliverableRepo");
+    expect(err.error.recipe).toContain("githubRepo");
+    expect(err.error.recipe).toContain("task creator");
+    expect(err.error.recipe).toContain("team admin");
+    expect(err.error.allowedNext).toEqual(["task_note"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  it.each([undefined, "pull_requests_create", "pull_requests_comment"])(
+    "no_effective_repo: verbContext %s gets the same specific branch, not githubCreateError or the generic degrade (both emit sites answer 400 no_effective_repo)",
+    (verbContext) => {
+      const err = mapBackendError(
+        400,
+        { error: "no_effective_repo", message: NO_EFFECTIVE_REPO_MESSAGE },
+        verbContext,
+      );
+      expect(err.error.code).toBe("no_effective_repo");
+      expect(err.error.allowedNext).toEqual(["task_note"]);
+      assertAllowedNextRegistered(err, registered);
+    },
+  );
+
   // ── 5. pr_author_mismatch ───────────────────────────────────────────────
   it("pr_author_mismatch: the 403 maps to a task_submit_pr recipe", () => {
     const err = mapBackendError(403, {

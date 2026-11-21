@@ -729,6 +729,27 @@ function crossRepoRejectedError(message: string, verbContext: string | undefined
   });
 }
 
+// 4a. no_effective_repo. pull_requests_create and pull_requests_comment send
+// a body-supplied owner/repo; with no usable effective repo
+// (deliverableRepo when set, else project.githubRepo) there is nothing to
+// compare that target against, so the routes refuse fail-closed with 400
+// before any delegation lookup or GitHub call
+// (backend/src/routes/github.ts POST /pull-requests and the PR comment
+// route; backend/src/services/gates/pr-repo-matches-project.ts builds the
+// message). Backend code kept verbatim. No self-service fix exists for the
+// agent (setting deliverableRepo/githubRepo is a human write), so the recipe
+// sends the agent to ask the task creator or a team admin, and the only
+// immediately callable verb is task_note.
+function noEffectiveRepoError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "no_effective_repo",
+    message,
+    recipe:
+      "ask the task creator or a team admin to set the task's deliverableRepo or the project's githubRepo to an owner/repo value, then retry; until then leave the note on the task with task_note",
+    allowedNext: ["task_note"],
+  });
+}
+
 // 5. pr_author_mismatch. task_submit_pr rejects a prUrl whose PR was not
 // authored by the delegation user, 403 (backend/src/routes/tasks.ts:
 // POST /tasks/:id/submit-pr). Backend code kept verbatim.
@@ -1884,6 +1905,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 400 && code === "cross_repo_pr_rejected") {
     return crossRepoRejectedError(message, verbContext);
+  }
+  if (status === 400 && code === "no_effective_repo") {
+    return noEffectiveRepoError(message);
   }
   if (status === 403 && code === "pr_author_mismatch") {
     return prAuthorMismatchError(message);
