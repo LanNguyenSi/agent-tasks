@@ -3,7 +3,7 @@
  * The workflow editor checks every server response it puts into its
  * workflow state against the effective-workflow shape. A body that is not
  * one (a proxy or mock answering `{ ok: true }`) shows a danger banner
- * with a Retry that reloads the effective workflow, instead of the page
+ * with a Retry that reruns the first load, instead of the page
  * going blank on the missing definition; the previous workflow stays
  * loaded meanwhile. A valid body opens the editor as before.
  */
@@ -164,6 +164,18 @@ describe("workflow page: a response that is not an effective workflow", () => {
     const banner = await screen.findByRole("alert");
     expect(banner).toHaveTextContent(SHAPE_MESSAGE);
     expect(screen.queryByRole("button", { name: /add state/i })).toBeNull();
+    // The failed Retry is over: the button is usable again and a second
+    // click reloads.
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry).not.toBeDisabled();
+    expect(retry).not.toHaveAttribute("aria-busy");
+    vi.mocked(getEffectiveWorkflow).mockResolvedValue({
+      source: "custom",
+      workflowId: "wf-3",
+      definition: baseDefinition(),
+    } as EffectiveWorkflow);
+    fireEvent.click(retry);
+    expect(await screen.findByText("Custom workflow")).toBeInTheDocument();
   });
 
   it("reset answered {ok:true} shows the banner with the shape message", async () => {
@@ -189,7 +201,7 @@ describe("workflow page: a response that is not an effective workflow", () => {
     expect(screen.queryByRole("button", { name: /yes, reset/i })).toBeNull();
   });
 
-  it("a malformed post-save reload shows the banner and keeps the draft", async () => {
+  it("a malformed post-save reload shows the banner, and Retry shows the reloaded workflow not the draft", async () => {
     vi.mocked(getEffectiveWorkflow).mockResolvedValue({
       source: "custom",
       workflowId: "wf-9",
@@ -204,6 +216,20 @@ describe("workflow page: a response that is not an effective workflow", () => {
 
     const banner = await screen.findByRole("alert");
     expect(banner).toHaveTextContent(SHAPE_MESSAGE);
+
+    const reloaded = baseDefinition();
+    reloaded.states[0].label = "Reloaded";
+    vi.mocked(getEffectiveWorkflow).mockResolvedValue({
+      source: "custom",
+      workflowId: "wf-9",
+      definition: reloaded,
+    } as EffectiveWorkflow);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const label = await screen.findByRole("textbox", { name: "Label for state open" });
+    expect(label).toHaveValue("Reloaded");
+    expect(screen.queryByDisplayValue("Open!")).toBeNull();
+    const save = screen.queryByRole("button", { name: /Save changes/ });
+    if (save) expect(save).toBeDisabled();
   });
 
   it("Retry after a failed first load reloads rules, templates and the admin flag too", async () => {
@@ -217,6 +243,9 @@ describe("workflow page: a response that is not an effective workflow", () => {
     // project, templates and rules from the first load are all in.
     expect(await screen.findByRole("button", { name: /customize this workflow/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /lean flow/i })).toBeInTheDocument();
+    // The failed attempt's message does not linger in the editor.
+    expect(screen.queryByText(/rules down/)).toBeNull();
+    expect(screen.queryByText(SHAPE_MESSAGE)).toBeNull();
   });
 
   it("Customize with a valid body opens the editor", async () => {
