@@ -312,6 +312,9 @@ have confirmed you do not need.
 
 ## Related
 
+- `docs/self-hosting.md`: rotating the database password on a live
+  volume, the external Traefik prerequisite, uptime monitoring for
+  unhealthy containers.
 - `docs/attachments.md`: storage location and limits of the uploads
   volume.
 - `docs/grounding-migration.md`: capture a database backup before an
