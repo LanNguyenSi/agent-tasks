@@ -99,6 +99,9 @@ export default function WorkflowEditorPage() {
   // replaced by the retry banner until a reload answers a real workflow.
   const [shapeError, setShapeError] = useState(false);
   const [retryingWorkflow, setRetryingWorkflow] = useState(false);
+  // Bumped by Retry: the mount effect reruns the whole first load (user,
+  // project, workflow, rules, templates), not just the workflow.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // ConfirmDialog states, each dialog independent.
   const [confirmReset, setConfirmReset] = useState(false);
@@ -136,6 +139,12 @@ export default function WorkflowEditorPage() {
         setIsAdmin(projectCanAdmin(proj));
         if (isEffectiveWorkflow(wf)) {
           setWorkflow(wf);
+          if (reloadKey > 0) {
+            // A Retry: leave the banner state and drop any stale draft.
+            setShapeError(false);
+            setError(null);
+            setDraft(null);
+          }
         } else {
           // A body that is not an effective workflow would blank the editor;
           // say so and let the retry banner reload it.
@@ -147,13 +156,16 @@ export default function WorkflowEditorPage() {
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRetryingWorkflow(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [projectId, router]);
+  }, [projectId, router, reloadKey]);
 
   const ruleLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -425,26 +437,13 @@ export default function WorkflowEditorPage() {
     setExpandedInstructions(new Set());
   }
 
-  // Retry from the retry banner: reload the effective workflow and, when it
-  // answers a real one, drop back into the editor.
-  async function handleRetryWorkflow() {
+  // Retry from the retry banner: rerun the whole first load, so the admin
+  // flag, rules and templates come back along with the workflow, and drop
+  // back into the editor when a real workflow answers.
+  function handleRetryWorkflow() {
     if (!projectId) return;
     setRetryingWorkflow(true);
-    try {
-      const wf = await getEffectiveWorkflow(projectId);
-      if (!isEffectiveWorkflow(wf)) {
-        setError(WORKFLOW_SHAPE_ERROR);
-        return;
-      }
-      setWorkflow(wf);
-      setShapeError(false);
-      setError(null);
-      setDraft(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setRetryingWorkflow(false);
-    }
+    setReloadKey((k) => k + 1);
   }
 
   async function doSave() {
@@ -539,8 +538,8 @@ export default function WorkflowEditorPage() {
 
   // A loaded page never goes blank: whether the first fetch failed, a
   // response failed `isEffectiveWorkflow`, or the workflow carries no
-  // definition, one danger banner says so and Retry reloads the effective
-  // workflow (the editor comes back when a real one answers).
+  // definition, one danger banner says so and Retry reloads the page's
+  // data (the editor comes back when a real one answers).
   if (shapeError || !workflow || !activeDef) {
     return (
       <>
@@ -550,7 +549,7 @@ export default function WorkflowEditorPage() {
         <Button
           type="button"
           variant="secondary"
-          onClick={() => void handleRetryWorkflow()}
+          onClick={handleRetryWorkflow}
           loading={retryingWorkflow}
         >
           Retry

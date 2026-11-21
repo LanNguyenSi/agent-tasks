@@ -2,7 +2,7 @@
 /**
  * The workflow editor checks every server response it puts into its
  * workflow state against the effective-workflow shape. A body that is not
- * one (the nightly-audit mock answers `{ ok: true }`) shows a danger banner
+ * one (a proxy or mock answering `{ ok: true }`) shows a danger banner
  * with a Retry that reloads the effective workflow, instead of the page
  * going blank on the missing definition; the previous workflow stays
  * loaded meanwhile. A valid body opens the editor as before.
@@ -181,6 +181,12 @@ describe("workflow page: a response that is not an effective workflow", () => {
     const banner = await screen.findByRole("alert");
     expect(banner).toHaveTextContent(SHAPE_MESSAGE);
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    // Retry with a valid body brings the editor back with the reset
+    // confirmation closed.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("button", { name: /reset to default/i });
+    expect(screen.queryByRole("button", { name: /yes, reset/i })).toBeNull();
   });
 
   it("a malformed post-save reload shows the banner and keeps the draft", async () => {
@@ -198,6 +204,19 @@ describe("workflow page: a response that is not an effective workflow", () => {
 
     const banner = await screen.findByRole("alert");
     expect(banner).toHaveTextContent(SHAPE_MESSAGE);
+  });
+
+  it("Retry after a failed first load reloads rules, templates and the admin flag too", async () => {
+    vi.mocked(getWorkflowRules).mockRejectedValueOnce(new Error("rules down"));
+    render(<WorkflowPage />);
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("rules down");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // Admin controls (Customize, the template picker) only render once the
+    // project, templates and rules from the first load are all in.
+    expect(await screen.findByRole("button", { name: /customize this workflow/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /lean flow/i })).toBeInTheDocument();
   });
 
   it("Customize with a valid body opens the editor", async () => {
