@@ -7,6 +7,14 @@ import { urlString } from "../lib/zod-formats.js";
 // let the schema default apply.
 const emptyAsUnset = (value: unknown) => (value === "" ? undefined : value);
 
+// Like emptyAsUnset, and also trims: a whitespace-only value is unset, any
+// other string is used without its surrounding whitespace.
+const trimmedOrUnset = (value: unknown) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+};
+
 const configSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3001),
@@ -17,6 +25,14 @@ const configSchema = z.object({
   // 32-byte key (hex or base64) used to encrypt OIDC client secrets at rest.
   // Required as soon as any SsoConnection exists; optional otherwise.
   SSO_ENCRYPTION_KEY: z.string().default(""),
+  // Key material for the encryption of stored GitHub OAuth tokens (see
+  // services/github-token-crypto.ts). Optional: empty or whitespace-only means
+  // unset, and the key is then derived from SESSION_SECRET. A set value is
+  // trimmed (the trimmed value is the key material, so a padded value equals
+  // the unpadded one) and must then be at least 32 characters, the same floor
+  // as SESSION_SECRET; a shorter one refuses startup. Rotating whichever
+  // value is in effect makes stored tokens unreadable (users reconnect GitHub).
+  GITHUB_TOKEN_ENCRYPTION_KEY: z.preprocess(trimmedOrUnset, z.string().min(32).optional()),
   BACKEND_URL: z.preprocess(emptyAsUnset, urlString().default("http://localhost:3001")),
   FRONTEND_URL: urlString().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),

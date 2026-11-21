@@ -8,6 +8,7 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { logAuditEvent } from "../services/audit.js";
 import { listUserRepos } from "../services/github-sync.js";
+import { readGithubToken } from "../services/github-token-crypto.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { githubRepoEqualsInsensitive } from "../lib/github-repo-match.js";
 import { isGithubFenceConflict } from "../services/grounding-github-fence.js";
@@ -245,14 +246,15 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   }
 
   const user = await prisma.user.findUnique({ where: { id: actor.userId } });
-  if (!user?.githubAccessToken) {
+  const githubToken = user ? await readGithubToken(user) : null;
+  if (!githubToken) {
     return c.json(
       { error: "forbidden", message: "Connect your GitHub account in settings before syncing" },
       403,
     );
   }
 
-  const repos = await listUserRepos(user.githubAccessToken);
+  const repos = await listUserRepos(githubToken);
   const repoFullNames = repos.map((repo) => repo.full_name);
   const now = new Date();
   let created = 0;

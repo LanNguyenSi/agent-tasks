@@ -162,6 +162,12 @@ If the deployment uses the optional separate runtime role
 role" section of `docs/grounding-migration.md`), re-apply its grants on
 the restored database before starting the backend.
 
+The dump holds the GitHub OAuth tokens encrypted. Start the backend with
+the same `GITHUB_TOKEN_ENCRYPTION_KEY` (or, when it is unset, the same
+`SESSION_SECRET`) as the instance that wrote the dump, otherwise those tokens
+are unreadable and users reconnect GitHub (`docs/self-hosting.md`, "GitHub
+token encryption").
+
 ### 3. Restore the uploads volume
 
 Extract the archive into the same volume (resolve `UPLOADS_VOL` as in the
