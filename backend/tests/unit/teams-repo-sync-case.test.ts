@@ -372,6 +372,7 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
         deletedProjectIds: ["p-gone"],
         deletedCount: 1,
         skippedProjects: [],
+        deferredProjectIds: [],
       },
     });
   });
@@ -411,6 +412,7 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
         deletedProjectIds: ["p-gone-a"],
         deletedCount: 1,
         skippedProjects: [],
+        deferredProjectIds: [],
       },
     });
   });
@@ -489,9 +491,9 @@ describe("POST /teams/:id/sync: prune through the deletion service", () => {
   it("reports a retained and a reservation-pending project with their reasons, in the response, the message and the audit event", async () => {
     arrange();
     prismaMocks.projectFindMany.mockResolvedValue([
-      { id: "p-ret", githubRepo: "lannguyensi/retired-ret" },
-      { id: "p-pend", githubRepo: "lannguyensi/retired-pend" },
-      { id: "p-del", githubRepo: "lannguyensi/retired-del" },
+      { id: "p-1-ret", githubRepo: "lannguyensi/retired-ret" },
+      { id: "p-2-pend", githubRepo: "lannguyensi/retired-pend" },
+      { id: "p-3-del", githubRepo: "lannguyensi/retired-del" },
     ]);
     deletionMocks.deleteProjectWithSafeguards
       .mockResolvedValueOnce({ ok: false, reason: "retained" })
@@ -502,8 +504,8 @@ describe("POST /teams/:id/sync: prune through the deletion service", () => {
     const body = (await res.json()) as Record<string, unknown>;
 
     const skipped = [
-      { projectId: "p-ret", reason: "grounding_history_retained" },
-      { projectId: "p-pend", reason: "grounding_finalization_pending" },
+      { projectId: "p-1-ret", reason: "grounding_history_retained" },
+      { projectId: "p-2-pend", reason: "grounding_finalization_pending" },
     ];
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ pruned: 1, pruneDeferred: false, pruneRetained: skipped });
@@ -514,10 +516,11 @@ describe("POST /teams/:id/sync: prune through the deletion service", () => {
       payload: {
         teamId: TEAM_ID,
         via: "team_sync_prune",
-        candidateProjectIds: ["p-ret", "p-pend", "p-del"],
-        deletedProjectIds: ["p-del"],
+        candidateProjectIds: ["p-1-ret", "p-2-pend", "p-3-del"],
+        deletedProjectIds: ["p-3-del"],
         deletedCount: 1,
         skippedProjects: skipped,
+        deferredProjectIds: [],
       },
     });
   });
@@ -556,6 +559,11 @@ describe("POST /teams/:id/sync: prune through the deletion service", () => {
 
     expect(body).toMatchObject({ pruned: 1, pruneDeferred: true, pruneRetained: [] });
     expect(String(body.message)).toContain("postponed");
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ deletedProjectIds: ["p-free"], deferredProjectIds: ["p-fenced"] }),
+      }),
+    );
 
     deletionMocks.deleteProjectWithSafeguards.mockReset();
     deletionMocks.deleteProjectWithSafeguards.mockResolvedValue({ ok: false, reason: "fenced" });

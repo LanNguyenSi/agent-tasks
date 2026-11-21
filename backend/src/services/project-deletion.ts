@@ -13,7 +13,7 @@
  * passes one that re-checks the project is still stale.
  */
 import { unlink } from "node:fs/promises";
-import type { Prisma, PrismaClient, Project } from "@prisma/client";
+import { Prisma, type PrismaClient, type Project } from "@prisma/client";
 import { storedFilePath } from "./attachment-files.js";
 import { GroundingAccessError } from "./grounding-context.js";
 import { isGithubFenceConflict } from "./grounding-github-fence.js";
@@ -28,7 +28,7 @@ import {
 export type ProjectDeletionRefusal =
   /** No project with that id (also a malformed id). */
   | "not_found"
-  /** A task of the project has grounding history that must stay. */
+  /** A task of the project has grounding history that must stay (found by the check or refused by a Restrict foreign key). */
   | "retained"
   /** A task of the project has a grounding operation that is still being finalized. */
   | "reservation_pending"
@@ -49,6 +49,23 @@ export interface ProjectDeletionOptions {
    * project alone.
    */
   admit?: (db: Prisma.TransactionClient, project: Project) => Promise<boolean>;
+}
+
+/** Carries a foreign-key restriction refusal out of the grounding transaction. */
+class ProjectDeletionRetainedError extends GroundingAccessError {
+  constructor() {
+    super("bad_state", 409);
+  }
+}
+
+/**
+ * True when the database refused a delete because a row with `onDelete:
+ * Restrict` still points at the project's tasks (Prisma `P2003`, or the raw
+ * Postgres foreign-key violation `23503` when it arrives wrapped in `P2010`).
+ */
+function isForeignKeyRestriction(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  return error.code === "P2003" || (error.code === "P2010" && String(error.meta?.code) === "23503");
 }
 
 /** Carries a repository-fence refusal out of the grounding transaction. */
@@ -104,12 +121,17 @@ export async function deleteProjectWithSafeguards(
         await db.project.delete({ where: { id: projectId } });
       } catch (error) {
         if (isGithubFenceConflict(error)) throw new ProjectDeletionFenceError();
+        // Other history the explicit check above does not list (GitHub
+        // observations, migration state and commands, merge groups) is kept
+        // by Restrict foreign keys; the delete is refused, nothing is removed.
+        if (isForeignKeyRestriction(error)) throw new ProjectDeletionRetainedError();
         throw error;
       }
       return { ok: true, attachmentUrls: attachments.map((attachment) => attachment.url) };
     });
   } catch (error) {
     if (error instanceof ProjectDeletionFenceError) return { ok: false, reason: "fenced" };
+    if (error instanceof ProjectDeletionRetainedError) return { ok: false, reason: "retained" };
     if (error instanceof GroundingAccessError && error.code === "not_found") {
       return { ok: false, reason: "not_found" };
     }

@@ -100,9 +100,9 @@ async function seedTeam(role: "ADMIN" | "HUMAN_MEMBER" = "ADMIN") {
   await db.teamMember.create({ data: { teamId: team.id, userId, role } });
   return { userId, teamId: team.id };
 }
-async function seedProject(teamId: string, githubRepo: string | null) {
+async function seedProject(teamId: string, githubRepo: string | null, id?: string) {
   const slug = randomUUID();
-  return db.project.create({ data: { teamId, name: slug, slug, githubRepo } });
+  return db.project.create({ data: { ...(id ? { id } : {}), teamId, name: slug, slug, githubRepo } });
 }
 async function seedTask(projectId: string, userId: string) {
   return db.task.create({ data: { projectId, title: "task", createdByUserId: userId } });
@@ -219,6 +219,29 @@ describe("sync prune keeps projects the deletion safeguards protect", () => {
     },
   );
 
+  it("history wins over an active repository fence: the project is reported as kept, not deferred", async () => {
+    const { userId, teamId } = await seedTeam();
+    await seedProject(teamId, "LanNguyenSi/here");
+    const retained = await seedProject(teamId, "lannguyensi/retired-fenced-kept");
+    await retain((await seedTask(retained.id, userId)).id, retained.id, "cohort");
+    const intentId = randomUUID();
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_fence_intents (id, repo, kind, state) VALUES ('${intentId}', 'lannguyensi/retired-fenced-kept', 'MERGE', 'ACTIVE')`,
+    );
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_repository_fences (repo, version, "ownerId") VALUES ('lannguyensi/retired-fenced-kept', 1, '${intentId}') ON CONFLICT (repo) DO UPDATE SET "ownerId" = EXCLUDED."ownerId"`,
+    );
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({
+      pruned: 0,
+      pruneDeferred: false,
+      pruneRetained: [{ projectId: retained.id, reason: "grounding_history_retained" }],
+    });
+  });
+
   it("a stale project with grounding history among tasks without any is kept whole: every task and attachment stays", async () => {
     const { userId, teamId } = await seedTeam();
     await seedProject(teamId, "LanNguyenSi/here");
@@ -252,6 +275,135 @@ describe("sync prune keeps projects the deletion safeguards protect", () => {
     expect(await db.project.findUnique({ where: { id: retained.id } })).not.toBeNull();
     expect(await db.project.findUnique({ where: { id: plain.id } })).not.toBeNull();
     expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+/** History the explicit check does not list: only a Restrict foreign key keeps the project. */
+type ForeignKeyHistory = "observation" | "migrationCommand" | "migrationState";
+async function holdByForeignKey(taskId: string, projectId: string, kind: ForeignKeyHistory) {
+  if (kind === "observation") {
+    const deliveryId = randomUUID();
+    await db.groundingGithubWebhookDelivery.create({ data: { deliveryId, event: "push", fingerprint: "f" } });
+    await db.groundingGithubObservation.create({
+      data: { deliveryId, taskId, repo: "lannguyensi/retired", event: "push", matchKind: "task", state: "seen", reason: "test" },
+    });
+  } else if (kind === "migrationCommand") {
+    await db.groundingMigrationCommand.create({
+      data: { taskId, key: randomUUID(), actorId: "a", fingerprint: "f", request: {}, before: {}, after: {}, result: {} },
+    });
+  } else {
+    await db.groundingMigrationState.create({ data: { taskId, projectId, held: false, revision: 0 } });
+  }
+}
+
+describe("a project held only by a Restrict foreign key outside cohort, binding and operation", () => {
+  it.each<ForeignKeyHistory>(["observation", "migrationCommand", "migrationState"])(
+    "the prune keeps it as retained (%s row), deletes the others and stays 200; DELETE answers the retained 409",
+    async (kind) => {
+      const { userId, teamId } = await seedTeam();
+      await seedProject(teamId, "LanNguyenSi/here");
+      const held = await seedProject(teamId, "lannguyensi/retired-held");
+      const gone = await seedProject(teamId, "lannguyensi/retired-gone");
+      const file = await seedAttachment((await seedTask(held.id, userId)).id, userId);
+      await holdByForeignKey((await db.task.findFirstOrThrow({ where: { projectId: held.id } })).id, held.id, kind);
+      gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here")]);
+
+      const r = await sync(userId, teamId);
+
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({
+        pruned: 1,
+        pruneDeferred: false,
+        pruneRetained: [{ projectId: held.id, reason: "grounding_history_retained" }],
+      });
+      expect(await db.project.findUnique({ where: { id: held.id } })).not.toBeNull();
+      expect(await db.project.findUnique({ where: { id: gone.id } })).toBeNull();
+      expect(await exists(file)).toBe(true);
+      expect(vi.mocked(logAuditEvent).mock.calls[0]![0]).toMatchObject({
+        payload: { deletedProjectIds: [gone.id], skippedProjects: [{ projectId: held.id, reason: "grounding_history_retained" }] },
+      });
+
+      const res = await appFor(userId).request(`/projects/${held.id}`, { method: "DELETE" });
+      expect({ status: res.status, body: await res.json() }).toEqual({ status: 409, body: { error: "grounding_history_retained" } });
+      expect(await db.project.findUnique({ where: { id: held.id } })).not.toBeNull();
+      expect(await exists(file)).toBe(true);
+    },
+  );
+});
+
+describe("a delete error that is not a foreign-key restriction is not swallowed", () => {
+  async function failDeleteOf(projectId: string) {
+    await db.$executeRawUnsafe(
+      `CREATE FUNCTION fail_project_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test delete failure'; END $$`,
+    );
+    await db.$executeRawUnsafe(
+      `CREATE TRIGGER fail_project_delete BEFORE DELETE ON projects FOR EACH ROW WHEN (OLD.id = '${projectId}') EXECUTE FUNCTION fail_project_delete()`,
+    );
+  }
+  async function restoreDelete() {
+    await db.$executeRawUnsafe("DROP TRIGGER fail_project_delete ON projects");
+    await db.$executeRawUnsafe("DROP FUNCTION fail_project_delete()");
+  }
+
+  it("the sync fails with a server error, the project stays, nothing is reported as kept", async () => {
+    const { userId, teamId } = await seedTeam();
+    await seedProject(teamId, "LanNguyenSi/here");
+    const broken = await seedProject(teamId, "lannguyensi/retired-broken");
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here")]);
+    await failDeleteOf(broken.id);
+    try {
+      const res = await appFor(userId).request(`/teams/${teamId}/sync`, { method: "POST" });
+      expect(res.status).toBe(500);
+    } finally {
+      await restoreDelete();
+    }
+    expect(await db.project.findUnique({ where: { id: broken.id } })).not.toBeNull();
+  });
+
+  it("projects before the failing one are deleted in id order, the rest stay, and the audit event names the deleted ones", async () => {
+    const { userId, teamId } = await seedTeam();
+    await seedProject(teamId, "LanNguyenSi/here");
+    // Created in descending id order, so the database's natural order differs from the sorted one.
+    const [high, middle, low] = [randomUUID(), randomUUID(), randomUUID()].sort().reverse() as [string, string, string];
+    for (const id of [high, middle, low]) await seedProject(teamId, `lannguyensi/retired-${id}`, id);
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here")]);
+    await failDeleteOf(middle);
+    try {
+      const res = await appFor(userId).request(`/teams/${teamId}/sync`, { method: "POST" });
+      expect(res.status).toBe(500);
+    } finally {
+      await restoreDelete();
+    }
+    expect(await db.project.findUnique({ where: { id: low } })).toBeNull();
+    expect(await db.project.findUnique({ where: { id: middle } })).not.toBeNull();
+    expect(await db.project.findUnique({ where: { id: high } })).not.toBeNull();
+    expect(vi.mocked(logAuditEvent).mock.calls[0]![0]).toMatchObject({
+      payload: { candidateProjectIds: [low, middle, high], deletedProjectIds: [low], deletedCount: 1 },
+    });
+  });
+});
+
+describe("a fenced stale project is named in the audit event", () => {
+  it("deferredProjectIds lists the fenced project next to the deleted one", async () => {
+    const { userId, teamId } = await seedTeam();
+    await seedProject(teamId, "LanNguyenSi/here");
+    const fenced = await seedProject(teamId, "lannguyensi/retired-fenced-audit");
+    const free = await seedProject(teamId, "lannguyensi/retired-free-audit");
+    const intentId = randomUUID();
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_fence_intents (id, repo, kind, state) VALUES ('${intentId}', 'lannguyensi/retired-fenced-audit', 'MERGE', 'ACTIVE')`,
+    );
+    await db.$executeRawUnsafe(
+      `INSERT INTO grounding_github_repository_fences (repo, version, "ownerId") VALUES ('lannguyensi/retired-fenced-audit', 1, '${intentId}') ON CONFLICT (repo) DO UPDATE SET "ownerId" = EXCLUDED."ownerId"`,
+    );
+    gh.listUserRepos.mockResolvedValue([repo("LanNguyenSi/here")]);
+
+    const r = await sync(userId, teamId);
+
+    expect(r.body).toMatchObject({ pruned: 1, pruneDeferred: true });
+    expect(vi.mocked(logAuditEvent).mock.calls[0]![0]).toMatchObject({
+      payload: { deletedProjectIds: [free.id], deferredProjectIds: [fenced.id] },
+    });
   });
 });
 

@@ -341,6 +341,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   // single DELETE statement carried.
   const pruneRetained: { projectId: string; reason: PruneRetainedReason }[] = [];
   const deletedProjectIds: string[] = [];
+  const deferredProjectIds: string[] = [];
   if (canPrune && repoFullNames.length > 0) {
     const listed = new Set(repoFullNames.map((fullName) => fullName.toLowerCase()));
     const boundProjects = await prisma.project.findMany({
@@ -352,7 +353,10 @@ teamRouter.post("/teams/:id/sync", async (c) => {
         (project) =>
           project.githubRepo !== null && !listed.has(project.githubRepo.toLowerCase()),
       )
-      .map((project) => project.id);
+      .map((project) => project.id)
+      // A fixed order keeps a prune that stops early (an unexpected error)
+      // deterministic: the same projects are deleted first on a retry.
+      .sort();
 
     try {
       for (const projectId of staleIds) {
@@ -374,6 +378,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
           // The loop above has already written, so answer 200 and let the
           // next sync retry it instead of turning the sync into a 500.
           pruneDeferred = true;
+          deferredProjectIds.push(projectId);
         }
         // "not_found" and "not_eligible": the project vanished or no longer
         // qualifies since it was picked; there is nothing left to prune.
@@ -384,8 +389,9 @@ teamRouter.post("/teams/:id/sync", async (c) => {
         // The removal is irreversible (the tasks go with the project), so the
         // ids are kept in the audit trail, also when a later project fails
         // the request: `candidateProjectIds` are the stale ids picked,
-        // `deletedProjectIds` the ones actually removed, and `skippedProjects`
-        // the ones kept with the reason.
+        // `deletedProjectIds` the ones actually removed, `skippedProjects` the
+        // ones kept with the reason, and `deferredProjectIds` the ones an
+        // active repository fence postponed to the next sync.
         await logAuditEvent({
           action: "project.synced",
           actorId: actor.userId,
@@ -396,6 +402,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
             deletedProjectIds,
             deletedCount: pruned,
             skippedProjects: pruneRetained,
+            deferredProjectIds,
           },
         });
       }

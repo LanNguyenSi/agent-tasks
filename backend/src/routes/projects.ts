@@ -37,6 +37,10 @@ import { mutateGroundingContext } from "../services/grounding-context-mutation.j
 import { GroundingAccessError, unavailable } from "../services/grounding-context.js";
 import { deleteProjectWithSafeguards, removeStoredAttachments, type ProjectDeletionResult } from "../services/project-deletion.js";
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled project deletion refusal: ${String(value)}`);
+}
+
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 projectRouter.onError((error, c) => {
   if (error instanceof GroundingAccessError) {
@@ -660,12 +664,17 @@ projectRouter.delete("/projects/:id", async (c) => {
     throw error;
   }
   if (!result.ok) {
-    if (result.reason === "not_found") return notFound(c);
-    if (result.reason === "reservation_pending") return c.json({ error: "grounding_finalization_pending" }, 409);
-    if (result.reason === "retained") return c.json({ error: "grounding_history_retained" }, 409);
-    // A repository fence refusal: the grounding transaction's own
-    // "verification unavailable" error, as before the service existed.
-    return unavailable();
+    switch (result.reason) {
+      case "not_found": return notFound(c);
+      case "reservation_pending": return c.json({ error: "grounding_finalization_pending" }, 409);
+      case "retained": return c.json({ error: "grounding_history_retained" }, 409);
+      // A repository fence refusal: the grounding transaction's own
+      // "verification unavailable" error, as before the service existed.
+      case "fenced": return unavailable();
+      // This route passes no `admit` hook that returns false.
+      case "not_eligible": return unavailable();
+      default: return assertNever(result.reason);
+    }
   }
   await removeStoredAttachments(result.attachmentUrls);
 
