@@ -1142,6 +1142,27 @@ export interface EffectiveWorkflow {
   definition: WorkflowDefinition;
 }
 
+/**
+ * Runtime shape check for an effective-workflow response (`GET
+ * /projects/:id/effective-workflow` and the customize / apply-template /
+ * reset answers). The workflow editor feeds every such response straight
+ * into its state, and a body that is not one (a proxy or mock answering
+ * `{ ok: true }`, an HTML error page read as JSON) would blank the page
+ * when the editor reads `definition.states`. Callers that fail this guard
+ * keep their previous workflow and show an error instead. Extra keys
+ * (the `report` the write routes add) are allowed through.
+ */
+export function isEffectiveWorkflow(value: unknown): value is EffectiveWorkflow {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (v.source !== "custom" && v.source !== "default") return false;
+  if (v.workflowId !== null && typeof v.workflowId !== "string") return false;
+  const def = v.definition as Record<string, unknown> | null | undefined;
+  if (typeof def !== "object" || def === null || Array.isArray(def)) return false;
+  if (!Array.isArray(def.states)) return false;
+  return true;
+}
+
 /** A task a workflow change left on a status the workflow it follows does not have. */
 export interface StrandedTaskRef {
   id: string;
