@@ -11,7 +11,9 @@
  * contract, so the `where` arguments are asserted, never evaluated. The mock
  * applies no `mode` and no lowercasing of its own; only the prune candidate
  * list it returns is simulated, and it is returned regardless of the filter the
- * route asked for.
+ * route asked for. The prune deletes through the project-deletion service,
+ * which is mocked here; its behaviour against a real database is pinned in
+ * tests/integration/teams-sync-prune-safeguards-db.test.ts.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
@@ -28,7 +30,10 @@ const prismaMocks = vi.hoisted(() => ({
   projectFindMany: vi.fn(),
   projectCreate: vi.fn(),
   projectUpdate: vi.fn(),
-  projectDeleteMany: vi.fn(),
+}));
+const deletionMocks = vi.hoisted(() => ({
+  deleteProjectWithSafeguards: vi.fn(),
+  removeStoredAttachments: vi.fn(),
 }));
 const githubMocks = vi.hoisted(() => ({ listUserRepos: vi.fn() }));
 const boardMocks = vi.hoisted(() => ({ ensureDefaultBoardForProject: vi.fn() }));
@@ -43,7 +48,6 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findMany: prismaMocks.projectFindMany,
       create: prismaMocks.projectCreate,
       update: prismaMocks.projectUpdate,
-      deleteMany: prismaMocks.projectDeleteMany,
     },
   },
 }));
@@ -54,6 +58,11 @@ vi.mock("../../src/services/github-sync.js", () => ({
 
 vi.mock("../../src/services/board-default.js", () => ({
   ensureDefaultBoardForProject: boardMocks.ensureDefaultBoardForProject,
+}));
+
+vi.mock("../../src/services/project-deletion.js", () => ({
+  deleteProjectWithSafeguards: deletionMocks.deleteProjectWithSafeguards,
+  removeStoredAttachments: deletionMocks.removeStoredAttachments,
 }));
 
 vi.mock("../../src/services/audit.js", () => ({
@@ -114,10 +123,9 @@ beforeEach(() => {
   prismaMocks.projectFindMany.mockResolvedValue([]);
   prismaMocks.projectCreate.mockResolvedValue({ id: "p-new" });
   prismaMocks.projectUpdate.mockResolvedValue({ id: "p-existing" });
-  // Never evaluates the filter: it only reports how many ids it was handed.
-  prismaMocks.projectDeleteMany.mockImplementation(({ where }: { where: { id?: { in?: string[] } } }) =>
-    Promise.resolve({ count: where.id?.in?.length ?? 1 }),
-  );
+  // Every stale project is deleted unless a test says otherwise.
+  deletionMocks.deleteProjectWithSafeguards.mockResolvedValue({ ok: true, attachmentUrls: [] });
+  deletionMocks.removeStoredAttachments.mockResolvedValue(undefined);
   boardMocks.ensureDefaultBoardForProject.mockResolvedValue(undefined);
 });
 
@@ -227,6 +235,11 @@ describe("POST /teams/:id/sync: lookup of the already-bound project", () => {
   });
 });
 
+/** The project ids the prune handed to the deletion service, in order. */
+function deletedIds(): string[] {
+  return deletionMocks.deleteProjectWithSafeguards.mock.calls.map((call) => call[1] as string);
+}
+
 describe("POST /teams/:id/sync: prune", () => {
   it("never prunes a binding whose case differs from GitHub's spelling", async () => {
     githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
@@ -236,7 +249,7 @@ describe("POST /teams/:id/sync: prune", () => {
     const { body } = await sync();
 
     expect(body).toMatchObject({ updated: 1, pruned: 0, skippedPrune: false });
-    expect(prismaMocks.projectDeleteMany).not.toHaveBeenCalled();
+    expect(deletionMocks.deleteProjectWithSafeguards).not.toHaveBeenCalled();
   });
 
   it("reads the prune candidates from the team only, githubRepo-bound only, and compares lowercased", async () => {
@@ -255,7 +268,7 @@ describe("POST /teams/:id/sync: prune", () => {
     });
     // Both rows are the listed repo, whatever their case: nothing is deleted.
     expect(body.pruned).toBe(0);
-    expect(prismaMocks.projectDeleteMany).not.toHaveBeenCalled();
+    expect(deletionMocks.deleteProjectWithSafeguards).not.toHaveBeenCalled();
   });
 
   it("prunes a project bound to a repo that is no longer listed, and keeps every case of the listed ones", async () => {
@@ -272,13 +285,7 @@ describe("POST /teams/:id/sync: prune", () => {
     const { body } = await sync();
 
     expect(body).toMatchObject({ pruned: 2, skippedPrune: false });
-    expect(prismaMocks.projectDeleteMany).toHaveBeenCalledWith({
-      where: {
-        id: { in: ["p-gone-lower", "p-gone-mixed"] },
-        teamId: TEAM_ID,
-        githubRepo: { not: null, notIn: [GITHUB_REPO], mode: "insensitive" },
-      },
-    });
+    expect(deletedIds()).toEqual(["p-gone-lower", "p-gone-mixed"]);
   });
 
   it("prunes a project whose binding has a different owner case only when it is another repo", async () => {
@@ -290,13 +297,7 @@ describe("POST /teams/:id/sync: prune", () => {
 
     // A prefix match is not a match: the repo names differ beyond case.
     expect(body.pruned).toBe(1);
-    expect(prismaMocks.projectDeleteMany).toHaveBeenCalledWith({
-      where: {
-        id: { in: ["p-other-repo"] },
-        teamId: TEAM_ID,
-        githubRepo: { not: null, notIn: ["LanNguyenSi/agent-tasks"], mode: "insensitive" },
-      },
-    });
+    expect(deletedIds()).toEqual(["p-other-repo"]);
   });
 
   it("skips the prune entirely when GitHub lists no repo, and never loads the candidate rows", async () => {
@@ -306,7 +307,7 @@ describe("POST /teams/:id/sync: prune", () => {
 
     expect(body).toMatchObject({ synced: 0, created: 0, updated: 0, pruned: 0, skippedPrune: true });
     expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
-    expect(prismaMocks.projectDeleteMany).not.toHaveBeenCalled();
+    expect(deletionMocks.deleteProjectWithSafeguards).not.toHaveBeenCalled();
   });
 });
 
@@ -331,7 +332,7 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
       expect(String(body.message)).toContain("Stale projects are only removed by a team admin.");
       expect(prismaMocks.projectUpdate).toHaveBeenCalledTimes(1);
       expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
-      expect(prismaMocks.projectDeleteMany).not.toHaveBeenCalled();
+      expect(deletionMocks.deleteProjectWithSafeguards).not.toHaveBeenCalled();
       expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
     });
   }
@@ -359,12 +360,20 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
 
     expect(body).toMatchObject({ pruned: 1, pruneSkipped: null, skippedPrune: false });
     expect(String(body.message)).not.toContain("team admin");
-    expect(prismaMocks.projectDeleteMany).toHaveBeenCalledTimes(1);
+    expect(deletedIds()).toEqual(["p-gone"]);
     expect(vi.mocked(logAuditEvent)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith({
       action: "project.synced",
       actorId: HUMAN.userId,
-      payload: { teamId: TEAM_ID, via: "team_sync_prune", candidateProjectIds: ["p-gone"], deletedCount: 1 },
+      payload: {
+        teamId: TEAM_ID,
+        via: "team_sync_prune",
+        candidateProjectIds: ["p-gone"],
+        deletedProjectIds: ["p-gone"],
+        deletedCount: 1,
+        skippedProjects: [],
+        deferredProjectIds: [],
+      },
     });
   });
 
@@ -378,7 +387,7 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
     expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
   });
 
-  it("an admin whose DELETE removes fewer rows than it was handed reports the database count and lists every candidate id", async () => {
+  it("an admin whose prune deletes fewer projects than it picked reports the deleted count and lists every candidate id", async () => {
     githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
     prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
     prismaMocks.projectFindMany.mockResolvedValue([
@@ -386,7 +395,9 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
       { id: "p-gone-a", githubRepo: "lannguyensi/retired-a" },
       { id: "p-gone-b", githubRepo: "lannguyensi/retired-b" },
     ]);
-    prismaMocks.projectDeleteMany.mockResolvedValue({ count: 1 });
+    deletionMocks.deleteProjectWithSafeguards
+      .mockResolvedValueOnce({ ok: true, attachmentUrls: [] })
+      .mockResolvedValueOnce({ ok: false, reason: "not_eligible" });
 
     const res = await makeApp(HUMAN);
 
@@ -398,20 +409,187 @@ describe("POST /teams/:id/sync: prune is for team admins only", () => {
         teamId: TEAM_ID,
         via: "team_sync_prune",
         candidateProjectIds: ["p-gone-a", "p-gone-b"],
+        deletedProjectIds: ["p-gone-a"],
         deletedCount: 1,
+        skippedProjects: [],
+        deferredProjectIds: [],
       },
     });
   });
 
-  it("an admin whose DELETE reports 0 rows emits no audit event", async () => {
+  it("an admin whose every stale project is refused as not eligible emits no audit event", async () => {
     githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
     prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
     prismaMocks.projectFindMany.mockResolvedValue(STALE_ROWS);
-    prismaMocks.projectDeleteMany.mockResolvedValue({ count: 0 });
+    deletionMocks.deleteProjectWithSafeguards.mockResolvedValue({ ok: false, reason: "not_eligible" });
 
     const res = await makeApp(HUMAN);
 
     expect(((await res.json()) as { pruned: number }).pruned).toBe(0);
     expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /teams/:id/sync: prune through the deletion service", () => {
+  const STALE = [
+    { id: "p-keep", githubRepo: STORED_REPO },
+    { id: "p-gone", githubRepo: "lannguyensi/retired" },
+  ];
+  function arrange() {
+    githubMocks.listUserRepos.mockResolvedValue([repo(GITHUB_REPO)]);
+    prismaMocks.projectFindFirst.mockResolvedValue({ id: "p-keep", githubRepo: STORED_REPO });
+    prismaMocks.projectFindMany.mockResolvedValue(STALE);
+  }
+  type Admit = (db: unknown, project: { teamId: string; githubRepo: string | null }) => Promise<boolean>;
+  function admitHook(): Admit {
+    const options = deletionMocks.deleteProjectWithSafeguards.mock.calls[0]![2] as { admit: Admit };
+    return options.admit;
+  }
+
+  it("the admit hook accepts a project of this team whose repo is still not listed, in any case", async () => {
+    arrange();
+    await sync();
+    const admit = admitHook();
+
+    expect(await admit({}, { teamId: TEAM_ID, githubRepo: "lannguyensi/retired" })).toBe(true);
+    expect(await admit({}, { teamId: TEAM_ID, githubRepo: "LanNguyenSi/RETIRED" })).toBe(true);
+  });
+
+  it("the admit hook refuses a project that moved to another team", async () => {
+    arrange();
+    await sync();
+
+    expect(await admitHook()({}, { teamId: "team-2", githubRepo: "lannguyensi/retired" })).toBe(false);
+  });
+
+  it("the admit hook refuses a project that was unbound or rebound to a listed repo, whatever the case", async () => {
+    arrange();
+    await sync();
+    const admit = admitHook();
+
+    expect(await admit({}, { teamId: TEAM_ID, githubRepo: null })).toBe(false);
+    expect(await admit({}, { teamId: TEAM_ID, githubRepo: GITHUB_REPO })).toBe(false);
+    expect(await admit({}, { teamId: TEAM_ID, githubRepo: STORED_REPO })).toBe(false);
+  });
+
+  it("reclaims the attachment files of a deleted project and only of those", async () => {
+    arrange();
+    prismaMocks.projectFindMany.mockResolvedValue([
+      ...STALE,
+      { id: "p-kept-history", githubRepo: "lannguyensi/retired-2" },
+    ]);
+    deletionMocks.deleteProjectWithSafeguards
+      .mockResolvedValueOnce({ ok: true, attachmentUrls: ["/uploads/a.txt"] })
+      .mockResolvedValueOnce({ ok: false, reason: "retained" });
+
+    await sync();
+
+    expect(deletionMocks.removeStoredAttachments).toHaveBeenCalledTimes(1);
+    expect(deletionMocks.removeStoredAttachments).toHaveBeenCalledWith(["/uploads/a.txt"]);
+  });
+
+  it("reports a retained and a reservation-pending project with their reasons, in the response, the message and the audit event", async () => {
+    arrange();
+    prismaMocks.projectFindMany.mockResolvedValue([
+      { id: "p-1-ret", githubRepo: "lannguyensi/retired-ret" },
+      { id: "p-2-pend", githubRepo: "lannguyensi/retired-pend" },
+      { id: "p-3-del", githubRepo: "lannguyensi/retired-del" },
+    ]);
+    deletionMocks.deleteProjectWithSafeguards
+      .mockResolvedValueOnce({ ok: false, reason: "retained" })
+      .mockResolvedValueOnce({ ok: false, reason: "reservation_pending" })
+      .mockResolvedValueOnce({ ok: true, attachmentUrls: [] });
+
+    const res = await makeApp(HUMAN);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    const skipped = [
+      { projectId: "p-1-ret", reason: "grounding_history_retained" },
+      { projectId: "p-2-pend", reason: "grounding_finalization_pending" },
+    ];
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ pruned: 1, pruneDeferred: false, pruneRetained: skipped });
+    expect(String(body.message)).toContain("2 stale projects were kept");
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith({
+      action: "project.synced",
+      actorId: HUMAN.userId,
+      payload: {
+        teamId: TEAM_ID,
+        via: "team_sync_prune",
+        candidateProjectIds: ["p-1-ret", "p-2-pend", "p-3-del"],
+        deletedProjectIds: ["p-3-del"],
+        deletedCount: 1,
+        skippedProjects: skipped,
+        deferredProjectIds: [],
+      },
+    });
+  });
+
+  it("uses the singular in the message for one kept project and audits a prune that kept everything", async () => {
+    arrange();
+    deletionMocks.deleteProjectWithSafeguards.mockResolvedValue({ ok: false, reason: "retained" });
+
+    const body = (await (await makeApp(HUMAN)).json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ pruned: 0, pruneRetained: [{ projectId: "p-gone", reason: "grounding_history_retained" }] });
+    expect(String(body.message)).toContain("1 stale project was kept");
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers an empty pruneRetained and no kept-project sentence when nothing was kept", async () => {
+    arrange();
+
+    const body = (await (await makeApp(HUMAN)).json()) as Record<string, unknown>;
+
+    expect(body.pruneRetained).toEqual([]);
+    expect(String(body.message)).not.toContain("kept because");
+  });
+
+  it("a fenced project sets pruneDeferred, the others still go, and a fence alone writes no audit event", async () => {
+    arrange();
+    prismaMocks.projectFindMany.mockResolvedValue([
+      { id: "p-fenced", githubRepo: "lannguyensi/retired-f" },
+      { id: "p-free", githubRepo: "lannguyensi/retired-g" },
+    ]);
+    deletionMocks.deleteProjectWithSafeguards
+      .mockResolvedValueOnce({ ok: false, reason: "fenced" })
+      .mockResolvedValueOnce({ ok: true, attachmentUrls: [] });
+
+    const body = (await (await makeApp(HUMAN)).json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ pruned: 1, pruneDeferred: true, pruneRetained: [] });
+    expect(String(body.message)).toContain("postponed");
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ deletedProjectIds: ["p-free"], deferredProjectIds: ["p-fenced"] }),
+      }),
+    );
+
+    deletionMocks.deleteProjectWithSafeguards.mockReset();
+    deletionMocks.deleteProjectWithSafeguards.mockResolvedValue({ ok: false, reason: "fenced" });
+    vi.mocked(logAuditEvent).mockClear();
+    const alone = (await (await makeApp(HUMAN)).json()) as Record<string, unknown>;
+    expect(alone).toMatchObject({ pruned: 0, pruneDeferred: true });
+    expect(vi.mocked(logAuditEvent)).not.toHaveBeenCalled();
+  });
+
+  it("a deletion error that is not a refusal fails the request, and the projects already deleted are still audited", async () => {
+    arrange();
+    prismaMocks.projectFindMany.mockResolvedValue([
+      { id: "p-first", githubRepo: "lannguyensi/retired-1" },
+      { id: "p-second", githubRepo: "lannguyensi/retired-2" },
+    ]);
+    deletionMocks.deleteProjectWithSafeguards
+      .mockResolvedValueOnce({ ok: true, attachmentUrls: [] })
+      .mockRejectedValueOnce(new Error("connection lost"));
+
+    const res = await makeApp(HUMAN);
+
+    expect(res.status).toBe(500);
+    expect(vi.mocked(logAuditEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ deletedProjectIds: ["p-first"], deletedCount: 1 }),
+      }),
+    );
   });
 });
