@@ -144,6 +144,12 @@ export async function rewriteLegacyGithubToken(
  * The user's usable GitHub token, or null ("not connected"). A legacy
  * plaintext value is rewritten encrypted on this first use (see
  * `rewriteLegacyGithubToken`).
+ *
+ * The rewrite runs on the global Prisma client by default (a separate
+ * connection and transaction). A caller that holds a lock on the user row,
+ * or reads inside its own transaction, must not use this function: decrypt
+ * with `decryptGithubToken` instead (no database access, no rewrite) and
+ * leave the row to the next plain read or the start-up sweep.
  */
 export async function readGithubToken(
   user: { id: string; githubAccessToken: string | null },

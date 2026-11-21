@@ -17,6 +17,13 @@
  *      consenting teammate.
  *
  * Returns null when neither path produces a candidate.
+ *
+ * The token in the result is decrypted. A legacy plaintext row is rewritten
+ * encrypted on its first use, on the global Prisma client (a separate
+ * connection and transaction). A caller that holds a lock on the user row, or
+ * reads inside its own transaction, must pass that client as `opts.db`: the
+ * rewrite is then skipped and the row is left to the next plain read or the
+ * start-up sweep.
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";

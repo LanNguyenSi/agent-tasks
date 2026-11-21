@@ -445,12 +445,61 @@ describe("config: GITHUB_TOKEN_ENCRYPTION_KEY", () => {
     return (await import("../../src/config/index.js")).config;
   }
 
+  async function expectRefused(value: string) {
+    const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(configWith(value)).rejects.toThrow("exit");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    vi.restoreAllMocks();
+  }
+
   it("absent is unset", async () => {
     expect((await configWith(undefined)).GITHUB_TOKEN_ENCRYPTION_KEY).toBeUndefined();
   });
 
   it("the empty string is unset", async () => {
     expect((await configWith("")).GITHUB_TOKEN_ENCRYPTION_KEY).toBeUndefined();
+  });
+
+  it("a whitespace-only value is unset, not key material", async () => {
+    for (const blank of [" ", "   ", "\t\n", " \r\n\t "]) {
+      vi.resetModules();
+      expect((await configWith(blank)).GITHUB_TOKEN_ENCRYPTION_KEY).toBeUndefined();
+    }
+  });
+
+  it("a whitespace-only value falls back to the session secret for the key", async () => {
+    process.env.GITHUB_TOKEN_ENCRYPTION_KEY = " \t\n";
+    process.env.SESSION_SECRET = SESSION;
+    process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+    const crypto = await import("../../src/services/github-token-crypto.js");
+    expect(crypto.decryptGithubToken(crypto.encryptGithubToken(TOKEN), sessionOnly)).toBe(TOKEN);
+  });
+
+  it("a value shorter than 32 characters refuses startup", async () => {
+    await expectRefused("a");
+    vi.resetModules();
+    await expectRefused("k".repeat(31));
+  });
+
+  it("the length is counted after trimming", async () => {
+    await expectRefused(`  ${"k".repeat(31)}\n`);
+  });
+
+  it("exactly 32 characters is accepted", async () => {
+    expect((await configWith("k".repeat(32))).GITHUB_TOKEN_ENCRYPTION_KEY).toBe("k".repeat(32));
+  });
+
+  it("a padded value is trimmed, and the trimmed value is the key material", async () => {
+    const key = "k".repeat(32);
+    const padded = (await configWith(`  ${key}\n`)).GITHUB_TOKEN_ENCRYPTION_KEY;
+    expect(padded).toBe(key);
+    vi.resetModules();
+    const crypto = await import("../../src/services/github-token-crypto.js");
+    const stored = crypto.encryptGithubToken(TOKEN);
+    expect(crypto.decryptGithubToken(stored, { GITHUB_TOKEN_ENCRYPTION_KEY: key })).toBe(TOKEN);
   });
 
   it("a value is passed through", async () => {

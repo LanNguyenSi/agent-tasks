@@ -161,7 +161,11 @@ of SSO connections are a separate store with their own key
 (`SSO_ENCRYPTION_KEY`, `docs/enterprise-sso.md`) and are not affected.
 
 **Key.** `GITHUB_TOKEN_ENCRYPTION_KEY` when it is set and not empty,
-otherwise `SESSION_SECRET`. Either value goes through HKDF-SHA256 with a
+otherwise `SESSION_SECRET`. A whitespace-only value counts as empty. A set
+value is trimmed (the trimmed value is the key material, so a padded value
+equals the unpadded one) and must be at least 32 characters, the same floor
+as `SESSION_SECRET`; a shorter value makes the backend refuse to start.
+`SESSION_SECRET` itself is used exactly as given, without trimming. Either value goes through HKDF-SHA256 with a
 fixed purpose string, so the AES key is never the session secret itself.
 `docker-compose.prod.yml` forwards the variable with an empty default.
 
@@ -185,8 +189,13 @@ later `SESSION_SECRET` rotations harmless, set `GITHUB_TOKEN_ENCRYPTION_KEY`
 to the value `SESSION_SECRET` has now: the derived key is the same, so no
 stored token becomes unreadable, and the secret can be rotated afterwards
 without disconnecting anyone. Setting it to any other value changes the key
-in effect like a rotation does. A database restore needs the same key
-as the instance that wrote the dump.
+in effect like a rotation does. The "set it to the current `SESSION_SECRET`
+value" step gives an unchanged key only while `SESSION_SECRET` has no
+leading or trailing whitespace. A database restore needs the same key as the
+instance that wrote the dump. If the key may have leaked, change both
+`GITHUB_TOKEN_ENCRYPTION_KEY` and `SESSION_SECRET`: the stored tokens become
+unreadable and users reconnect GitHub (revoke the old tokens on GitHub too if
+the database content may have leaked as well).
 
 ## Related
 

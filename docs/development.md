@@ -89,7 +89,7 @@ The backend validates its environment at startup (`backend/src/config/index.ts`)
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | empty | GitHub OAuth login, connect and repo sync |
 | `GITHUB_WEBHOOK_SECRET` | empty | Webhook signature secret, see [webhook-setup.md](webhook-setup.md) |
 | `SSO_ENCRYPTION_KEY` | empty | Required before an SSO connection can be created, see [enterprise-sso.md](enterprise-sso.md) |
-| `GITHUB_TOKEN_ENCRYPTION_KEY` | empty (key derived from `SESSION_SECRET`) | Key material for the AES-256-GCM encryption of stored GitHub OAuth tokens; changing the value in effect makes stored tokens unreadable, see [self-hosting.md](self-hosting.md#github-token-encryption) |
+| `GITHUB_TOKEN_ENCRYPTION_KEY` | empty (key derived from `SESSION_SECRET`) | Key material for the AES-256-GCM encryption of stored GitHub OAuth tokens. Whitespace-only counts as empty; a set value is trimmed and must be at least 32 characters or the backend refuses to start. Changing the value in effect makes stored tokens unreadable, see [self-hosting.md](self-hosting.md#github-token-encryption) |
 | `ALLOWED_GITHUB_LOGINS` | empty (any verified GitHub user) | Comma-separated logins the identity-broker endpoint `POST /api/auth/register-from-project-pilot` may provision |
 | `TRUSTED_PROXY_HOPS` | `0` (`.env.example` ships `0`; the prod compose file defaults to `1`) | Number of reverse proxies in front of the backend; the rate limiter reads the client address that many `X-Forwarded-For` entries from the right |
 | `REDIS_URL`, `REDIS_KEY_PREFIX` | unset, `agent-tasks:` | Optional shared cache; in-memory without `REDIS_URL` |
