@@ -116,8 +116,12 @@ services:
       # SSO_ENCRYPTION_KEY is required before any SSO connection is created;
       # BACKEND_URL is the public backend origin used for SSO callback URLs;
       # IDEMPOTENCY_TTL_DAYS, REDIS_URL and REDIS_KEY_PREFIX are documented
-      # in .env.example.
+      # in .env.example. GITHUB_TOKEN_ENCRYPTION_KEY is the optional key
+      # material for stored GitHub OAuth tokens; empty means the key is
+      # derived from SESSION_SECRET (docs/self-hosting.md, "GitHub token
+      # encryption").
       SSO_ENCRYPTION_KEY: ${SSO_ENCRYPTION_KEY:-}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY:-}
       BACKEND_URL: ${BACKEND_URL:-}
       IDEMPOTENCY_TTL_DAYS: ${IDEMPOTENCY_TTL_DAYS:-}
       REDIS_URL: ${REDIS_URL:-}

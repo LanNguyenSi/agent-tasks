@@ -6,6 +6,7 @@ import { canonicalGroundingJson, CREATE_CONSENT_REFUSAL, KEY_OTHER_ACTOR_REFUSAL
 import { groundingTransaction, lockGroundingTask, assertNoGroundingReservation, invalidateGroundingContext, GroundingDecisionError } from "./grounding-transaction.js";
 import { acquireGithubFence, assertGithubFenceOwned, releaseGithubFence, withGithubFenceWrites, canonicalGithubRepo, GithubFenceError, type GithubFenceOwner } from "./grounding-github-fence.js";
 import { findDelegationUser } from "./github-delegation.js";
+import { decryptGithubToken } from "./github-token-crypto.js";
 import { NO_EFFECTIVE_REPO_ERROR, noEffectiveRepoMessage, requireEffectiveRepo, type EffectiveRepoRequirementResult } from "./gates/pr-repo-matches-project.js";
 import { logGroundingContextMutation } from "./audit.js";
 import { normalizeGithubCreateRequest, githubCreateProof, hasGithubCreateCorrelation, githubGroundingCreateProvider, type GithubCreateRequest, type GithubCreateProof, type GroundingGithubCreateProvider } from "./grounding-github-create-provider.js";
@@ -58,8 +59,10 @@ export class GroundingGithubCreateService {
     await db.$queryRaw`SELECT id FROM users WHERE id = ${chosenId} FOR SHARE`;
     await db.$queryRaw`SELECT id FROM team_members WHERE "teamId" = ${task.project.teamId} AND "userId" = ${chosenId} FOR SHARE`;
     const member = await db.teamMember.findUnique({ where: { teamId_userId: { teamId: task.project.teamId, userId: chosenId } }, include: { user: true } });
-    if (!member?.user.allowAgentPrCreate || !member.user.githubConnectedAt || !member.user.githubAccessToken) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
-    return { id: chosenId, token: member.user.githubAccessToken };
+    // Decrypt only, no rewrite: this read runs inside the caller's transaction, which holds a lock on the user row.
+    const token = decryptGithubToken(member?.user.githubAccessToken);
+    if (!member?.user.allowAgentPrCreate || !member.user.githubConnectedAt || !token) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
+    return { id: chosenId, token };
   }
   private async load(db: Prisma.TransactionClient, taskId: string, actor: AgentActor, key: string, request: GithubCreateRequest) {
     const operation = await db.groundingGithubCreateOperation.findUnique({ where: { taskId_key: { taskId, key } } });
