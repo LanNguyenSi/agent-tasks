@@ -51,7 +51,7 @@ html[data-theme="light"] {
 
   /* Link color, derived from --primary-text so it tracks the active theme. */
   --link: var(--primary-text);
-  /* Text painted in the accent hue on surfaces: text-safe in dark (--primary-text), unchanged in light (--primary). */
+  /* Text painted in the accent hue on surfaces: resolves to --primary-text in both themes (light overrides --primary-text to an AA-safe step). */
   --primary-fg: var(--primary-text);
 
   /* Status */
@@ -1784,15 +1784,9 @@ input[type="checkbox"] {
 
 .prose-markdown a {
   color: var(--primary-fg);
-  text-decoration: none;
-}
-.prose-markdown a:hover {
-  text-decoration: underline;
-}
-/* Dark: the text-safe link colour sits close to the prose text colour, so a
-   colour-only link is not distinguishable from the text (axe link-in-text-block).
-   Underline it there; light keeps its colour-only link. */
-html:not([data-theme="light"]) .prose-markdown a {
+  /* The accent link colour sits close to the prose text colour in both
+     themes, so a colour-only link is not distinguishable from the text (axe
+     link-in-text-block). Underline it at rest in every theme. */
   text-decoration: underline;
 }
 
@@ -3280,8 +3274,9 @@ html[data-theme="light"] {
 
   /* Accent text: darkened for AA contrast on light fills */
   --primary-text: #4450a8;
-  /* Accent-hue text stays exactly --primary in light; only dark mode gets the text-safe step. */
-  --primary-fg: var(--primary);
+  /* Accent-hue text (--primary-fg) uses the text-safe step in light too: raw
+     --primary #5e6ad2 is 4.42:1 on --bg and fails WCAG AA for small text. */
+  --primary-fg: var(--primary-text);
   --status-backlog-text: #2d6b73;
   --status-open-text: #535760;
   --status-in-progress-text: #4450a8;

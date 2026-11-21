@@ -4,8 +4,8 @@
 //
 // Renders in two contexts:
 //   variant="modal" (default) — inside a Modal overlay, title carried by
-//     the Modal's own <h3>; the TaskHeader component renders only the
-//     action row.
+//     the Modal's own heading (default <h2>); the TaskHeader component
+//     renders only the action row.
 //   variant="page" — on /tasks/[id]; TaskHeader renders breadcrumb + H1 +
 //     action row; no Modal wrapper.
 //

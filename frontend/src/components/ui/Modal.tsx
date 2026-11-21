@@ -33,6 +33,12 @@ interface ModalProps {
   body?: ReactNode;
   /** Slot alias for actions. When both are set, footer wins. */
   footer?: ReactNode;
+  /**
+   * Heading level of the title element. Default `2`: a dialog sits beside
+   * the page's H1, so the title is the next section level. Pass `3` or `4`
+   * only when the caller nests the dialog's heading under deeper headings.
+   */
+  headingLevel?: 2 | 3 | 4;
 }
 
 export default function Modal({
@@ -45,7 +51,9 @@ export default function Modal({
   closeOnEscape = true,
   body,
   footer,
+  headingLevel = 2,
 }: ModalProps) {
+  const Heading = `h${headingLevel}` as "h2" | "h3" | "h4";
   const titleId = useId();
   const cardRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
@@ -113,9 +121,9 @@ export default function Modal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 className="modal-title" id={titleId}>
+          <Heading className="modal-title" id={titleId}>
             {title}
-          </h3>
+          </Heading>
           <div className="modal-header-actions">
             {headerActions}
             <button

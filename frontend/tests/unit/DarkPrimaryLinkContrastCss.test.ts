@@ -138,8 +138,10 @@ describe("settings .settings-inline-link", () => {
 /**
  * Nine text rules painted in the accent hue use `--primary-fg`: in dark it
  * resolves to the text-safe `--primary-text` (raw `--primary` is 4.05:1 on
- * `--surface` and fails AA), in light it resolves to `--primary`, so light
- * mode keeps exactly the colour it had before the token existed.
+ * `--surface` and fails AA), and in light it resolves to `--primary-text`
+ * too (raw `--primary` #5e6ad2 is 4.42:1 on `--bg` #f7f8fa, below the 4.5:1
+ * AA floor for small text), so every light surface clears 4.5:1 while the
+ * brand swatch `--primary` and the accent buttons keep #5e6ad2.
  */
 const TEXT_RULES = [
   "a",
@@ -178,38 +180,59 @@ describe("accent-hue text rules (nine rules on --primary-fg)", () => {
     expect(ruleColor(selector), `${selector} colour`).toBe("var(--primary-fg)");
   });
 
-  it("the token is defined as var(--primary-text) in dark and var(--primary) in light", () => {
+  it("the token is defined as var(--primary-text) in both themes", () => {
     expect(defineIn(rootBlock, "primary-fg"), "dark --primary-fg").toBe("var(--primary-text)");
-    expect(defineIn(lightBlock, "primary-fg"), "light --primary-fg").toBe("var(--primary)");
+    expect(defineIn(lightBlock, "primary-fg"), "light --primary-fg").toBe("var(--primary-text)");
   });
 
   it.each(SURFACES)("dark --primary-fg resolves to >= 4.5:1 on --%s", (surface) => {
     expect(contrast(darkFg, token(surface)), `--primary-fg on --${surface}`).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("light --primary-fg resolves to exactly the pre-token colour #5e6ad2", () => {
-    // The light block must not override --primary, and --primary-fg must point
-    // at it, so the nine rules keep the colour they had before the token.
+  it("light --primary-fg resolves to the text-safe step, and light keeps --primary as the brand fill", () => {
+    // Light resolves through --primary-text; the light block must
+    // not override --primary, so the brand swatch and accent buttons stay
+    // #5e6ad2 while the nine accent-hue text rules get the AA-safe step.
     expect(lightBlock.match(/--primary:/), "light block must not override --primary").toBeNull();
-    expect(lightFg).toBe("#5e6ad2");
+    expect(lightFg).toBe(lightToken("primary-text"));
   });
 
-  it.each(SURFACES)("light --primary-text stays >= 4.5:1 on light --%s", (surface) => {
+  it.each(SURFACES)("light --primary-fg resolves to >= 4.5:1 on light --%s", (surface) => {
     expect(
-      contrast(lightToken("primary-text"), lightToken(surface)),
-      `--primary-text on light --${surface}`,
+      contrast(lightFg, lightToken(surface)),
+      `--primary-fg on light --${surface}`,
     ).toBeGreaterThanOrEqual(4.5);
   });
 });
 
-describe("prose links stay distinguishable from text in dark (link-in-text-block)", () => {
-  it("dark-only rule underlines .prose-markdown links", () => {
-    const body = /(?:^|\n)html:not\(\[data-theme="light"\]\) \.prose-markdown a\s*\{([^}]*)\}/.exec(css)?.[1];
-    expect(body, "globals.css must underline prose links outside the light theme").not.toBeUndefined();
-    expect(body!).toMatch(/text-decoration:\s*underline/);
+describe("light --primary-fg on the --primary-muted fill", () => {
+  const lightFg = resolveHex(lightBlock, "primary-fg");
+
+  it.each(["surface", "bg", "surface-active"])(
+    "light --primary-fg composites to >= 4.5:1 on --primary-muted over light --%s",
+    (surface) => {
+      const painted = fillOver(lightToken(surface));
+      expect(contrast(lightFg, painted), `--primary-fg on the muted fill over light --${surface}`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
+describe("prose links stay distinguishable from text in both themes (link-in-text-block)", () => {
+  it("the base prose link rule underlines at rest (applies in light and dark)", () => {
+    expect(ruleBody(".prose-markdown a")).toMatch(/text-decoration:\s*underline\s*;/);
   });
 
-  it("the base prose link rule keeps light colour-only (no underline)", () => {
-    expect(ruleBody(".prose-markdown a")).toMatch(/text-decoration:\s*none/);
+  it("no rule targeting a prose link turns its underline off", () => {
+    // Any selector list containing `.prose-markdown a` (with or without a
+    // theme prefix), except pseudo-class variants, must not drop the underline.
+    const rules = css.match(/[^{}]*\{[^}]*\}/g) ?? [];
+    const offenders = rules.filter((rule) => {
+      const [selector, body] = rule.split("{");
+      const targetsProseLink = selector
+        .split(",")
+        .some((part) => /\.prose-markdown a\s*$/.test(part.trim()));
+      return targetsProseLink && /text-decoration:\s*none/.test(body);
+    });
+    expect(offenders).toEqual([]);
   });
 });

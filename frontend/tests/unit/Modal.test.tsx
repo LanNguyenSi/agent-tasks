@@ -111,4 +111,29 @@ describe("Modal — accessibility", () => {
     await userEvent.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
   });
+
+  it("titles the dialog with an h2 by default", () => {
+    render(
+      <Modal open onClose={() => {}} title="Default level">
+        body
+      </Modal>,
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "Default level" })).toHaveClass("modal-title");
+    expect(screen.queryByRole("heading", { level: 3, name: "Default level" })).toBeNull();
+  });
+
+  it("renders the title at a passed headingLevel", () => {
+    const { rerender } = render(
+      <Modal open onClose={() => {}} title="Deep level" headingLevel={4}>
+        body
+      </Modal>,
+    );
+    expect(screen.getByRole("heading", { level: 4, name: "Deep level" })).toHaveClass("modal-title");
+    rerender(
+      <Modal open onClose={() => {}} title="Deep level" headingLevel={3}>
+        body
+      </Modal>,
+    );
+    expect(screen.getByRole("heading", { level: 3, name: "Deep level" })).toHaveClass("modal-title");
+  });
 });

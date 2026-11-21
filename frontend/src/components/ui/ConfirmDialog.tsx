@@ -89,9 +89,10 @@ export default function ConfirmDialog({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 id={titleId} className="confirm-dialog-title">
+        {/* h2, not h3: a dialog title sits beside the page H1 (see Modal.tsx). */}
+        <h2 id={titleId} className="confirm-dialog-title">
           {title}
-        </h3>
+        </h2>
         <div className="confirm-dialog-message">{message}</div>
         <div className="confirm-dialog-actions">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
