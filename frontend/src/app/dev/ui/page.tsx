@@ -469,6 +469,7 @@ export default function UIGalleryPage() {
           <Tooltip content="Copy token to clipboard">
             <button
               type="button"
+              aria-label="Copy token to clipboard"
               style={{
                 display: "inline-flex",
                 alignItems: "center",

@@ -17,4 +17,14 @@ describe("/dev/ui gallery accessibility", () => {
     // By role, not tag: a <main> that loses its landmark role must fail here.
     expect(screen.getByRole("main")).toHaveClass("dev-gallery");
   });
+
+  it("names the icon-only copy button in the Tooltip section", () => {
+    render(
+      <ToastProvider>
+        <UIGalleryPage />
+      </ToastProvider>,
+    );
+    // axe button-name: the <Icon> alone gives the button no accessible name.
+    expect(screen.getByRole("button", { name: "Copy token to clipboard" })).toBeInTheDocument();
+  });
 });

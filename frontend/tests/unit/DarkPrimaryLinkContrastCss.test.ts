@@ -138,8 +138,10 @@ describe("settings .settings-inline-link", () => {
 /**
  * Nine text rules painted in the accent hue use `--primary-fg`: in dark it
  * resolves to the text-safe `--primary-text` (raw `--primary` is 4.05:1 on
- * `--surface` and fails AA), in light it resolves to `--primary`, so light
- * mode keeps exactly the colour it had before the token existed.
+ * `--surface` and fails AA), and in light it resolves to `--primary-text`
+ * too (raw `--primary` #5e6ad2 is 4.42:1 on `--bg` #f7f8fa, below the 4.5:1
+ * AA floor for small text), so every light surface clears 4.5:1 while the
+ * brand swatch `--primary` and the accent buttons keep #5e6ad2.
  */
 const TEXT_RULES = [
   "a",
@@ -178,26 +180,28 @@ describe("accent-hue text rules (nine rules on --primary-fg)", () => {
     expect(ruleColor(selector), `${selector} colour`).toBe("var(--primary-fg)");
   });
 
-  it("the token is defined as var(--primary-text) in dark and var(--primary) in light", () => {
+  it("the token is defined as var(--primary-text) in both themes", () => {
     expect(defineIn(rootBlock, "primary-fg"), "dark --primary-fg").toBe("var(--primary-text)");
-    expect(defineIn(lightBlock, "primary-fg"), "light --primary-fg").toBe("var(--primary)");
+    expect(defineIn(lightBlock, "primary-fg"), "light --primary-fg").toBe("var(--primary-text)");
   });
 
   it.each(SURFACES)("dark --primary-fg resolves to >= 4.5:1 on --%s", (surface) => {
     expect(contrast(darkFg, token(surface)), `--primary-fg on --${surface}`).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("light --primary-fg resolves to exactly the pre-token colour #5e6ad2", () => {
-    // The light block must not override --primary, and --primary-fg must point
-    // at it, so the nine rules keep the colour they had before the token.
+  it("light --primary-fg resolves to the text-safe step, and light keeps --primary as the brand fill", () => {
+    // Light resolves through --primary-text to #4450a8; the light block must
+    // not override --primary, so the brand swatch and accent buttons stay
+    // #5e6ad2 while the nine accent-hue text rules get the AA-safe step.
     expect(lightBlock.match(/--primary:/), "light block must not override --primary").toBeNull();
-    expect(lightFg).toBe("#5e6ad2");
+    expect(lightFg).toBe("#4450a8");
+    expect(lightFg).toBe(lightToken("primary-text"));
   });
 
-  it.each(SURFACES)("light --primary-text stays >= 4.5:1 on light --%s", (surface) => {
+  it.each(SURFACES)("light --primary-fg resolves to >= 4.5:1 on light --%s", (surface) => {
     expect(
-      contrast(lightToken("primary-text"), lightToken(surface)),
-      `--primary-text on light --${surface}`,
+      contrast(lightFg, lightToken(surface)),
+      `--primary-fg on light --${surface}`,
     ).toBeGreaterThanOrEqual(4.5);
   });
 });
