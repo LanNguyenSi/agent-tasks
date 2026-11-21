@@ -156,7 +156,7 @@ describe("teamSyncFeedback", () => {
     expect(f).toEqual({ tone: "warning", title: "Sync completed", message: "GitHub sync returned 0 repositories; prune was skipped for safety. Stale projects are only removed by a team admin." });
   });
 
-  it("skippedPrune wins over pruneRetained too: the backend message already names the kept projects", () => {
+  it("skippedPrune wins over pruneRetained too: no prune ran, the backend message is shown as sent", () => {
     const f = teamSyncFeedback({
       ...base,
       skippedPrune: true,

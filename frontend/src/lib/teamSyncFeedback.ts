@@ -18,10 +18,10 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
  *    partly completed" wins; the prune notices below are appended to its
  *    warning list so nothing goes missing.
  * 2. skippedPrune (the GitHub list was empty, so pruning was skipped for
- *    safety): the backend's own message wins. On a backend that sends
- *    `pruneRetained`/`pruneSkipped` that message already carries the same
- *    retained and admin clauses, so composing them here again would
- *    duplicate them.
+ *    safety): the backend's own message wins. No prune ran, so
+ *    `pruneRetained` is empty, and for a non-admin the backend message
+ *    already carries the admin clause, so composing it here again would
+ *    duplicate it.
  * 3. pruneRetained non-empty or pruneSkipped === "not_admin": a warning
  *    naming the kept count and/or that stale projects are only removed by a
  *    team admin. This branch runs before "Already up to date", so a not-admin
