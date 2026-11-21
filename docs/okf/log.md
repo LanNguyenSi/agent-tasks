@@ -743,7 +743,7 @@ claims the cited sources contradict): `mcp-server.md`'s
 "task_creator_abandon"]`; the code at `mcp-server/src/errors.ts:806`
 reads `["task_respec", "task_creator_abandon"]`, corrected, and the
 parenthetical now gives the code's own rationale from
-`mcp-server/src/errors.ts:752-757` (the two verbs an agent can still call
+`mcp-server/src/errors.ts:773-778` (the two verbs an agent can still call
 while it waits). The same doc's two "Teaching hint:" paraphrases are now
 quoted verbatim from the code's `recipe` field (not `hint`), anchored to
 `mcp-server/src/errors.ts:824` (`backlog_routing_enforced`) and `:840`
