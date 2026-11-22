@@ -277,7 +277,18 @@ async function githubGet<T>(path: string, token: string): Promise<T> {
       res.status,
     );
   }
-  return (await res.json()) as T;
+  // The signal stays live while the body streams: a GitHub that sends
+  // headers and then stalls the body aborts here, not in fetch.
+  try {
+    return (await res.json()) as T;
+  } catch (err) {
+    if (signal.aborted) {
+      throw new GithubChecksError(
+        `GitHub API request to ${path} timed out after ${GITHUB_GET_TIMEOUT_MS} ms`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
