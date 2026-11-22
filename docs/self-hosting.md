@@ -5,8 +5,8 @@
 file deliberately leaves to the operator: the external Traefik proxy the
 file assumes, rotating the database passwords once the stack is live, and
 what to watch after a deploy. The deploy runbook and the prod runtime
-reference: [docs/okf/deploy.md](docs/okf/deploy.md). Backups, restore and
-the destructive-schema procedure: [docs/ops-backups.md](docs/ops-backups.md).
+reference: [docs/okf/deploy.md](okf/deploy.md). Backups, restore and
+the destructive-schema procedure: [docs/ops-backups.md](ops-backups.md).
 
 All commands run from the deployment directory on the server, where
 `docker-compose.prod.yml` and its `.env` live. Always pass
