@@ -33,7 +33,7 @@ vi.mock("../../src/services/audit.js", async (orig) => ({
 
 import { teamRouter } from "../../src/routes/teams.js";
 import { findDelegationUser } from "../../src/services/github-delegation.js";
-import { getTokenHealth } from "../../src/services/github-health.js";
+import { countInvalidTokenUsers, getTokenHealth } from "../../src/services/github-health.js";
 import { GroundingGithubCreateService } from "../../src/services/grounding-github-create.js";
 import {
   decryptGithubToken,
@@ -44,6 +44,7 @@ import {
 import { connectGitHubToExistingUser, upsertUserFromGitHub } from "../../src/services/user.js";
 
 const TOKEN = "gho_realisticLookingToken0123456789";
+const UNREADABLE_VALUE = "v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:AAAA";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
 let db: PrismaClient;
@@ -215,26 +216,43 @@ describe("getTokenHealth", () => {
     expect(isEncryptedGithubToken((await rawToken(userId))!)).toBe(true);
   });
 
-  it("reports invalid (the reconnect state) without a probe or a write for an unreadable value", async () => {
+  it("reports not_connected without a probe or a write for an unreadable value", async () => {
     const fetchMock = stubProbe(200);
     const userId = await seedUser(encryptGithubToken(TOKEN, { GITHUB_TOKEN_ENCRYPTION_KEY: "some-other-key-0123456789abcdef" }));
-    expect(await getTokenHealth(userId)).toEqual({ state: "invalid", lastCheckedAt: null });
+    expect(await getTokenHealth(userId)).toEqual({ state: "not_connected", lastCheckedAt: null });
     expect(fetchMock).not.toHaveBeenCalled();
     const row = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { githubTokenHealthy: true, githubTokenLastCheckedAt: true } });
     expect(row).toEqual({ githubTokenHealthy: null, githubTokenLastCheckedAt: null });
   });
 
-  it("reports invalid for a tampered value", async () => {
+  it("reports not_connected for a tampered value", async () => {
     const fetchMock = stubProbe(200);
     const stored = encryptGithubToken(TOKEN);
     const userId = await seedUser(`${stored.slice(0, -2)}${stored.endsWith("AA") ? "BB" : "AA"}`);
-    expect((await getTokenHealth(userId)).state).toBe("invalid");
+    expect((await getTokenHealth(userId)).state).toBe("not_connected");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reports not_connected for a user without a token", async () => {
     const userId = await seedUser(null);
     expect((await getTokenHealth(userId)).state).toBe("not_connected");
+  });
+});
+
+describe("countInvalidTokenUsers", () => {
+  it("counts a probed-invalid row and a connected unreadable row, not a readable one", async () => {
+    const before = await countInvalidTokenUsers();
+    await seedUser(encryptGithubToken(TOKEN), { githubTokenHealthy: false });
+    await seedUser(encryptGithubToken(TOKEN, { GITHUB_TOKEN_ENCRYPTION_KEY: "some-other-key-0123456789abcdef" }));
+    await seedUser(encryptGithubToken(TOKEN, { GITHUB_TOKEN_ENCRYPTION_KEY: "some-other-key-0123456789abcdef" }), { githubTokenHealthy: false });
+    await seedUser(encryptGithubToken(TOKEN), { githubTokenHealthy: true });
+    await seedUser(TOKEN);
+    await seedUser(null);
+    // Not connected: an unreadable value without a connection time, and a
+    // connection time without a token (neither is counted).
+    await seedUser(UNREADABLE_VALUE, { githubConnectedAt: null });
+    await seedUser(null, { githubConnectedAt: new Date() });
+    expect((await countInvalidTokenUsers()) - before).toBe(3);
   });
 });
 

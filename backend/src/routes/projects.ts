@@ -33,6 +33,7 @@ import {
   computeConfidenceTelemetryAggregates,
   CLAIM_EVALUATION_ACTIONS,
 } from "../services/confidence-telemetry.js";
+import { decryptGithubToken } from "../services/github-token-crypto.js";
 import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
 import { GroundingAccessError, unavailable } from "../services/grounding-context.js";
 import { deleteProjectWithSafeguards, removeStoredAttachments, type ProjectDeletionResult } from "../services/project-deletion.js";
@@ -702,7 +703,8 @@ projectRouter.post("/projects/:id/sync", async (c) => {
   }
 
   const user = await prisma.user.findUnique({ where: { id: actor.userId } });
-  if (!user?.githubAccessToken) {
+  // An unreadable stored token counts as not connected, like `/auth/me` reports.
+  if (!decryptGithubToken(user?.githubAccessToken)) {
     return c.json(
       { error: "forbidden", message: "Connect your GitHub account in settings before syncing" },
       403,

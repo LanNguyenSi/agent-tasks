@@ -846,7 +846,7 @@ export default function ProjectsPage() {
         <>
 
           {!user?.githubConnected && (
-            <AlertBanner tone="warning" title="GitHub is not connected yet">
+            <AlertBanner tone="warning" title="GitHub is not connected">
               Sync is unavailable until GitHub is connected.{" "}
               <Link href={settingsHref()} className="settings-inline-link">
                 Connect now

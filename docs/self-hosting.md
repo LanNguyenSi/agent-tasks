@@ -181,9 +181,10 @@ users reconnect GitHub after such a rollback.
 key in effect changes, every stored token becomes unreadable: the backend
 ignores those tokens (a delegated call falls back to a teammate with a
 readable token or is refused, repo sync asks the user to connect), logs
-nothing about the values, and the GitHub section of Settings shows the
-reconnect banner; each user reconnects GitHub there (new tokens are
-encrypted under the new key). That includes the case where no `GITHUB_TOKEN_ENCRYPTION_KEY` is set
+nothing about the values, and reports GitHub as not connected for them
+(the Settings page and the projects page offer "Connect GitHub", the health
+check answers `not_connected`); each user connects GitHub again there (new
+tokens are encrypted under the new key). That includes the case where no `GITHUB_TOKEN_ENCRYPTION_KEY` is set
 and you rotate `SESSION_SECRET`: the key then changes with it. To make
 later `SESSION_SECRET` rotations harmless, set `GITHUB_TOKEN_ENCRYPTION_KEY`
 to the value `SESSION_SECRET` has now: the derived key is the same, so no

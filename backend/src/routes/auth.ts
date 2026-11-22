@@ -26,6 +26,7 @@ import {
 } from "../services/user.js";
 import { fakeVerifyPassword, verifyPassword } from "../services/password.js";
 import { getTokenHealth } from "../services/github-health.js";
+import { decryptGithubToken } from "../services/github-token-crypto.js";
 import { logger } from "../lib/logger.js";
 import { safeAuthRedirect } from "../lib/auth-redirect.js";
 import { logAuditEvent } from "../services/audit.js";
@@ -147,6 +148,11 @@ function sanitizeProviderError(value: string): string {
   return safe || "callback_failed";
 }
 
+// `githubConnected` is true only for a connection the server can still use: a
+// stored token that cannot be read (the encryption key changed, or the value
+// was tampered with) is the same as no connection, so the Settings page and
+// the projects page offer "Connect GitHub" rather than a sync that would fail.
+// Pure read, nothing is rewritten and nothing about the value is logged.
 function buildUserResponse(user: {
   id: string;
   login: string;
@@ -165,7 +171,7 @@ function buildUserResponse(user: {
     name: user.name,
     avatarUrl: user.avatarUrl,
     email: user.email,
-    githubConnected: Boolean(user.githubConnectedAt && user.githubAccessToken),
+    githubConnected: Boolean(user.githubConnectedAt && decryptGithubToken(user.githubAccessToken) !== null),
     allowAgentPrCreate: user.allowAgentPrCreate,
     allowAgentPrMerge: user.allowAgentPrMerge,
     allowAgentPrComment: user.allowAgentPrComment,
