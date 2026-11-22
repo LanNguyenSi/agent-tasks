@@ -93,7 +93,7 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 | `task_merge` | Merge the bound PR via GitHub delegation; honours self-merge gate |
 | `task_abandon` | Release the claim with a reason |
 | `task_create` | Create a new task in a project; agent creates land in `backlog` until a human promotes them to `open` |
-| `task_respec` | Edit an open or backlog task you created |
+| `task_respec` | Edit an unclaimed open or backlog task: an open task only by its creator unless the project allows non-creator respec, a backlog task by any agent |
 | `task_creator_abandon` | Withdraw an unclaimed task you created |
 | `task_attachment_list` / `task_attachment_get` | Read human-added files on a task |
 | `task_artifact_create` / `task_artifact_list` / `task_artifact_get` | Attach and read structured artifacts on a task |
