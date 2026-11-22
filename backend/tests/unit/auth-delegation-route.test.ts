@@ -94,6 +94,11 @@ function row(overrides: Record<string, unknown>) {
 const ON = { allowAgentPrCreate: true, allowAgentPrMerge: false, allowAgentPrComment: false };
 const OFF = { allowAgentPrCreate: false, allowAgentPrMerge: false, allowAgentPrComment: false };
 
+/** Returns the row only for the actor's own id, null for any other id. */
+function mockUser(user: Record<string, unknown>) {
+  vi.mocked(getUserById).mockImplementation(async (id: string) => (id === "user-1" ? (user as never) : null));
+}
+
 function makeApp(actor: unknown) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (c, next) => {
@@ -121,6 +126,7 @@ const FORBIDDEN = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getUserById).mockImplementation(async () => null);
   vi.mocked(updateUserDelegation).mockImplementation(
     async (_id, flags) => row({ ...flags }) as never,
   );
@@ -128,7 +134,7 @@ beforeEach(() => {
 
 describe("PUT /auth/delegation", () => {
   it("refuses enabling when githubConnectedAt is null (403, nothing written)", async () => {
-    vi.mocked(getUserById).mockResolvedValue(row({ githubConnectedAt: null }) as never);
+    mockUser(row({ githubConnectedAt: null }));
     const res = await put(ON);
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual(FORBIDDEN);
@@ -136,38 +142,54 @@ describe("PUT /auth/delegation", () => {
   });
 
   it("refuses enabling when there is no token (403, nothing written)", async () => {
-    vi.mocked(getUserById).mockResolvedValue(row({ githubAccessToken: null }) as never);
+    mockUser(row({ githubAccessToken: null }));
     const res = await put({ ...OFF, allowAgentPrComment: true });
     expect(res.status).toBe(403);
     expect(updateUserDelegation).not.toHaveBeenCalled();
   });
 
   it("refuses enabling when the stored token does not decrypt (403, nothing written)", async () => {
-    vi.mocked(getUserById).mockResolvedValue(row({ githubAccessToken: UNREADABLE }) as never);
+    mockUser(row({ githubAccessToken: UNREADABLE }));
     const res = await put({ ...OFF, allowAgentPrMerge: true });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual(FORBIDDEN);
     expect(updateUserDelegation).not.toHaveBeenCalled();
   });
 
+  it("answers 404 when the user row is gone and a flag is true (nothing written)", async () => {
+    vi.mocked(getUserById).mockResolvedValue(null);
+    const res = await put(ON);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not_found", message: "User not found" });
+    expect(updateUserDelegation).not.toHaveBeenCalled();
+  });
+
+  it("does not read the user for an all-false request", async () => {
+    mockUser(row({}));
+    const res = await put(OFF);
+    expect(res.status).toBe(200);
+    expect(getUserById).not.toHaveBeenCalled();
+  });
+
   it("allows all-false for an unconnected user", async () => {
-    vi.mocked(getUserById).mockResolvedValue(row({ githubConnectedAt: null, githubAccessToken: null }) as never);
+    mockUser(row({ githubConnectedAt: null, githubAccessToken: null }));
     const res = await put(OFF);
     expect(res.status).toBe(200);
     expect(updateUserDelegation).toHaveBeenCalledWith("user-1", OFF);
   });
 
   it("allows all-false for a user with an unreadable token", async () => {
-    vi.mocked(getUserById).mockResolvedValue(row({ githubAccessToken: UNREADABLE }) as never);
+    mockUser(row({ githubAccessToken: UNREADABLE }));
     const res = await put(OFF);
     expect(res.status).toBe(200);
     expect(updateUserDelegation).toHaveBeenCalledWith("user-1", OFF);
   });
 
   it("allows enabling for a connected user and returns the built user", async () => {
-    vi.mocked(getUserById).mockResolvedValue(row({}) as never);
+    mockUser(row({}));
     const res = await put(ON);
     expect(res.status).toBe(200);
+    expect(getUserById).toHaveBeenCalledWith("user-1");
     expect(updateUserDelegation).toHaveBeenCalledWith("user-1", ON);
     const { user } = (await res.json()) as { user: Record<string, unknown> };
     expect(user.githubConnected).toBe(true);
