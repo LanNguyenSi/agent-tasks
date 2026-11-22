@@ -33,7 +33,7 @@
  */
 
 import { prisma } from "../lib/prisma.js";
-import { readGithubToken } from "./github-token-crypto.js";
+import { decryptGithubToken, readGithubToken } from "./github-token-crypto.js";
 
 /** How long a definitive probe result (healthy or invalid) is considered fresh. */
 const PROBE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -158,14 +158,13 @@ export async function getTokenHealth(userId: string): Promise<HealthResult> {
   }
 
   // A stored token that cannot be read (the encryption key changed, or the
-  // value was tampered with) is of no use to this user. `/auth/me` still
-  // reports GitHub as connected for such a row, and the Settings page only
-  // offers "Reconnect GitHub" for `invalid`, so that is the state returned.
+  // value was tampered with) is of no use to this user, and `/auth/me` reports
+  // GitHub as not connected for such a row, so that is the state returned.
   // No probe is sent and nothing is stored: the flag in the row describes the
   // old token, not this one.
   const token = await readGithubToken(user);
   if (!token) {
-    return { state: "invalid", lastCheckedAt: null };
+    return { state: "not_connected", lastCheckedAt: null };
   }
 
   const now = Date.now();
@@ -227,16 +226,51 @@ export async function getTokenHealth(userId: string): Promise<HealthResult> {
   };
 }
 
+/** Rows read per query by the unreadable-token scan in `countInvalidTokenUsers`. */
+export const INVALID_TOKEN_SCAN_BATCH_SIZE = 100;
+
 /**
- * Count users whose token is known-invalid. For the ops dashboard.
+ * Count users whose connection is of no use, for the ops dashboard: rows a
+ * probe marked invalid (`githubTokenHealthy: false`, one indexed count) plus
+ * connected rows whose stored value cannot be read (the encryption key changed,
+ * or the value was tampered with), which no probe ever flags because
+ * `getTokenHealth` never sends one for them. A row in both groups counts once.
  * Users who have never been probed are NOT counted as invalid.
+ *
+ * The second group needs the stored values, so the remaining connected rows
+ * are read in batches ordered by id and decrypted in memory (cost: one pass
+ * over every connected user, `INVALID_TOKEN_SCAN_BATCH_SIZE` rows per query).
+ * Values are neither logged nor returned. Nothing calls this function at
+ * runtime yet; the scan cost matters when a caller is added.
  */
-export async function countInvalidTokenUsers(): Promise<number> {
-  return prisma.user.count({
+export async function countInvalidTokenUsers(
+  batchSize: number = INVALID_TOKEN_SCAN_BATCH_SIZE,
+): Promise<number> {
+  let count = await prisma.user.count({
     where: {
       githubAccessToken: { not: null },
       githubConnectedAt: { not: null },
       githubTokenHealthy: false,
     },
   });
+
+  let after: string | undefined;
+  for (;;) {
+    const rows = await prisma.user.findMany({
+      where: {
+        githubAccessToken: { not: null },
+        githubConnectedAt: { not: null },
+        OR: [{ githubTokenHealthy: null }, { githubTokenHealthy: true }],
+        ...(after === undefined ? {} : { id: { gt: after } }),
+      },
+      orderBy: { id: "asc" },
+      take: batchSize,
+      select: { id: true, githubAccessToken: true },
+    });
+    for (const row of rows) {
+      if (decryptGithubToken(row.githubAccessToken) === null) count += 1;
+    }
+    if (rows.length < batchSize) return count;
+    after = rows[rows.length - 1]!.id;
+  }
 }

@@ -291,8 +291,8 @@ export default function SettingsPage() {
                 ) : (
                   <div>
                     <AlertBanner tone="warning" title="GitHub not connected">
-                      No GitHub connection yet. Repository sync is disabled until you
-                      connect GitHub.
+                      No usable GitHub connection. Connect GitHub to enable
+                      repository sync.
                     </AlertBanner>
                     <Button href="/api/auth/github/connect" variant="secondary">
                       Connect GitHub
