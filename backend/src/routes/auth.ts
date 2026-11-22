@@ -148,11 +148,20 @@ function sanitizeProviderError(value: string): string {
   return safe || "callback_failed";
 }
 
-// `githubConnected` is true only for a connection the server can still use: a
-// stored token that cannot be read (the encryption key changed, or the value
-// was tampered with) is the same as no connection, so the Settings page and
-// the projects page offer "Connect GitHub" rather than a sync that would fail.
+// A connection counts as usable only when the server can still use it: a stored
+// token that cannot be read (the encryption key changed, or the value was
+// tampered with) is the same as no connection. Two callers share this one
+// predicate: the `githubConnected` field of the user response (so the Settings
+// and projects pages offer "Connect GitHub" rather than a sync that would
+// fail) and the PUT /delegation guard that refuses to enable delegation.
 // Pure read, nothing is rewritten and nothing about the value is logged.
+function hasUsableGithubConnection(user: {
+  githubConnectedAt: Date | null;
+  githubAccessToken: string | null;
+}): boolean {
+  return Boolean(user.githubConnectedAt && decryptGithubToken(user.githubAccessToken) !== null);
+}
+
 function buildUserResponse(user: {
   id: string;
   login: string;
@@ -171,7 +180,7 @@ function buildUserResponse(user: {
     name: user.name,
     avatarUrl: user.avatarUrl,
     email: user.email,
-    githubConnected: Boolean(user.githubConnectedAt && decryptGithubToken(user.githubAccessToken) !== null),
+    githubConnected: hasUsableGithubConnection(user),
     allowAgentPrCreate: user.allowAgentPrCreate,
     allowAgentPrMerge: user.allowAgentPrMerge,
     allowAgentPrComment: user.allowAgentPrComment,
@@ -485,6 +494,24 @@ authRouter.put("/delegation", zValidate("json", delegationSchema), async (c) => 
   }
 
   const body = c.req.valid("json");
+  // Turning delegation on needs a connection the server can use; turning
+  // everything off always works, so a disconnected user can clear old flags
+  // through the API.
+  if (body.allowAgentPrCreate || body.allowAgentPrMerge || body.allowAgentPrComment) {
+    const current = await getUserById(actor.userId);
+    if (!current) {
+      return c.json({ error: "not_found", message: "User not found" }, 404);
+    }
+    if (!hasUsableGithubConnection(current)) {
+      return c.json(
+        {
+          error: "github_not_connected",
+          message: "Connect your GitHub account in settings before enabling delegation",
+        },
+        403,
+      );
+    }
+  }
   const user = await updateUserDelegation(actor.userId, body);
   if (!user) {
     return c.json({ error: "not_found", message: "User not found" }, 404);
