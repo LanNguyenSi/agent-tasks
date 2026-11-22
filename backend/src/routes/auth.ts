@@ -153,6 +153,13 @@ function sanitizeProviderError(value: string): string {
 // was tampered with) is the same as no connection, so the Settings page and
 // the projects page offer "Connect GitHub" rather than a sync that would fail.
 // Pure read, nothing is rewritten and nothing about the value is logged.
+function hasUsableGithubConnection(user: {
+  githubConnectedAt: Date | null;
+  githubAccessToken: string | null;
+}): boolean {
+  return Boolean(user.githubConnectedAt && decryptGithubToken(user.githubAccessToken) !== null);
+}
+
 function buildUserResponse(user: {
   id: string;
   login: string;
@@ -171,7 +178,7 @@ function buildUserResponse(user: {
     name: user.name,
     avatarUrl: user.avatarUrl,
     email: user.email,
-    githubConnected: Boolean(user.githubConnectedAt && decryptGithubToken(user.githubAccessToken) !== null),
+    githubConnected: hasUsableGithubConnection(user),
     allowAgentPrCreate: user.allowAgentPrCreate,
     allowAgentPrMerge: user.allowAgentPrMerge,
     allowAgentPrComment: user.allowAgentPrComment,
@@ -485,6 +492,23 @@ authRouter.put("/delegation", zValidate("json", delegationSchema), async (c) => 
   }
 
   const body = c.req.valid("json");
+  // Turning delegation on needs a connection the server can use; turning
+  // everything off always works so a disconnected user can clear old flags.
+  if (body.allowAgentPrCreate || body.allowAgentPrMerge || body.allowAgentPrComment) {
+    const current = await getUserById(actor.userId);
+    if (!current) {
+      return c.json({ error: "not_found", message: "User not found" }, 404);
+    }
+    if (!hasUsableGithubConnection(current)) {
+      return c.json(
+        {
+          error: "github_not_connected",
+          message: "Connect your GitHub account in settings before enabling delegation",
+        },
+        403,
+      );
+    }
+  }
   const user = await updateUserDelegation(actor.userId, body);
   if (!user) {
     return c.json({ error: "not_found", message: "User not found" }, 404);
