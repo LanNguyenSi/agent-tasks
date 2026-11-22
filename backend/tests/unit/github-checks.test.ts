@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _checkCache,
   _clearCheckCache,
+  _prCache,
   classifyCheckRuns,
   classifyPullRequest,
   fetchCheckRunStatus,
+  fetchPullRequest,
   fetchPullRequestStatus,
+  GITHUB_GET_TIMEOUT_MS,
   GithubChecksError,
   type PullResponse,
 } from "../../src/services/github-checks.js";
@@ -253,6 +256,9 @@ describe("fetchCheckRunStatus", () => {
     // instance is the InMemoryCache from the Cache<T> abstraction —
     // `.size()` is cheap here and reads from the module-level instance.
     expect(await (await _checkCache()).size()).toBe(0);
+    // The PR cache is written only after every validation passed, so a
+    // malformed response is not cached either.
+    expect(await (await _prCache()).size()).toBe(0);
   });
 
   it("shares the PR cache between check-runs and pr-status lookups", async () => {
@@ -390,5 +396,185 @@ describe("fetchPullRequestStatus", () => {
     await expect(fetchPullRequestStatus("o", "r", 1, "token")).rejects.toBeInstanceOf(
       GithubChecksError,
     );
+  });
+});
+
+// ── githubGet timeout ──────────────────────────────────────────────────────
+
+/**
+ * A slow GitHub must not pin the advance gate until the grounding
+ * transaction times out: every `githubGet` request carries
+ * `AbortSignal.timeout(GITHUB_GET_TIMEOUT_MS)` and a fired timeout
+ * surfaces as an ordinary `GithubChecksError` (no status code, nothing
+ * from a response: fetch rejected, there is none).
+ *
+ * The real clock is never waited on: `AbortSignal.timeout` is mocked to
+ * hand back a signal we abort by hand, and the fetch mock behaves like
+ * undici, rejecting with the signal's reason when the signal fires.
+ */
+describe("githubGet timeout", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let controllers: AbortController[];
+  let timeoutSpy: ReturnType<typeof vi.spyOn>;
+  let originalFetch: typeof globalThis.fetch;
+
+  /** Resolves only by rejecting when the request's signal aborts, like a
+   *  real timed-out fetch. A request without a signal is itself a failure. */
+  function hangingFetch(_url: string, init?: RequestInit): Promise<Response> {
+    const signal = init?.signal;
+    if (!signal) return Promise.reject(new Error("fetch called without a signal"));
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+
+  beforeEach(async () => {
+    await _clearCheckCache();
+    originalFetch = globalThis.fetch;
+    controllers = [];
+    timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      controllers.push(controller);
+      return controller.signal;
+    });
+    fetchMock = vi.fn(hangingFetch);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    globalThis.fetch = originalFetch;
+  });
+
+  it("exports the 5000 ms per-GET timeout budget", () => {
+    expect(GITHUB_GET_TIMEOUT_MS).toBe(5000);
+  });
+
+  it("PR GET timeout rejects with a GithubChecksError naming the path, without a status", async () => {
+    const call = fetchPullRequestStatus("o", "r", 7, "token");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(timeoutSpy).toHaveBeenCalledWith(GITHUB_GET_TIMEOUT_MS);
+    // The mock receives a signal on the /pulls/ endpoint.
+    expect(fetchMock.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal);
+    controllers[0]!.abort();
+
+    const err = await call.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GithubChecksError);
+    const ghErr = err as GithubChecksError;
+    expect(ghErr.status).toBeUndefined();
+    expect(ghErr.message).toContain("/repos/o/r/pulls/7");
+    expect(ghErr.message.toLowerCase()).toContain("timed out");
+  });
+
+  it("a timed-out PR fetch is not cached", async () => {
+    const call = fetchPullRequest("o", "r", 7, "token").catch((e: unknown) => e);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controllers[0]!.abort();
+    await expect(call).resolves.toBeInstanceOf(GithubChecksError);
+    expect(await (await _prCache()).size()).toBe(0);
+    expect(await (await _checkCache()).size()).toBe(0);
+  });
+
+  it("a stalled response body past the headers rejects with a status-less GithubChecksError and is not cached", async () => {
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      const signal = init!.signal!;
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          signal.addEventListener("abort", () => c.error(signal.reason), { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    });
+    const call = fetchPullRequest("o", "r", 7, "token").catch((e: unknown) => e);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controllers[0]!.abort();
+
+    const err = await call;
+    expect(err).toBeInstanceOf(GithubChecksError);
+    const ghErr = err as GithubChecksError;
+    expect(ghErr.status).toBeUndefined();
+    expect(ghErr.message).toContain("/repos/o/r/pulls/7");
+    expect(ghErr.message.toLowerCase()).toContain("timed out");
+    expect(await (await _prCache()).size()).toBe(0);
+  });
+
+  it("a non-abort body read failure is rethrown unchanged", async () => {
+    const boom = new TypeError("terminated");
+    fetchMock.mockImplementation(() => {
+      const body = new ReadableStream<Uint8Array>({ start: (c) => c.error(boom) });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    });
+    const err = await fetchPullRequest("o", "r", 7, "token").catch((e: unknown) => e);
+    expect(err).toBe(boom);
+    expect(err).not.toBeInstanceOf(GithubChecksError);
+  });
+
+  it("a non-abort fetch error is rethrown unchanged, not mapped to a GithubChecksError", async () => {
+    const boom = new TypeError("fetch failed");
+    fetchMock.mockImplementation(() => Promise.reject(boom));
+    const err = await fetchPullRequest("o", "r", 7, "token").catch((e: unknown) => e);
+    expect(err).toBe(boom);
+    expect(err).not.toBeInstanceOf(GithubChecksError);
+    expect(await (await _prCache()).size()).toBe(0);
+  });
+
+  it("check-runs GET passes a fresh signal on both endpoints and a timeout fails closed", async () => {
+    // The PR fetch succeeds; the check-runs fetch hangs until we abort it.
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).includes("/pulls/")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ head: { sha: SHA }, state: "open", merged: false }),
+            { status: 200 },
+          ),
+        );
+      }
+      return hangingFetch(url, init);
+    });
+    const call = fetchCheckRunStatus("o", "r", 1, "token");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const prSignal = fetchMock.mock.calls[0]![1]!.signal;
+    const checksSignal = fetchMock.mock.calls[1]![1]!.signal;
+    // A signal on both endpoints, and a fresh one per request: each GET
+    // gets its own full budget.
+    expect(prSignal).toBeInstanceOf(AbortSignal);
+    expect(checksSignal).toBeInstanceOf(AbortSignal);
+    expect(prSignal).not.toBe(checksSignal);
+    // The second request is the hanging check-runs GET (one signal per call).
+    controllers[1]!.abort();
+
+    const err = await call.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GithubChecksError);
+    const ghErr = err as GithubChecksError;
+    expect(ghErr.status).toBeUndefined();
+    expect(ghErr.message).toContain("/commits/deadbeef/check-runs");
+    expect(ghErr.message.toLowerCase()).toContain("timed out");
+    // Failed lookups never enter the check-runs cache either.
+    expect(await (await _checkCache()).size()).toBe(0);
+  });
+
+  it("success paths are unaffected by the signal plumbing", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes("/pulls/")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ head: { sha: "abc123" }, state: "closed", merged: true }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ total_count: 1, check_runs: [{ status: "completed", conclusion: "success" }] }),
+          { status: 200 },
+        ),
+      );
+    });
+    expect((await fetchPullRequestStatus("o", "r", 1, "token")).state).toBe("merged");
+    const checks = await fetchCheckRunStatus("o", "r", 1, "token");
+    expect(checks.state).toBe("success");
+    // The completed PR fetch was served from the cache on the second call.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -231,14 +231,43 @@ export function classifyCheckRuns(runs: CheckRunsResponse["check_runs"], sha: st
 
 // ── GitHub API calls ────────────────────────────────────────────────────────
 
+/**
+ * Per-request cap for every GitHub GET made from this module. A slow
+ * GitHub must not be able to push the advance-gate refusal past the 20 s
+ * grounding transaction: the sequential worst case on one edge (PR
+ * fetch, check-runs fetch, the fresh-head provider with its own 5 s,
+ * and the prMerged PR fetch, which then reads the warm 60 s PR cache)
+ * stays under the 20 s transaction timeout. Same budget as the grounding
+ * head/merge providers (`AbortSignal.timeout(5000)` in
+ * grounding-context.ts).
+ */
+export const GITHUB_GET_TIMEOUT_MS = 5_000;
+
 async function githubGet<T>(path: string, token: string): Promise<T> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  const signal = AbortSignal.timeout(GITHUB_GET_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`https://api.github.com${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal,
+    });
+  } catch (err) {
+    // The timeout (or any abort of our signal) must reach the caller as
+    // an ordinary GitHub API failure: a `GithubChecksError` with no
+    // status code, so the rule evaluator reports
+    // `GitHub API error (unknown)` and blocks the transition. Nothing
+    // from a response is involved: fetch rejected, so there is none.
+    if (signal.aborted) {
+      throw new GithubChecksError(
+        `GitHub API request to ${path} timed out after ${GITHUB_GET_TIMEOUT_MS} ms`,
+      );
+    }
+    throw err;
+  }
   if (!res.ok) {
     // Don't include response body in the error — it can contain tokens on
     // some endpoints, and we pass this message back to users via the
@@ -248,7 +277,18 @@ async function githubGet<T>(path: string, token: string): Promise<T> {
       res.status,
     );
   }
-  return (await res.json()) as T;
+  // The signal stays live while the body streams: a GitHub that sends
+  // headers and then stalls the body aborts here, not in fetch.
+  try {
+    return (await res.json()) as T;
+  } catch (err) {
+    if (signal.aborted) {
+      throw new GithubChecksError(
+        `GitHub API request to ${path} timed out after ${GITHUB_GET_TIMEOUT_MS} ms`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**

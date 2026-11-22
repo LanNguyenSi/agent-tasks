@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   evaluateTransitionRules,
   isKnownRule,
   RULE_EVALUATORS,
   RULE_MESSAGES,
 } from "../../src/services/transition-rules.js";
+import { _clearCheckCache } from "../../src/services/github-checks.js";
 
 const emptyCtx = { branchName: null, prUrl: null, prNumber: null };
 
@@ -200,6 +201,52 @@ describe("transition rules", () => {
         githubToken: "tok",
       });
       expect(result.failed).toEqual(["ciGreen"]);
+    });
+
+    it("ciGreen reports GitHub API error (unknown) when a GitHub GET times out", async () => {
+      // End-to-end through `github-checks.ts`: `AbortSignal.timeout` is
+      // replaced by a hand-aborted signal (no real clock), and the fetch
+      // mock rejects only when that signal fires, the same shape a slow
+      // GitHub produces. The aborted GET must reach the evaluator as a
+      // status-less `GithubChecksError`, i.e. "GitHub API error (unknown)".
+      await _clearCheckCache();
+      const controller = new AbortController();
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValue(controller.signal);
+      const originalFetch = globalThis.fetch;
+      const fetchMock = vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) {
+              reject(new Error("fetch called without a signal"));
+              return;
+            }
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        const pending = evaluateTransitionRules(["ciGreen"], {
+          branchName: "feat/x",
+          prUrl: "https://github.com/o/r/pull/3",
+          prNumber: 3,
+          projectGithubRepo: "o/r",
+          githubToken: "tok",
+        });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        expect(timeoutSpy).toHaveBeenCalled();
+        expect(fetchMock.mock.calls[0]![1]!.signal).toBe(controller.signal);
+        controller.abort();
+        const result = await pending;
+        expect(result.failed).toEqual(["ciGreen"]);
+        expect(result.errors.ciGreen).toBe("GitHub API error (unknown)");
+      } finally {
+        globalThis.fetch = originalFetch;
+        timeoutSpy.mockRestore();
+        await _clearCheckCache();
+      }
     });
   });
 
