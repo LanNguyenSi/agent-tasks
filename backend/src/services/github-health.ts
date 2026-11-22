@@ -239,13 +239,19 @@ export const INVALID_TOKEN_SCAN_BATCH_SIZE = 100;
  *
  * The second group needs the stored values, so the remaining connected rows
  * are read in batches ordered by id and decrypted in memory (cost: one pass
- * over every connected user, `INVALID_TOKEN_SCAN_BATCH_SIZE` rows per query).
+ * over every connected user, `INVALID_TOKEN_SCAN_BATCH_SIZE` rows per query; a
+ * `batchSize` that is not a positive integer falls back to that default).
  * Values are neither logged nor returned. Nothing calls this function at
  * runtime yet; the scan cost matters when a caller is added.
  */
 export async function countInvalidTokenUsers(
   batchSize: number = INVALID_TOKEN_SCAN_BATCH_SIZE,
 ): Promise<number> {
+  // Anything but a positive integer would break the paging (0 reads no rows
+  // and then dereferences the last one, a negative size pages backwards), so
+  // it falls back to the default.
+  const pageSize =
+    Number.isInteger(batchSize) && batchSize > 0 ? batchSize : INVALID_TOKEN_SCAN_BATCH_SIZE;
   let count = await prisma.user.count({
     where: {
       githubAccessToken: { not: null },
@@ -264,13 +270,13 @@ export async function countInvalidTokenUsers(
         ...(after === undefined ? {} : { id: { gt: after } }),
       },
       orderBy: { id: "asc" },
-      take: batchSize,
+      take: pageSize,
       select: { id: true, githubAccessToken: true },
     });
     for (const row of rows) {
       if (decryptGithubToken(row.githubAccessToken) === null) count += 1;
     }
-    if (rows.length < batchSize) return count;
+    if (rows.length < pageSize) return count;
     after = rows[rows.length - 1]!.id;
   }
 }

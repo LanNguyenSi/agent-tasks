@@ -44,6 +44,7 @@ import {
 import { connectGitHubToExistingUser, upsertUserFromGitHub } from "../../src/services/user.js";
 
 const TOKEN = "gho_realisticLookingToken0123456789";
+const UNREADABLE_VALUE = "v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:AAAA";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
 let db: PrismaClient;
@@ -247,6 +248,10 @@ describe("countInvalidTokenUsers", () => {
     await seedUser(encryptGithubToken(TOKEN), { githubTokenHealthy: true });
     await seedUser(TOKEN);
     await seedUser(null);
+    // Not connected: an unreadable value without a connection time, and a
+    // connection time without a token (neither is counted).
+    await seedUser(UNREADABLE_VALUE, { githubConnectedAt: null });
+    await seedUser(null, { githubConnectedAt: new Date() });
     expect((await countInvalidTokenUsers()) - before).toBe(3);
   });
 });

@@ -34,7 +34,7 @@ vi.mock("../../src/config/index.js", async (orig) => {
   return { ...actual, config: { ...actual.config, SESSION_SECRET: "test-session-secret-must-be-32chars!!", GITHUB_TOKEN_ENCRYPTION_KEY: undefined } };
 });
 
-import { countInvalidTokenUsers, getTokenHealth } from "../../src/services/github-health.js";
+import { INVALID_TOKEN_SCAN_BATCH_SIZE, countInvalidTokenUsers, getTokenHealth } from "../../src/services/github-health.js";
 import { encryptGithubToken } from "../../src/services/github-token-crypto.js";
 
 const TOKEN = "gho_realisticLookingToken0123456789";
@@ -106,8 +106,10 @@ describe("countInvalidTokenUsers", () => {
 
   /** The where shapes the function sends, evaluated over `table`. */
   function matches(row: Row, where: Record<string, unknown>): boolean {
-    if (row.githubAccessToken === null) return false;
-    if (row.githubConnectedAt === null) return false;
+    // Evaluated only when the query asks for it, so dropping a clause from the
+    // function's `where` lets the extra rows through and a test sees it.
+    if ("githubAccessToken" in where && row.githubAccessToken === null) return false;
+    if ("githubConnectedAt" in where && row.githubConnectedAt === null) return false;
     if ("githubTokenHealthy" in where && row.githubTokenHealthy !== where.githubTokenHealthy) return false;
     const or = where.OR as Array<{ githubTokenHealthy: boolean | null }> | undefined;
     if (or && !or.some((o) => row.githubTokenHealthy === o.githubTokenHealthy)) return false;
@@ -168,6 +170,21 @@ describe("countInvalidTokenUsers", () => {
     expect(await countInvalidTokenUsers()).toBe(0);
   });
 
+  it("does not count a row with no token column even when it has a connection time", async () => {
+    table = [row("a", null, null, true)];
+    expect(await countInvalidTokenUsers()).toBe(0);
+  });
+
+  it("does not count an unreadable row that has no connection time", async () => {
+    table = [row("a", UNREADABLE, null, false)];
+    expect(await countInvalidTokenUsers()).toBe(0);
+  });
+
+  it("does not count a healthy=false row without a token or without a connection time", async () => {
+    table = [row("a", null, false, true), row("b", READABLE, false, false)];
+    expect(await countInvalidTokenUsers()).toBe(0);
+  });
+
   it("counts a row that is both healthy=false and unreadable once", async () => {
     table = [row("a", UNREADABLE, false)];
     expect(await countInvalidTokenUsers()).toBe(1);
@@ -195,6 +212,41 @@ describe("countInvalidTokenUsers", () => {
     expect(await countInvalidTokenUsers(2)).toBe(2);
     // 5 candidate rows at 2 per page: pages of 2, 2 and 1.
     expect(prismaMocks.userFindMany).toHaveBeenCalledTimes(3);
+  });
+
+  describe("batch size", () => {
+    const take = () => (prismaMocks.userFindMany.mock.calls[0]![0] as { take: number }).take;
+    const sample = () => [row("a", READABLE, null), row("b", UNREADABLE, null), row("c", READABLE, null)];
+
+    it("uses a valid size as given", async () => {
+      table = sample();
+      expect(await countInvalidTokenUsers(2)).toBe(1);
+      expect(take()).toBe(2);
+    });
+
+    it("falls back to the default for 0 (no TypeError on an empty page)", async () => {
+      table = sample();
+      expect(await countInvalidTokenUsers(0)).toBe(1);
+      expect(take()).toBe(INVALID_TOKEN_SCAN_BATCH_SIZE);
+    });
+
+    it("falls back to the default for a negative size", async () => {
+      table = sample();
+      expect(await countInvalidTokenUsers(-3)).toBe(1);
+      expect(take()).toBe(INVALID_TOKEN_SCAN_BATCH_SIZE);
+    });
+
+    it("falls back to the default for a non-integer size", async () => {
+      table = sample();
+      expect(await countInvalidTokenUsers(2.5)).toBe(1);
+      expect(take()).toBe(INVALID_TOKEN_SCAN_BATCH_SIZE);
+    });
+
+    it("falls back to the default for NaN", async () => {
+      table = sample();
+      expect(await countInvalidTokenUsers(Number.NaN)).toBe(1);
+      expect(take()).toBe(INVALID_TOKEN_SCAN_BATCH_SIZE);
+    });
   });
 
   it("selects only the id and the stored value, never a probe field", async () => {
