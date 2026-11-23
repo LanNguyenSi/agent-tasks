@@ -24,7 +24,7 @@
     "node": "^22.13.0 || >=24"
   },
   "devDependencies": {
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "tsx": "^4.23.15"
   },
   "overrides": {
