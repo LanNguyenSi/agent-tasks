@@ -4909,6 +4909,13 @@ html[data-theme="light"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* Opaque in light: a translucent fill under the count leaves axe unable to
+   resolve the text contrast (needs-review node); --surface-active is 4.9:1
+   against --muted. */
+html[data-theme="light"] .td-section-count {
+  background: var(--surface-active);
+}
+
 .td-section-action {
   margin-left: auto;
 }

@@ -61,6 +61,14 @@ describe("no hard-coded white wash in light mode", () => {
   });
 });
 
+describe("section count in light", () => {
+  it("uses the opaque --surface-active fill so axe can resolve its text contrast", () => {
+    const m = /(?:^|\n)html\[data-theme="light"\] \.td-section-count\s*\{([^}]*)\}/.exec(css);
+    expect(m, "light override for .td-section-count").not.toBeNull();
+    expect(m![1]).toMatch(/background:\s*var\(--surface-active\)\s*;/);
+  });
+});
+
 describe("--wash token per theme", () => {
   it("dark washes white at k=1, so the dark mix percentages are unchanged", () => {
     expect(defineIn(rootBlock, "wash")).toBe("#ffffff");
