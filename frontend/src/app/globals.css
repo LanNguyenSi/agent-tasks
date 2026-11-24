@@ -33,6 +33,12 @@ html[data-theme="light"] {
   --border-strong: #ffffff1a;
   --border-hover: #ffffff26;
 
+  /* Neutral wash for hover fills, chips and bars: white over the dark
+     surfaces, black in light (white on white is invisible). --wash-k scales
+     the mix percentage so the wash stays visible on light surfaces. */
+  --wash: #ffffff;
+  --wash-k: 1;
+
   /* Text */
   --text: #e8eaee;
   --text-secondary: #a6acb8;
@@ -211,7 +217,7 @@ a {
 }
 
 a:hover {
-  color: var(--primary-hover);
+  color: var(--link-hover, var(--primary-hover));
   text-decoration: underline;
 }
 
@@ -921,7 +927,7 @@ input[type="checkbox"] {
 }
 
 .app-team-trigger:hover {
-  background: color-mix(in srgb, white 3%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(3% * var(--wash-k)), transparent);
   color: var(--text);
 }
 
@@ -968,7 +974,7 @@ input[type="checkbox"] {
 }
 
 .app-user-trigger:hover {
-  background: color-mix(in srgb, white 3%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(3% * var(--wash-k)), transparent);
   color: var(--text);
 }
 
@@ -3266,6 +3272,10 @@ html[data-theme="light"] {
   --border-strong: #0000001a;
   --border-hover: #00000026;
 
+  /* Wash: black over light surfaces, doubled so 3 to 6% steps stay visible */
+  --wash: #000000;
+  --wash-k: 2;
+
   /* Text */
   --text: #111217;
   --text-secondary: #434a58;
@@ -3274,6 +3284,9 @@ html[data-theme="light"] {
 
   /* Accent text: darkened for AA contrast on light fills */
   --primary-text: #4450a8;
+  /* Link hover: one step darker than the resting link (--primary-text), not
+     the lighter dark-theme --primary-hover (3.85:1 on --bg). */
+  --link-hover: #2f3a85;
   /* Accent-hue text (--primary-fg) uses the text-safe step in light too: raw
      --primary #5e6ad2 is 4.42:1 on --bg and fails WCAG AA for small text. */
   --primary-fg: var(--primary-text);
@@ -3402,7 +3415,7 @@ html[data-theme="light"] {
 }
 
 .db-proj-switch:hover:not(:disabled) {
-  background: color-mix(in srgb, white 4%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(4% * var(--wash-k)), transparent);
 }
 
 .db-proj-switch:disabled {
@@ -3702,7 +3715,7 @@ html[data-theme="light"] {
 }
 
 .db-col-add:hover {
-  background: color-mix(in srgb, white 6%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(6% * var(--wash-k)), transparent);
   color: var(--text);
 }
 
@@ -3739,7 +3752,7 @@ html[data-theme="light"] {
 
 .db-card:hover {
   background: var(--surface-hover);
-  border-color: color-mix(in srgb, white 15%, transparent);
+  border-color: var(--border-hover);
 }
 
 .db-card--active {
@@ -3778,7 +3791,7 @@ html[data-theme="light"] {
   gap: 4px;
   height: 18px;
   padding: 0 var(--space-2);
-  background: color-mix(in srgb, white 4%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(4% * var(--wash-k)), transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
@@ -4749,7 +4762,7 @@ html[data-theme="light"] {
 
 .td-btn-edit:hover {
   color: var(--text);
-  background: color-mix(in srgb, white 4%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(4% * var(--wash-k)), transparent);
 }
 
 /* Icon-only overflow dots button */
@@ -4770,7 +4783,7 @@ html[data-theme="light"] {
 
 .td-btn-icon:hover {
   color: var(--text);
-  background: color-mix(in srgb, white 4%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(4% * var(--wash-k)), transparent);
 }
 
 /* Muted hint next to transition button */
@@ -4889,11 +4902,18 @@ html[data-theme="light"] {
   height: 16px;
   padding: 0 5px;
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, white 6%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(6% * var(--wash-k)), transparent);
   color: var(--muted);
   font-size: var(--text-xs);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* Opaque in light: a translucent fill under the count leaves axe unable to
+   resolve the text contrast (needs-review node); --surface-active is 4.9:1
+   against --muted. */
+html[data-theme="light"] .td-section-count {
+  background: var(--surface-active);
 }
 
 .td-section-action {
@@ -5035,7 +5055,7 @@ html[data-theme="light"] {
   gap: 5px;
   height: 20px;
   padding: 0 7px;
-  background: color-mix(in srgb, white 5%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(5% * var(--wash-k)), transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
@@ -5063,7 +5083,7 @@ html[data-theme="light"] {
   width: 56px;
   height: 4px;
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, white 10%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(10% * var(--wash-k)), transparent);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -5867,9 +5887,15 @@ html[data-theme="light"] {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--muted);
-  background: color-mix(in srgb, white 6%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(6% * var(--wash-k)), transparent);
   border-radius: var(--radius-sm);
   padding: 0.05rem 0.3rem;
+}
+
+/* Light: --muted over the doubled black wash is 3.8 to 4.4:1 on the tinted
+   panels and the hover/active surfaces; --text-secondary stays above 5:1. */
+html[data-theme="light"] .ip-findings-code {
+  color: var(--text-secondary);
 }
 
 .ip-findings-message {
@@ -5915,7 +5941,7 @@ html[data-theme="light"] {
   padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-base);
-  background: color-mix(in srgb, white 4%, var(--surface) 96%);
+  background: color-mix(in srgb, var(--wash) calc(4% * var(--wash-k)), var(--surface));
   font: inherit;
   font-size: var(--text-xs);
   line-height: 1.5;
@@ -6010,7 +6036,7 @@ html[data-theme="light"] {
   width: 48px;
   height: 4px;
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, white 10%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(10% * var(--wash-k)), transparent);
   overflow: hidden;
   flex: none;
 }
@@ -6048,7 +6074,7 @@ html[data-theme="light"] {
 .ta-empty-code {
   font-family: var(--font-mono);
   font-size: 11px;
-  background: color-mix(in srgb, white 6%, transparent);
+  background: color-mix(in srgb, var(--wash) calc(6% * var(--wash-k)), transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 1px 5px;
