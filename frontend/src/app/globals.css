@@ -5892,6 +5892,12 @@ html[data-theme="light"] .td-section-count {
   padding: 0.05rem 0.3rem;
 }
 
+/* Light: --muted over the doubled black wash is 3.8 to 4.4:1 on the tinted
+   panels and the hover/active surfaces; --text-secondary stays above 5:1. */
+html[data-theme="light"] .ip-findings-code {
+  color: var(--text-secondary);
+}
+
 .ip-findings-message {
   color: var(--text);
 }

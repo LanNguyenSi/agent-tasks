@@ -85,3 +85,77 @@ describe("--wash token per theme", () => {
     expect(body(".db-card:hover")).toMatch(/border-color:\s*var\(--border-hover\)/);
   });
 });
+
+/* ── Text on the light wash ─────────────────────────────────────────────── */
+
+type Rgb = [number, number, number];
+
+function hexRgb(hex: string): Rgb {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as Rgb;
+}
+
+function lum([r, g, b]: Rgb): number {
+  const [x, y, z] = [r, g, b].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as Rgb;
+  return 0.2126 * x + 0.7152 * y + 0.0722 * z;
+}
+
+function ratio(a: Rgb, b: Rgb): number {
+  const [hi, lo] = [lum(a), lum(b)].sort((p, q) => q - p) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** `fg` painted at `alpha` over `bg`, as the browser composites it. */
+function over(fg: Rgb, alpha: number, bg: Rgb): Rgb {
+  return fg.map((v, i) => alpha * v + (1 - alpha) * bg[i]!) as Rgb;
+}
+
+function lightHex(name: string): Rgb {
+  const m = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})\\s*;`).exec(lightBlock);
+  expect(m, `light --${name} must be a 6-digit hex`).not.toBeNull();
+  return hexRgb(m![1]!);
+}
+
+/** Light text colour token of `selector`: the light override rule first, then the base rule, else the inherited default. */
+function lightTextToken(selector: string, inherited: string): string {
+  const esc = selector.replace(/[.]/g, "\\$&");
+  const light = new RegExp(`html\\[data-theme="light"\\] ${esc}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+  const base = new RegExp(`(?:^|\\n)${esc}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+  const color = (b?: string) => /(?:^|;|\n)\s*color:\s*var\(--([a-z-]+)\)\s*;/.exec(b ?? "")?.[1];
+  return color(light) ?? color(base) ?? inherited;
+}
+
+/** Wash alpha of the rule (percentage times light --wash-k). */
+function washAlpha(selector: string): number {
+  const esc = selector.replace(/[.]/g, "\\$&");
+  const pct = new RegExp(`(?:^|\\n)${esc}\\s*\\{[^}]*calc\\((\\d+)% \\* var\\(--wash-k\\)\\)`).exec(css)?.[1];
+  expect(pct, `${selector} must mix the wash`).toBeDefined();
+  return (Number(pct) / 100) * Number(defineIn(lightBlock, "wash-k"));
+}
+
+const PLAIN = ["surface", "bg", "surface-hover", "surface-active"];
+const TINTED = ["warning", "danger"];
+
+describe("muted text on the light wash stays >= 4.5:1", () => {
+  const containers: Record<string, Rgb> = Object.fromEntries([
+    ...PLAIN.map((n) => [n, lightHex(n)] as const),
+    // .ip-root--warning / --danger: 10% accent over --surface
+    ...TINTED.map((n) => [`ip-root--${n}`, over(lightHex(n), 0.1, lightHex("surface"))] as const),
+  ]);
+
+  // .ta-empty-code inherits --muted from .ta-empty, which sits on --surface only.
+  const cases: [string, string, string[]][] = [
+    [".ip-findings-code", "muted", [...PLAIN, ...TINTED.map((n) => `ip-root--${n}`)]],
+    [".ta-empty-code", "muted", ["surface"]],
+  ];
+
+  for (const [selector, inherited, names] of cases) {
+    it.each(names)(`${selector} text over the wash on %s`, (name) => {
+      const text = lightHex(lightTextToken(selector, inherited));
+      const bg = over(hexRgb("#000000"), washAlpha(selector), containers[name]!);
+      expect(ratio(text, bg), `${selector} on ${name}`).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
