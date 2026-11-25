@@ -164,6 +164,13 @@ export default function SettingsPage() {
       delegation.allowAgentPrComment !== user.allowAgentPrComment
     : false;
 
+  // Disconnected, the only save the server should see is switching everything off.
+  const canSaveDelegation =
+    !!user?.githubConnected ||
+    (!delegation.allowAgentPrCreate &&
+      !delegation.allowAgentPrMerge &&
+      !delegation.allowAgentPrComment);
+
   return (
     <PageShell header={<PageHeader title="Settings" />}>
       <div className="settings-layout">
@@ -311,18 +318,11 @@ export default function SettingsPage() {
                 </p>
                 {!user?.githubConnected && (
                   <AlertBanner tone="warning">
-                    Connect GitHub first to enable agent permissions.
+                    Connect GitHub first to enable agent permissions. Until then you can
+                    only switch all permissions off.
                   </AlertBanner>
                 )}
-                <div
-                  className="settings-delegation-grid"
-                  /* dynamic: opacity/pointerEvents depend on runtime githubConnected state */
-                  /* eslint-disable-next-line no-restricted-syntax */
-                  style={{
-                    opacity: user?.githubConnected ? 1 : 0.5, /* dynamic: auth state */
-                    pointerEvents: user?.githubConnected ? "auto" : "none", /* dynamic: auth state */
-                  }}
-                >
+                <div className="settings-delegation-grid">
                   {(
                     [
                       {
@@ -338,12 +338,24 @@ export default function SettingsPage() {
                         label: "Allow agents to comment on PRs on my behalf",
                       },
                     ] as const
-                  ).map(({ key, label }) => (
-                    <label key={key} className="settings-delegation-row">
+                  ).map(({ key, label }) => {
+                    // Without a usable connection a permission can only be switched
+                    // off: a box whose stored value is on stays operable, one stored
+                    // off stays locked.
+                    const locked = !user?.githubConnected && !user?.[key];
+                    return (
+                    <label
+                      key={key}
+                      className={
+                        locked
+                          ? "settings-delegation-row settings-delegation-row--locked"
+                          : "settings-delegation-row"
+                      }
+                    >
                       <input
                         type="checkbox"
                         checked={delegation[key]}
-                        disabled={!user?.githubConnected}
+                        disabled={locked}
                         onChange={(e) =>
                           setDelegation((prev) => ({
                             ...prev,
@@ -353,12 +365,13 @@ export default function SettingsPage() {
                       />
                       <span>{label}</span>
                     </label>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="settings-delegation-footer">
                   <Button
                     size="sm"
-                    disabled={!user?.githubConnected || delegationSaving || !isDelegationDirty}
+                    disabled={delegationSaving || !isDelegationDirty || !canSaveDelegation}
                     loading={delegationSaving}
                     onClick={() => void handleDelegationSave()}
                   >

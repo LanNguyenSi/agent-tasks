@@ -104,7 +104,7 @@ describe("SettingsPage: GitHub connection state", () => {
       "href",
       "/api/auth/github/connect",
     );
-    expect(screen.getByText("Connect GitHub first to enable agent permissions.")).toBeInTheDocument();
+    expect(screen.getByText(/^Connect GitHub first to enable agent permissions\./)).toBeInTheDocument();
     for (const name of DELEGATION_LABELS) {
       expect(screen.getByRole("checkbox", { name })).toBeDisabled();
     }

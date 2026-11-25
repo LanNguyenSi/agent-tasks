@@ -7547,6 +7547,11 @@ a.proj-chip:hover {
   font-size: var(--text-sm);
 }
 
+.settings-delegation-row--locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .settings-delegation-footer {
   display: flex;
   align-items: center;

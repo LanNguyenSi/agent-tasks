@@ -226,6 +226,31 @@ it("a task with no effective repository gets 400 no_effective_repo before any fe
   expect(await f.db.task.findUniqueOrThrow({ where: { id: f.taskId } })).toMatchObject({ prUrl: null, prNumber: null });
 });
 
+// requireEffectiveRepo accepts anything it can split at the first "/", so these
+// reach the canonical-identity check; they are the same requirement refusal.
+it.each(["owner/repo/extra", "https://github.com/o/r", "o/..", "./r"])("an effective repository %s that is not a GitHub identity gets 400 no_effective_repo, no row and no provider call", async identity => {
+  await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: identity } });
+  const result = await f.call();
+  expect(result).toMatchObject({ status: 400, body: { error: "no_effective_repo", message: expect.stringContaining(`"${identity}" is not in owner/repo form`) } });
+  expect(f.create).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled();
+  expect(await f.db.groundingGithubCreateOperation.count({ where: { taskId: f.taskId } })).toBe(0);
+  expect(await f.db.groundingGithubFenceIntent.count({ where: { taskId: f.taskId } })).toBe(0);
+  expect(await f.db.task.findUniqueOrThrow({ where: { id: f.taskId } })).toMatchObject({ prUrl: null, prNumber: null });
+});
+
+it("a canonical effective repository in another letter case still creates", async () => {
+  await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: `Acme/${f.request.repo.toUpperCase()}` } });
+  const result = await f.call();
+  expect(result.status).toBe(201);
+  expect(f.create).toHaveBeenCalledTimes(1);
+});
+
+it("two canonical identities that differ stay a precondition failure, not a requirement refusal", async () => {
+  await f.db.project.update({ where: { id: f.projectId }, data: { githubRepo: "acme/other-repository" } });
+  await expect(f.call()).rejects.toThrow("precondition_failed");
+  expect(f.create).not.toHaveBeenCalled();
+});
+
 it("seed context of a project without a repository remains excluded during a committed PR_CREATE dispatch", async () => {
   await unbindProjectRepo();
   const gate = barrier(); f.create.mockImplementationOnce(async (_request, _token, operationId) => { await gate.wait(); return f.tagged(operationId); });
