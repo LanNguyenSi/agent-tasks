@@ -53,7 +53,15 @@ export class GroundingGithubCreateService {
     // compare the body-supplied target against (same rule as the legacy creator).
     const requirement = requireEffectiveRepo(task, task.project);
     if (!requirement.ok) throw new NoEffectiveRepoError(requirement);
-    if (canonicalGithubRepo(requirement.effectiveRepo) !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
+    // `requireEffectiveRepo` only splits at the first "/"; an identity GitHub cannot name
+    // (`a/b/c`, a URL, `o/..`) is the same refusal as an unusable repository, not a fence failure.
+    let effectiveRepo: string;
+    try { effectiveRepo = canonicalGithubRepo(requirement.effectiveRepo); }
+    catch (error) {
+      if (error instanceof GithubFenceError) throw new NoEffectiveRepoError({ ok: false, reason: "malformed", effectiveRepo: requirement.effectiveRepo });
+      throw error;
+    }
+    if (effectiveRepo !== `${request.owner}/${request.repo}`) throw new GroundingDecisionError("precondition_failed");
     const chosenId = delegateId ?? (await findDelegationUser(task.project.teamId, "allowAgentPrCreate", { preferUserId: actor.userId, db }))?.userId;
     if (!chosenId) throw new GroundingAccessError("forbidden", 403, CREATE_CONSENT_REFUSAL);
     await db.$queryRaw`SELECT id FROM users WHERE id = ${chosenId} FOR SHARE`;
