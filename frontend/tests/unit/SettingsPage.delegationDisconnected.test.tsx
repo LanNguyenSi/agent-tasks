@@ -102,7 +102,7 @@ describe("SettingsPage: Agent Permissions while disconnected", () => {
     const user = userEvent.setup();
     await renderPage();
 
-    expect(screen.getByText(/only switch permissions off/)).toBeInTheDocument();
+    expect(screen.getByText(/only switch all permissions off/)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: CREATE })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: MERGE })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: COMMENT })).toBeEnabled();
@@ -116,6 +116,30 @@ describe("SettingsPage: Agent Permissions while disconnected", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).toHaveBeenCalledWith(allOff);
+  });
+
+  it.each([
+    ["create", CREATE],
+    ["merge", MERGE],
+    ["comment", COMMENT],
+  ])("disconnected with all three stored on: Save stays disabled while only the %s flag is still on", async (_flag, stillOn) => {
+    mockGetCurrentUser.mockResolvedValue(
+      makeUser({ githubConnected: false, allowAgentPrCreate: true, allowAgentPrMerge: true, allowAgentPrComment: true }),
+    );
+    mockUpdate.mockResolvedValue(makeUser({ githubConnected: false, ...allOff }));
+    const user = userEvent.setup();
+    await renderPage();
+
+    for (const name of [CREATE, MERGE, COMMENT]) {
+      if (name !== stillOn) await user.click(screen.getByRole("checkbox", { name }));
+    }
+    expect(screen.getByRole("checkbox", { name: stillOn })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox", { name: stillOn }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save" }));
     expect(mockUpdate).toHaveBeenCalledWith(allOff);
   });
 

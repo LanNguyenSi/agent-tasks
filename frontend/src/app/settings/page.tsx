@@ -319,7 +319,7 @@ export default function SettingsPage() {
                 {!user?.githubConnected && (
                   <AlertBanner tone="warning">
                     Connect GitHub first to enable agent permissions. Until then you can
-                    only switch permissions off.
+                    only switch all permissions off.
                   </AlertBanner>
                 )}
                 <div className="settings-delegation-grid">
