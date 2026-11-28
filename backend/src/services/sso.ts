@@ -11,6 +11,7 @@ import { logger } from "../lib/logger.js";
 import { config } from "../config/index.js";
 import { decryptSecret, encryptSecret } from "./sso-crypto.js";
 import type { OidcIdTokenClaims } from "./oidc.js";
+import { normalizeIssuer } from "./issuer.js";
 import { ConflictError, ValidationError } from "../lib/errors.js";
 
 export interface SsoConnectionInput {
@@ -232,11 +233,6 @@ async function generateUniqueLogin(base: string, client: Prisma.TransactionClien
  */
 export interface OidcLoginRefusal {
   refused: "identity_conflict";
-}
-
-// The same normalisation the OIDC client applies before discovery.
-function normalizeIssuer(issuer: string): string {
-  return issuer.replace(/\/+$/, "");
 }
 
 /**

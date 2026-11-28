@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **The `task_respec` table row and the self-hosting runbook links are corrected (docs only).** The `task_respec` row of the v2 agent surface table in `docs/getting-started.md` read "Edit an open or backlog task you created", which implied the creator-only rule also covers backlog. It does not: while a task is in `backlog`, any agent with `tasks:update` and project access may respec it regardless of creator or the project's `allowNonCreatorRespec` flag; the creator-only restriction (relaxed by that flag) applies only once the task is promoted to `open`. Both states also require the task to be unclaimed. The row now states that, matching `cli/docs/commands.md` and the OpenAPI description of `POST /api/tasks/:id/respec`. Separately, the two cross-references in `docs/self-hosting.md` to the deploy runbook and the backups procedure linked `docs/okf/deploy.md` and `docs/ops-backups.md` relative to the `docs/` directory, which resolved nowhere; they are now file-relative (`okf/deploy.md`, `ops-backups.md`) and resolve to the existing files.
 
+### Changed
+
+- **One issuer normalisation for OIDC discovery, ID token checks and the SSO identity binding (internal, no behaviour change).** `oidc.ts` and `sso.ts` each carried a private copy of the same function (exact string after removing trailing slashes); both now import `normalizeIssuer` from the new `backend/src/services/issuer.ts`, a module without imports. The rule is unchanged: no case folding, no URL parsing, `sameIssuer` keeps its signature and place. Tests: `backend/tests/unit/issuer.test.ts`, `backend/tests/unit/oidc.test.ts`.
+
 ## [0.34.0] - 2026-11-17
 
 ### Security

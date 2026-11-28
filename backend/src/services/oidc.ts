@@ -14,6 +14,7 @@
 
 import { webcrypto } from "node:crypto";
 import { logger } from "../lib/logger.js";
+import { normalizeIssuer } from "./issuer.js";
 import {
   EgressBlockedError,
   EgressRequestError,
@@ -142,10 +143,6 @@ async function oidcFetch(
       cause: err,
     });
   }
-}
-
-function normalizeIssuer(issuer: string): string {
-  return issuer.replace(/\/+$/, "");
 }
 
 /** Fetch and cache `.well-known/openid-configuration` + JWKS. */

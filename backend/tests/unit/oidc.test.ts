@@ -331,6 +331,20 @@ describe("verifyIdToken", () => {
     ).rejects.toThrow(/issuer mismatch/);
   });
 
+  it("accepts an iss with a trailing slash against an expected issuer without one", async () => {
+    const claims = validClaims({ iss: `${EXPECTED_ISSUER}/` });
+    const token = await pair.sign(claims);
+    await expect(
+      verifyIdToken({
+        idToken: token,
+        jwks: [pair.publicJwk],
+        expectedIssuer: EXPECTED_ISSUER,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedNonce: EXPECTED_NONCE,
+      }),
+    ).resolves.toMatchObject({ iss: `${EXPECTED_ISSUER}/` });
+  });
+
   it("rejects audience mismatch with /audience mismatch/", async () => {
     const claims = validClaims({ aud: "wrong-client" });
     const token = await pair.sign(claims);
@@ -511,6 +525,21 @@ describe("discover", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await expect(discover(issuer)).rejects.toThrow(/issuer mismatch/);
+  });
+
+  it("accepts a discovery document whose issuer differs from the requested one only by trailing slashes", async () => {
+    const issuer = "https://issuer-discover-slashes.example.com";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...makeDiscoveryDoc(issuer), issuer: `${issuer}//` }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ keys: [] }) });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await discover(issuer);
+
+    expect(result.discovery.issuer).toBe(`${issuer}//`);
   });
 
   it("throws /discovery failed/ when the discovery response is not ok", async () => {
