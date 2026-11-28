@@ -345,6 +345,20 @@ describe("verifyIdToken", () => {
     ).resolves.toMatchObject({ iss: `${EXPECTED_ISSUER}/` });
   });
 
+  it("accepts an iss without a trailing slash against an expected issuer with one", async () => {
+    const claims = validClaims({ iss: EXPECTED_ISSUER });
+    const token = await pair.sign(claims);
+    await expect(
+      verifyIdToken({
+        idToken: token,
+        jwks: [pair.publicJwk],
+        expectedIssuer: `${EXPECTED_ISSUER}/`,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedNonce: EXPECTED_NONCE,
+      }),
+    ).resolves.toMatchObject({ iss: EXPECTED_ISSUER });
+  });
+
   it("rejects audience mismatch with /audience mismatch/", async () => {
     const claims = validClaims({ aud: "wrong-client" });
     const token = await pair.sign(claims);
@@ -540,6 +554,36 @@ describe("discover", () => {
     const result = await discover(issuer);
 
     expect(result.discovery.issuer).toBe(`${issuer}//`);
+  });
+
+  it("keys the cache and the well-known URL on the issuer without trailing slashes", async () => {
+    const issuer = "https://issuer-discover-key.example.com";
+    const fetchMock = makeDiscoveryFetch(issuer);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await discover(`${issuer}/`);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${issuer}/.well-known/openid-configuration`);
+    const callsAfterFirst = fetchMock.mock.calls.length;
+
+    await discover(issuer);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("invalidateDiscovery with a trailing slash clears the entry cached without one", async () => {
+    const issuer = "https://issuer-discover-invalidate-slash.example.com";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => makeDiscoveryDoc(issuer) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ keys: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => makeDiscoveryDoc(issuer) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ keys: [] }) });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await discover(issuer);
+    expect(fetchMock.mock.calls.length).toBe(2);
+
+    invalidateDiscovery(`${issuer}/`);
+    await discover(issuer);
+    expect(fetchMock.mock.calls.length).toBe(4);
   });
 
   it("throws /discovery failed/ when the discovery response is not ok", async () => {
